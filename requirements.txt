@@ -12,3 +12,4 @@ PyMySQL==1.1.1
 werkzeug==2.3.0
 python-telegram-bot==22.1
 cryptography
+dotenv

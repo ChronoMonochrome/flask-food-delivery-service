@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 
-from app.config import Config
+#from app import app
 
 # --- MODIFIED LOG FORMAT ---
 # We'll make the 'source' part optional or use 'name' for SQLAlchemy
@@ -28,7 +28,7 @@ if not os.path.exists(logs_directory):
     os.makedirs(logs_directory)
 
 class CustomLogger:
-    def __init__(self, source: str, log_to_file: bool = True, log_to_console: bool = True, base_dir: str = "./logs", log_rotate_days: int = Config.LOG_ROTATE_DAYS):
+    def __init__(self, source: str, log_to_file: bool = True, log_to_console: bool = True, base_dir: str = "./logs", log_rotate_days = 30):
         self.source = source
         self.logger = logging.getLogger(source)
         self.logger.setLevel(logging.INFO)
@@ -144,7 +144,7 @@ logger = CustomLogger(source="bot.main", log_to_file=True, log_to_console=True)
 # --- Configure SQLAlchemy logging to use your CustomLogger's file handler ---
 sqlalchemy_logger = logging.getLogger('sqlalchemy.engine.Engine')
 # Set level to INFO or DEBUG based on Config.DEBUG
-sqlalchemy_logger.setLevel(logging.INFO if not Config.DEBUG else logging.DEBUG)
+sqlalchemy_logger.setLevel(logging.INFO if not True else logging.DEBUG)
 
 # Add the file handler from your main logger instance to the SQLAlchemy logger.
 # This ensures SQLAlchemy logs go to the same file.
