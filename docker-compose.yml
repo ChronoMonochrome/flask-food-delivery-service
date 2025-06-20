@@ -32,9 +32,6 @@ services:
       # Environment variables passed to the Flask application
       # These will be read by os.getenv() in app/__init__.py
       DATABASE_URL: mysql+pymysql://user:your_db_password@db:3306/mydatabase # Database connection string
-      BOT_TOKEN: "7666900832:AAHu7U0wTgXssv659Z2-lff8bMy6A-DxNmk"
-      WEB_APP_URL: "https://mytestapp.ignorelist.com/"
-      SECRET_KEY: "your_flask_secret_key" # IMPORTANT: Change this to a strong secret key
     ports:
       # Expose port 8011 for internal communication with Nginx (optional for external access)
       - "8011:8011"
@@ -53,9 +50,9 @@ services:
     container_name: nginx_proxy
     restart: always # Always restart the container if it stops
     ports:
-      # Map host ports 80 and 443 to container ports 80 and 443
-      - "80:80"
-      - "443:443"
+      # Map host ports 8080 and 8443 to container ports 80 and 443
+      - "8080:80"
+      - "8443:443"
     volumes:
       # Mount SSL certificates from your host machine into the Nginx container.
       # You need to create a 'certs' folder in the same directory as this docker-compose.yml
