@@ -1,30 +1,32 @@
+# app/routes.py
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
 from app import app
-from flask import send_from_directory
+from flask import send_from_directory, request
 import os
+from .logger import logger
 
-# Get the absolute path to the directory where routes.py is located
-# This assumes your 'static' folder is a sibling of the folder containing routes.py
-# If 'static' is directly in the project root and routes.py is in a subfolder,
-# you might need to adjust 'PROJECT_ROOT' accordingly.
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-STATIC_FOLDER = os.path.join(PROJECT_ROOT, 'static')
+# Get the absolute path to the static folder directly from the app configuration.
+# This ensures consistency with how Flask itself is configured to serve static files.
+STATIC_FOLDER = app.static_folder
 
-print(STATIC_FOLDER)
+logger.info(f"app.static_folder is: {STATIC_FOLDER}")
 
 @app.route("/")
 def home():
+    logger.info(f"Request to / from host {request.remote_addr}. Attempting to serve: {os.path.join(STATIC_FOLDER, 'index.html')}")
     # Serve index.html from the static folder
     return send_from_directory(STATIC_FOLDER, 'index.html')
 
 @app.route("/assets/<path:path>")
 def assets_dir(path):
-    # Serve index.html from the static folder
+    logger.info(f"Request to /assets/{path} from host {request.remote_addr}. Attempting to serve: {os.path.join(STATIC_FOLDER, 'assets', path)}")
+    # Serve files from the assets subfolder within the static folder
     return send_from_directory(os.path.join(STATIC_FOLDER, "assets"), path)
 
 @app.route("/<path:path>")
 def static_dir(path):
-    # Serve index.html from the static folder
+    logger.info(f"Request to /{path} from host {request.remote_addr}. Attempting to serve: {os.path.join(STATIC_FOLDER, path)}")
+    # Serve any other static files directly from the static folder root
     return send_from_directory(STATIC_FOLDER, path)
