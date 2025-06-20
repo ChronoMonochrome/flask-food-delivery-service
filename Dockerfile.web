@@ -1,31 +1,63 @@
-# Use an official Python runtime as a parent image
+# Stage 1: Build Frontend
+# Use a Node.js image to build the frontend assets
+FROM node:16-alpine as frontend_builder
+
+# Install git
+RUN apk add --no-cache git
+
+# Create a temporary directory for the entire project source and set it as working directory.
+# This directory will hold a copy of your local Git repository.
+WORKDIR /usr/src/app/repo_source
+
+# Copy the entire build context (your local project directory, including its .git folder)
+# into this stage.
+COPY . .
+
+# Checkout the 'front' branch. This assumes the 'front' branch exists locally
+# in your project's Git repository.
+RUN git checkout front
+
+# Install frontend dependencies and build the project.
+# This assumes package.json is at the root of the checked-out branch
+# and 'dist' is the output folder.
+RUN npm install
+RUN npm run build
+
+
+# Stage 2: Build Flask Application
+# Use a Python runtime as the base for the final application image
 FROM python:3.9-slim-buster
 
 # Set the working directory in the container
 WORKDIR /app
 
 # Install system dependencies required for building some Python packages (e.g., gevent)
-# and for MySQL client libraries if PyMySQL needs them (though PyMySQL is pure Python)
+# and for MySQL client libraries
 RUN apt-get update && apt-get install -y \
     build-essential \
     default-libmysqlclient-dev \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the working directory
+# Copy local requirements.txt and install Python dependencies
 COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-COPY . .
+# Copy the built frontend assets from the frontend_builder stage.
+# The 'dist' folder is now expected to be located inside /usr/src/app/repo_source/dist.
+COPY --from=frontend_builder /usr/src/app/repo_source/dist /app/app/static
+
+# Set permissions for the static folder recursively
+RUN chmod -R 775 /app/app/static
+
+# Copy the rest of the Flask application code (app/ directory, logger.py)
+# Make sure your local 'app' directory and 'logger.py' are in the root of your project context
+COPY app /app/app
 
 # Expose port 8011, where Gunicorn will listen
 EXPOSE 8011
 
 # Command to run Gunicorn.
 # 'app:app' refers to the 'app' Flask instance within the 'app' module (i.e., app/__init__.py).
-# '-w 4' specifies 4 worker processes.
-# '-b 0.0.0.0:8011' binds Gunicorn to all network interfaces on port 8011.
 CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8011", "app:app"]
+
