@@ -23,7 +23,7 @@ log_format = "[%(asctime)s] %(levelname)s %(display_source)s: %(message)s"
 
 
 # Настройка директории для логов
-logs_directory = "./logs"
+logs_directory = "/app/logs"
 if not os.path.exists(logs_directory):
     os.makedirs(logs_directory)
 
