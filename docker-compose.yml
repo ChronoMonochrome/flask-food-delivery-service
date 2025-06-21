@@ -41,7 +41,20 @@ services:
     networks:
       # Connect to the custom application network
       - app_network
-
+  # Telegram Bot Service
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: telegram_bot
+    restart: always
+    environment:
+      BOT_TOKEN: "7666900832:AAHu7U0wTgXssv659Z2-lff8bMy6A-DxNmk" # Your Telegram Bot token
+      WEB_APP_URL: "https://mytestapp.ignorelist.com/" # Your web app URL
+    depends_on:
+      - web # The bot depends on the web app being available for the WEB_APP_URL
+    networks:
+      - app_network
   # Nginx Proxy Service
   nginx:
     build:
