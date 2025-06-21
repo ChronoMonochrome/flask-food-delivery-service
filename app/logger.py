@@ -25,7 +25,7 @@ log_format = "[%(asctime)s] %(levelname)s %(display_source)s: %(message)s"
 # Настройка директории для логов
 logs_directory = "/app/logs"
 if not os.path.exists(logs_directory):
-    os.makedirs(logs_directory)
+    os.makedirs(logs_directory, exist_ok=True)
 
 class CustomLogger:
     def __init__(self, source: str, log_to_file: bool = True, log_to_console: bool = True, base_dir: str = "./logs", log_rotate_days = 30):
