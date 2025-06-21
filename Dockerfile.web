@@ -43,6 +43,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy .env
+COPY .env .
+
 # Copy the built frontend assets from the frontend_builder stage.
 # The 'dist' folder is now expected to be located inside /usr/src/app/repo_source/dist.
 COPY --from=frontend_builder /usr/src/app/repo_source/dist /app/app/static
