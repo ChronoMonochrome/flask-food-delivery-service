@@ -50,7 +50,7 @@ services:
     restart: always
     environment:
       TELEGRAM_TOKEN: "7666900832:AAHu7U0wTgXssv659Z2-lff8bMy6A-DxNmk" # Your Telegram Bot token
-      WEB_APP_URL: "https://mytestapp.ignorelist.com/" # Your web app URL
+      WEB_APP_URL: "https://mytestapp001.ru/" # Your web app URL
     depends_on:
       - web # The bot depends on the web app being available for the WEB_APP_URL
     networks:
