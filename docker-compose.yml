@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # MySQL Database Service
+  db:
+    image: mysql:8.0 # Using MySQL 8.0 image
+    container_name: mysql_db
+    environment:
+      # Database credentials and settings
+      MYSQL_ROOT_PASSWORD: your_root_password # IMPORTANT: Change this to a strong password
+      MYSQL_DATABASE: mydatabase
+      MYSQL_USER: user
+      MYSQL_PASSWORD: your_db_password # IMPORTANT: Change this to a strong password
+    volumes:
+      # Persistent volume for database data, so data is not lost on container restart
+      - db_data:/var/lib/mysql
+    ports:
+      # Expose port 3307 for direct access from host (optional, mainly for debugging)
+      - "3307:3306"
+    networks:
+      # Connect to the custom application network
+      - app_network
+
+  # Flask Application Service (served by Gunicorn)
+  web:
+    build:
+      context: . # Build context is the current directory
+      dockerfile: Dockerfile.web # Use the Dockerfile.web to build this service's image
+    container_name: flask_app
+    restart: always # Always restart the container if it stops
+    environment:
+      # Environment variables passed to the Flask application
+      # These will be read by os.getenv() in app/__init__.py
+      DATABASE_URL: mysql+pymysql://user:your_db_password@db:3306/mydatabase # Database connection string
+    ports:
+      # Expose port 8011 for internal communication with Nginx (optional for external access)
+      - "8011:8011"
+    depends_on:
+      # Ensure the database service is up before starting the web service
+      - db
+    networks:
+      # Connect to the custom application network
+      - app_network
+  # Telegram Bot Service
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: telegram_bot
+    restart: always
+    environment:
+      BOT_TOKEN: "7666900832:AAHu7U0wTgXssv659Z2-lff8bMy6A-DxNmk" # Your Telegram Bot token
+      WEB_APP_URL: "https://mytestapp.ignorelist.com/" # Your web app URL
+    depends_on:
+      - web # The bot depends on the web app being available for the WEB_APP_URL
+    networks:
+      - app_network
+  # Nginx Proxy Service
+  nginx:
+    build:
+      context: . # Build context is the current directory
+      dockerfile: Dockerfile.nginx # Use the Dockerfile.nginx to build this service's image
+    container_name: nginx_proxy
+    restart: always # Always restart the container if it stops
+    ports:
+      # Map host ports 8080 and 8443 to container ports 80 and 443
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      # Mount SSL certificates from your host machine into the Nginx container.
+      # You need to create a 'certs' folder in the same directory as this docker-compose.yml
+      # and place your 'fullchain.pem' and 'privkey.pem' files inside it.
+      - ./certs:/etc/nginx/certs:ro # :ro makes it read-only inside the container
+    depends_on:
+      # Ensure the web service is up before starting Nginx
+      - web
+    networks:
+      # Connect to the custom application network
+      - app_network
+
+volumes:
+  # Define named volume for database persistence
+  db_data:
+
+networks:
+  # Define a custom bridge network for inter-service communication
+  app_network:
+    driver: bridge
+

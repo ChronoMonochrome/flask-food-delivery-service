@@ -1,0 +1,15 @@
+# Use an official Python runtime as a parent image
+FROM python:3.9-slim-buster
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the requirements file and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the bot package (bot/__init__.py and bot/main.py)
+COPY bot /app/bot
+
+# Command to run the Telegram bot's main module within the bot package
+CMD ["python", "-m", "bot.main"]
