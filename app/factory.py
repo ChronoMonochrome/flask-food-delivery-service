@@ -5,6 +5,7 @@ from flask_session import Session
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
+from .logger import logger
 
 def create_app():
     # Initialize the Flask app here, so its root_path is available
@@ -20,8 +21,10 @@ def create_app():
     # Load environment variables
     if os.path.exists(os.path.join(BASE_DIR, '.env.local')):
         load_dotenv(os.path.join(BASE_DIR, '.env.local'))
+        logger.info(f"Loaded env from .env.local")
     else:
         load_dotenv(os.path.join(BASE_DIR, '.env'))
+        logger.info(f"Loaded env from .env")
 
     # Set TEMPLATES_DIR based on the app's resolved template_folder
     app.config["TEMPLATES_DIR"] = app.template_folder
