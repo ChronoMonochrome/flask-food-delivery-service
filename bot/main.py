@@ -1,15 +1,6 @@
 import os
-from dotenv import load_dotenv
-
 from telegram import Update, WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Load environment variables
-if os.path.exists(os.path.join(BASE_DIR, '.env.local')):
-    load_dotenv(os.path.join(BASE_DIR, '.env.local'))
-else:
-    load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEB_APP_URL = os.getenv("WEB_APP_URL")
