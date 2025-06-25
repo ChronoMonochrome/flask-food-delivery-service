@@ -20,6 +20,12 @@ services:
     networks:
       # Connect to the custom application network
       - app_network
+    healthcheck: # Added healthcheck for the database service
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pyour_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s # Give MySQL time to start before checking
 
   # Flask Application Service (served by Gunicorn)
   web:
@@ -36,8 +42,9 @@ services:
       # Expose port 8011 for internal communication with Nginx (optional for external access)
       - "8011:8011"
     depends_on:
-      # Ensure the database service is up before starting the web service
-      - db
+      # Ensure the database service is up and healthy before starting the web service
+      db:
+        condition: service_healthy # Changed condition to wait for healthcheck
     networks:
       # Connect to the custom application network
       - app_network
@@ -86,4 +93,3 @@ networks:
   # Define a custom bridge network for inter-service communication
   app_network:
     driver: bridge
-
