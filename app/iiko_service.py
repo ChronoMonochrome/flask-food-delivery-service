@@ -2,11 +2,36 @@ import requests
 import os
 from dotenv import load_dotenv
 from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation, OrderItem
+import diskcache as dc # Import diskcache
 
-load_dotenv() # Load environment variables from .env file
+# Load environment variables from .env file (important for both app and standalone scripts)
+load_dotenv()
 
 IIKO_API_URL = os.getenv("IIKO_API_URL")
 IIKO_API_TOKEN = os.getenv("IIKO_API_TOKEN")
+
+# --- Cache Configuration ---
+# Set the cache directory relative to the current script's location,
+# placing it in the project root (.cache folder)
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".cache")
+
+# Get expiration from environment variable, default to -1 (no expiration)
+# Convert to integer, ensuring robustness against invalid input
+try:
+    CACHE_EXPIRATION_MINUTES = int(os.getenv("IIKO_CACHE_EXPIRATION_MINUTES", "-1"))
+except ValueError:
+    print("Warning: IIKO_CACHE_EXPIRATION_MINUTES is not a valid integer. Defaulting to -1 (no expiration).")
+    CACHE_EXPIRATION_MINUTES = -1
+
+CACHE_EXPIRATION_SECONDS = None
+if CACHE_EXPIRATION_MINUTES != -1:
+    CACHE_EXPIRATION_SECONDS = CACHE_EXPIRATION_MINUTES * 60
+
+# Ensure cache directory exists
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Initialize diskcache
+cache = dc.Cache(CACHE_DIR)
 
 # Assuming logger is set up in app/logger.py and imported in app/__init__.py
 # For standalone testing, you might need a basic print or logging setup here.
@@ -21,10 +46,14 @@ except ImportError:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+# --- API Functions with Caching ---
+
+@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_token')
 def get_access_token():
     """
     Получить токен доступа для работы с iiko API.
     """
+    logger.info("Attempting to get iiko access token (checking cache first)...")
     if not IIKO_API_URL or not IIKO_API_TOKEN:
         raise ValueError("IIKO_API_URL or IIKO_API_TOKEN not set in environment variables.")
 
@@ -33,17 +62,23 @@ def get_access_token():
     try:
         response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-        return response.json().get("token")
+        token = response.json().get("token")
+        logger.info("iiko access token obtained (fresh from API and cached).")
+        return token
     except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting iiko token: {e}", exc_info=True)
         raise Exception(f"Ошибка получения токена: {e}")
     except ValueError as e:
+        logger.error(f"Error parsing iiko token JSON response: {e}, Response: {response.text}", exc_info=True)
         raise Exception(f"Ошибка парсинга JSON ответа токена: {e}, Ответ: {response.text}")
 
 
+@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_organizations')
 def get_organizations(token):
     """
     Получить список организаций.
     """
+    logger.info("Attempting to get iiko organizations (checking cache first)...")
     url = f"{IIKO_API_URL}/api/1/organizations"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"organizationIds": []} # Request all accessible organizations
@@ -52,17 +87,23 @@ def get_organizations(token):
         response.raise_for_status()
         organizations = response.json().get("organizations", [])
         if not organizations:
+            logger.warning("No organizations found for the API token.")
             raise Exception("Не найдено организаций по токену API.")
+        logger.info("iiko organizations obtained (fresh from API and cached).")
         return organizations
     except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting iiko organizations: {e}", exc_info=True)
         raise Exception(f"Ошибка получения организаций: {e}")
     except ValueError as e:
+        logger.error(f"Error parsing iiko organizations JSON response: {e}, Response: {response.text}", exc_info=True)
         raise Exception(f"Ошибка парсинга JSON ответа организаций: {e}, Ответ: {response.text}")
 
+@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_menu')
 def get_menu_from_iiko(organization_id, token):
     """
     Получить номенклатуру (меню) для конкретной организации из iiko API.
     """
+    logger.info(f"Attempting to get iiko menu for org {organization_id} (checking cache first)...")
     url = f"{IIKO_API_URL}/api/1/nomenclature"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"organizationId": organization_id}
@@ -70,10 +111,14 @@ def get_menu_from_iiko(organization_id, token):
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30) # Increased timeout for menu
         response.raise_for_status()
-        return response.json()
+        menu_data = response.json()
+        logger.info(f"iiko menu obtained for org {organization_id} (fresh from API and cached).")
+        return menu_data
     except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting iiko menu: {e}", exc_info=True)
         raise Exception(f"Ошибка получения меню из iiko: {e}")
     except ValueError as e:
+        logger.error(f"Error parsing iiko menu JSON response: {e}, Response: {response.text}", exc_info=True)
         raise Exception(f"Ошибка парсинга JSON ответа меню: {e}, Ответ: {response.text}")
 
 # --- Main Synchronization Function ---
@@ -83,12 +128,12 @@ def synchronize_iiko_data():
     Это функция всегда полностью очищает БД перед загрузкой новых данных.
     """
     # Список категорий-аддонов
-    addons_categories = ["Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо"]
+    addons_categories = ["Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо", "Дополнительный соус", "Мясные допы", "Допы горячий цех"]
     logger.info("Начало синхронизации данных с iiko (режим полной перезаписи)...")
     try:
-        token = get_access_token()
+        token = get_access_token() # This call will now use the cache
         logger.info("Токен iiko получен.")
-        organizations = get_organizations(token)
+        organizations = get_organizations(token) # This call will now use the cache
         if not organizations:
             logger.warning("Не найдено организаций для синхронизации.")
             return
@@ -96,7 +141,7 @@ def synchronize_iiko_data():
         organization_id = organizations[0]["id"]
         logger.info(f"Синхронизация для организации ID: {organization_id} ({organizations[0]['name']})")
 
-        iiko_menu_data = get_menu_from_iiko(organization_id, token)
+        iiko_menu_data = get_menu_from_iiko(organization_id, token) # This call will now use the cache
         logger.info("Данные меню из iiko получены.")
 
         # Always clear existing data

@@ -13,3 +13,4 @@ cryptography
 dotenv
 flask-restx
 requests
+diskcache

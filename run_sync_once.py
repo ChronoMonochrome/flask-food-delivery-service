@@ -3,8 +3,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-from app.logger import logger
-
 # Ensure the application root is in the Python path for imports
 # This is crucial when running a script outside of a direct Flask CLI context
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,14 +12,6 @@ from app import create_app
 from app.models import db
 from app.logger import logger
 from app.iiko_service import synchronize_iiko_data
-
-# Load environment variables
-if os.path.exists(os.path.join(BASE_DIR, '.env.local')):
-    load_dotenv(os.path.join(BASE_DIR, '.env.local'))
-    logger.info(f"Loaded env from .env.local")
-else:
-    load_dotenv(os.path.join(BASE_DIR, '.env'))
-    logger.info(f"Loaded env from .env")
 
 def run_immediate_sync():
     # Load .env variables again within the script if create_app() or other parts
