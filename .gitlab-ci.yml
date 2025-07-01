@@ -68,5 +68,7 @@ build:
 
 
 deploy:
+  script:
+    - ssh -p $SSH_PORT $SSH_ADDR "cd ${PROJECT_DIR} && docker-compose stop ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose rm -f ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose pull ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose up -d ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && exit"
   rules:
    - if: $CI_COMMIT_BRANCH == "dev"
