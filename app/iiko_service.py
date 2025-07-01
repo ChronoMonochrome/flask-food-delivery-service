@@ -128,7 +128,7 @@ def synchronize_iiko_data():
     Это функция всегда полностью очищает БД перед загрузкой новых данных.
     """
     # Список категорий-аддонов
-    addons_categories = ["Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо", "Дополнительный соус", "Мясные допы", "Допы горячий цех"]
+    addons_categories = ["Допы", "Овощные допы", "Соусы", "Фокаччо", "Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо", "Дополнительный соус", "Мясные допы", "Допы горячий цех"]
     logger.info("Начало синхронизации данных с iiko (режим полной перезаписи)...")
     try:
         token = get_access_token() # This call will now use the cache
@@ -219,13 +219,13 @@ def synchronize_iiko_data():
                 )
                 db.session.add(addon)
                 db_addons_map[group_id_str] = addon
-                logger.debug(f"Добавлен аддон-группа: {group_name}")
+                logger.info(f"Добавлен аддон-группа: {group_name}")
             # Heuristic for recommendations (if specific group name for them)
             # Example: if "Рекомендации" in group_name.lower():
             #   recommendation = Recommendation(iiko_recommendation_id=group_id, name=group_name, price=0.0)
             #   db.session.add(recommendation)
             #   db_recommendations_map[group_id_str] = recommendation
-            #   logger.debug(f"Добавлена рекомендация-группа: {group_name}")
+            #   logger.info(f"Добавлена рекомендация-группа: {group_name}")
             else: # Treat as regular category
                 category = Category(
                     iiko_category_id=group_id,
@@ -235,7 +235,7 @@ def synchronize_iiko_data():
                 )
                 db.session.add(category)
                 db_categories_map[group_id_str] = category
-                logger.debug(f"Добавлена категория: {group_name}")
+                logger.info(f"Добавлена категория: {group_name}")
         db.session.commit() # Commit after categories/addons to ensure they have IDs for product linking
         logger.info("Категории, Допы и Рекомендации (группы) обработаны.")
 
