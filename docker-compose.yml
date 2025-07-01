@@ -59,7 +59,6 @@ services:
       DATABASE_URL: mysql+pymysql://user:your_db_password@db:3306/mydatabase # Database connection string
       IIKO_API_URL: ${IIKO_API_URL} # Pass iiko API URL from host .env
       IIKO_API_TOKEN: ${IIKO_API_TOKEN} # Pass iiko API Token from host .env
-      IIKO_SYNC_INTERVAL_HOURS: 1 # Configure sync interval (e.g., every 1 hour)
     depends_on:
       db:
         condition: service_healthy # Ensure DB is ready

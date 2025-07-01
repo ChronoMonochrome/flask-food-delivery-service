@@ -18,7 +18,7 @@ def generate_uuid():
 class Category(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     iiko_category_id = db.Column(db.String(36), unique=True, nullable=True) # New: iiko's ID for the category
-    name = db.Column(db.String(120), unique=True, nullable=False)
+    name = db.Column(db.String(120), nullable=False)
     icon = db.Column(db.String(20), nullable=True)
     color = db.Column(db.String(100), nullable=True)
     products = db.relationship('Product', backref='category', lazy=True)
