@@ -63,6 +63,10 @@ mkdir certs
         
     -   `SECRET_KEY`: Секретный ключ для Flask-приложения.
         
+-   `IIKO` API:
+    -   `IIKO_API_URL`: URL API IIKO.
+        
+    -   `IIKO_API_TOKEN`: Токен API IIKO.
 
 
 ### Настройка Git для Frontend (в Dockerfile.web)
