@@ -179,17 +179,19 @@ def load_initial_data(app): # Pass app as an argument since it's likely defined 
 
 # Create database tables and load initial data when the app context is available
 with app.app_context():
-    overwrite_existing_data = True
+    # Set to False if you always want mock data loaded first (and then updated by sync)
+    # Set to True if iiko data should be the sole source from the start.
+    # For a clean initial setup where iiko data is primary, setting this to True
+    # means load_initial_data won't run, and synchronize_iiko_data (by scheduler)
+    # will populate the DB from iiko.
+    # If mock data is for development seeding only and should be overwritten by iiko,
+    # then `overwrite_existing_data_on_first_sync = True` in scheduler.py
+    # and `load_initial_data` here is purely optional.
+    # For now, let's keep it as `False` if you want mock data to load if DB is empty.
+    overwrite_existing_data = False # This flag controls initial mock data load
+
     db.create_all()
     if not overwrite_existing_data:
         load_initial_data(app)
-    # --- Data Synchronization ---
-    # Consider running this only once on deployment, or on a schedule.
-    # For development, running it on every startup might be okay.
-    # In a production environment, you might want a separate cron job or an admin endpoint.
-    #
-    # For now, let's run it once on startup for demonstration.
-    try:
-        synchronize_iiko_data(overwrite_existing=overwrite_existing_data)
-    except Exception as e:
-        app.logger.error(f"Failed to synchronize iiko data on startup: {e}")
+    # The synchronize_iiko_data call is removed from here.
+    # It will now be handled by the separate scheduler service.
