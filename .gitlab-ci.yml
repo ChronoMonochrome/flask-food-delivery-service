@@ -6,13 +6,13 @@ include:
       - 'yaml/.gitlab-ci-deploy.yml'
 
 .pull-build-image-web:
-   - docker pull ${CI_REGISTRY_IMAGE}/build-web:${TAG} || true
+   - docker pull ${CI_REGISTRY_IMAGE}/build:${TAG}-web || true
 .push-build-image-web:
-   - docker push ${CI_REGISTRY_IMAGE}/build-web:${TAG}
+   - docker push ${CI_REGISTRY_IMAGE}/build:${TAG}-web
 .pull-tag-image-web:
-   - docker pull ${CI_REGISTRY_IMAGE}-web:${TAG} || true
+   - docker pull ${CI_REGISTRY_IMAGE}:${TAG}-web || true
 .push-tag-image-web:
-     - docker push ${CI_REGISTRY_IMAGE}-web:${TAG}
+     - docker push ${CI_REGISTRY_IMAGE}:${TAG}-web
 
 stages:
   - set-variables
@@ -46,8 +46,8 @@ build:
     - >
       docker build
       -f Dockerfile.web
-      -t ${CI_REGISTRY_IMAGE}/build-web:${TAG}
-      --cache-from ${CI_REGISTRY_IMAGE}/build-web:${TAG} 
+      -t ${CI_REGISTRY_IMAGE}/build:${TAG}-web
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web 
       --target build-env
       .
     - !reference [ .push-build-image-web ]
@@ -55,9 +55,9 @@ build:
     - >
       docker build 
       -f Dockerfile.web
-      -t ${CI_REGISTRY_IMAGE}-web:${TAG}
-      --cache-from ${CI_REGISTRY_IMAGE}-web:${TAG}
-      --cache-from ${CI_REGISTRY_IMAGE}/build-web:${TAG}  
+      -t ${CI_REGISTRY_IMAGE}:${TAG}-web
+      --cache-from ${CI_REGISTRY_IMAGE}:${TAG}-web
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web  
       .
     - !reference [ .push-tag-image-web ]
   rules:
