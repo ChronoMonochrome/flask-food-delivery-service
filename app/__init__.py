@@ -26,11 +26,4 @@ from app.models import db, Category, Product, Addon, Recommendation, Order, Orde
 from app import routes
 from app.api import api_bp # Import the API blueprint
 
-
 app.register_blueprint(api_bp, url_prefix='/api') # Register the API blueprint
-
-# Create database tables
-with app.app_context():
-    db.create_all()
-    # The synchronize_iiko_data call is removed from here.
-    # It will now be handled by the separate scheduler service.

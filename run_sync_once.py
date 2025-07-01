@@ -29,6 +29,7 @@ def run_immediate_sync():
 
     with app.app_context():
         logger.info("Manual iiko data synchronization initiated.")
+        db.create_all()
         try:
             synchronize_iiko_data()
             logger.info("Manual iiko data synchronization completed successfully.")
