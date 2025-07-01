@@ -1,6 +1,6 @@
 # Stage 1: Build Frontend
 # Use a Node.js image to build the frontend assets
-FROM node:16-alpine as frontend_builder
+FROM node:16-alpine as build-env
 
 # Install git
 RUN apk add --no-cache git
@@ -44,11 +44,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy .env
-COPY .env .
+#COPY .env .
 
 # Copy the built frontend assets from the frontend_builder stage.
 # The 'dist' folder is now expected to be located inside /usr/src/app/repo_source/dist.
-COPY --from=frontend_builder /usr/src/app/repo_source/dist /app/app/static
+COPY --from=build-env /usr/src/app/repo_source/dist /app/app/static
 
 # Set permissions for the static folder recursively
 RUN chmod -R 775 /app/app/static
