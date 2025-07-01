@@ -3,14 +3,10 @@ version: '3.8'
 services:
   # MySQL Database Service
   db:
+    env_file:
+      - ./.env
     image: mysql:8.0 # Using MySQL 8.0 image
     container_name: mysql_db
-    environment:
-      # Database credentials and settings
-      MYSQL_ROOT_PASSWORD: your_root_password # IMPORTANT: Change this to a strong password
-      MYSQL_DATABASE: mydatabase
-      MYSQL_USER: user
-      MYSQL_PASSWORD: your_db_password # IMPORTANT: Change this to a strong password
     volumes:
       # Persistent volume for database data, so data is not lost on container restart
       - db_data:/var/lib/mysql
@@ -36,9 +32,6 @@ services:
       dockerfile: Dockerfile.web # Use the Dockerfile.web to build this service's image
     container_name: flask_app
     restart: always # Always restart the container if it stops
-    environment:
-      # Environment variables passed to the Flask application
-      DATABASE_URL: mysql+pymysql://user:your_db_password@db:3306/mydatabase # Database connection string
     ports:
       # Expose port 8011 for internal communication with Nginx (optional for external access)
       - "8011:8011"
@@ -59,10 +52,6 @@ services:
       dockerfile: Dockerfile.scheduler
     container_name: iiko_sync_scheduler
     restart: always # Always restart the container if it stops
-    environment:
-      DATABASE_URL: mysql+pymysql://user:your_db_password@db:3306/mydatabase # Database connection string
-      IIKO_API_URL: ${IIKO_API_URL} # Pass iiko API URL from host .env
-      IIKO_API_TOKEN: ${IIKO_API_TOKEN} # Pass iiko API Token from host .env
     depends_on:
       db:
         condition: service_healthy # Ensure DB is ready
@@ -71,6 +60,8 @@ services:
 
   # Telegram Bot Service
   bot:
+    env_file:
+      - ./.env
     build:
       context: .
       dockerfile: Dockerfile.bot
@@ -86,6 +77,8 @@ services:
 
   # Nginx Proxy Service
   nginx:
+    env_file:
+      - ./.env
     build:
       context: . # Build context is the current directory
       dockerfile: Dockerfile.nginx # Use the Dockerfile.nginx to build this service's image
