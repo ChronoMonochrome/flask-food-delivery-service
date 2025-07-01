@@ -1,0 +1,74 @@
+include:
+  - project: 'docker/deploy/deploy-templates'
+    file:
+      - 'yaml/.gitlab-ci-set-variables.yml'
+      - 'yaml/.gitlab-ci-build.yml'
+      - 'yaml/.gitlab-ci-deploy.yml'
+
+.pull-build-image-web:
+   - docker pull ${CI_REGISTRY_IMAGE}/build-web:${TAG} || true
+.push-build-image-web:
+   - docker push ${CI_REGISTRY_IMAGE}/build-web:${TAG}
+.pull-tag-image-web:
+   - docker pull ${CI_REGISTRY_IMAGE}-web:${TAG} || true
+.push-tag-image-web:
+     - docker push ${CI_REGISTRY_IMAGE}-web:${TAG}
+
+stages:
+  - set-variables
+  - build
+  - deploy
+
+build:
+  script:
+    - !reference [ .pull-build-image ]
+    - >
+      docker build
+      -f Dockerfile.bot
+      -t ${CI_REGISTRY_IMAGE}/build:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG} 
+      --target build-env
+      --build-arg ENVIRONMENT=${ENVIRONMENT}
+      .
+    - !reference [ .push-build-image ]
+    - !reference [ .pull-tag-image ]
+    - >
+      docker build 
+      -f Dockerfile.bot
+      -t ${CI_REGISTRY_IMAGE}:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}  
+      --build-arg ENVIRONMENT=${ENVIRONMENT}
+      .
+    - !reference [ .push-tag-image ]
+
+    - !reference [ .pull-build-image-web ]
+    - >
+      docker build
+      -f Dockerfile.web
+      -t ${CI_REGISTRY_IMAGE}/build-web:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}/build-web:${TAG} 
+      --target build-env
+      .
+    - !reference [ .push-build-image-web ]
+    - !reference [ .pull-tag-image-web ]
+    - >
+      docker build 
+      -f Dockerfile.web
+      -t ${CI_REGISTRY_IMAGE}-web:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}-web:${TAG}
+      --cache-from ${CI_REGISTRY_IMAGE}/build-web:${TAG}  
+      .
+    - !reference [ .push-tag-image-web ]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev"
+      exists:
+        - Dockerfile.web
+        - Dockerfile.bot
+
+
+deploy:
+  script:
+    - ssh -p $SSH_PORT $SSH_ADDR "cd ${PROJECT_DIR} && docker-compose stop ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose rm -f ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose pull ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose up -d ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && exit"
+  rules:
+   - if: $CI_COMMIT_BRANCH == "dev"
