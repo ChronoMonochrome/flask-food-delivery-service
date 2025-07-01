@@ -18,7 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir apscheduler
 
 # Copy .env and the Flask application code
-COPY .env .
 COPY app /app/app
 COPY app/scheduler.py /app/scheduler.py
 COPY run_sync_once.py /app/run_sync_once.py

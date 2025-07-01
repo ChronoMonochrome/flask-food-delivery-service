@@ -29,6 +29,8 @@ services:
 
   # Flask Application Service (served by Gunicorn)
   web:
+    env_file:
+      - ./.env
     build:
       context: . # Build context is the current directory
       dockerfile: Dockerfile.web # Use the Dockerfile.web to build this service's image
@@ -50,6 +52,8 @@ services:
 
   # New Scheduler Service for periodic iiko data synchronization
   scheduler:
+    env_file:
+      - ./.env
     build:
       context: .
       dockerfile: Dockerfile.scheduler
