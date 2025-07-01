@@ -82,6 +82,8 @@ def synchronize_iiko_data():
     Основная функция для синхронизации данных из iiko в базу данных.
     Это функция всегда полностью очищает БД перед загрузкой новых данных.
     """
+    # Список категорий-аддонов
+    addons_categories = ["Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо"]
     logger.info("Начало синхронизации данных с iiko (режим полной перезаписи)...")
     try:
         token = get_access_token()
@@ -163,8 +165,8 @@ def synchronize_iiko_data():
                 "Пицца Чикаго 29 см": "from-orange-400 to-red-500", "Римская пицца": "from-red-500 to-pink-600"
             }
 
-            # Heuristic for addons (if "доп" or "дополнительн" in group name)
-            if "доп" in group_name.lower() or "дополнительн" in group_name.lower():
+            # Heuristic for addons
+            if group_name in addons_categories:
                 addon = Addon(
                     iiko_addon_id=group_id,
                     name=group_name,
