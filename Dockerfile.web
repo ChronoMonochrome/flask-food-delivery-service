@@ -11,18 +11,13 @@ WORKDIR /usr/src/app/repo_source
 
 # Copy the entire build context (your local project directory, including its .git folder)
 # into this stage.
-COPY . .
-
-# Checkout the 'front' branch. This assumes the 'front' branch exists locally
-# in your project's Git repository.
-RUN git checkout front
+COPY ./front/ .
 
 # Install frontend dependencies and build the project.
 # This assumes package.json is at the root of the checked-out branch
 # and 'dist' is the output folder.
-RUN npm install
+RUN npm install --force
 RUN npm run build
-
 
 # Stage 2: Build Flask Application
 # Use a Python runtime as the base for the final application image
