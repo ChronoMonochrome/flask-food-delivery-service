@@ -12,3 +12,4 @@ python-telegram-bot==22.1
 cryptography
 dotenv
 flask-restx
+requests
