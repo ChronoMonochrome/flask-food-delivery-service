@@ -1,14 +1,17 @@
 # app/__init__.py
 
 import json
+import traceback
 
 from datetime import datetime
 from os.path import join, realpath, dirname
-from flask import Flask
+from flask import Flask, jsonify
+from flask_cors import CORS
 from flask_session import Session
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
+from werkzeug.exceptions import HTTPException, NotFound
 
 from .factory import create_app
 from .models import db # Import db from models
@@ -18,6 +21,9 @@ app = create_app()
 
 # Initialize SQLAlchemy with the app
 db.init_app(app)
+
+# Initialize CORS
+cors = CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"], "allow_headers": "*"}})
 
 # Now import logger, models, and routes as app is fully initialized
 from app.logger import logger

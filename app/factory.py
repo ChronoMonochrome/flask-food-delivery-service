@@ -48,6 +48,7 @@ def create_app():
 
     # Logger configuration
     app.config["DEBUG"] = os.getenv("DEBUG", "False").lower() in ('true', '1', 't') # Convert string to boolean
+    app.debug = app.config["DEBUG"]
     app.config["LOG_ROTATE_DAYS"] = int(os.getenv("LOG_ROTATE_DAYS", 30))
 
     return app
