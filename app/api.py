@@ -1,8 +1,9 @@
 # app/api.py
 
 import traceback
-from flask import Blueprint
+from flask import Blueprint, jsonify
 from flask_restx import Api, Resource, fields
+from werkzeug.exceptions import HTTPException, InternalServerError # Import InternalServerError
 from app.models import db, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
 from sqlalchemy.orm import joinedload
 from datetime import datetime
@@ -10,10 +11,82 @@ import json
 from decimal import Decimal
 
 api_bp = Blueprint('api', __name__)
+# It's good practice to set catch_all_404s=True if you want Flask-RESTx to handle all 404s
+# and potentially other HTTP errors with its error handlers.
 api = Api(api_bp, version='1.0', title='Mandarin Food Delivery API',
-          description='A comprehensive API for Mandarin Food Delivery App', doc='/doc')
+          description='A comprehensive API for Mandarin Food Delivery App', doc='/doc',
+          catch_all_404s=True)
 
-# Models for Flask-RESTx documentation
+# --- Define a model for error responses ---
+error_model = api.model('Error', {
+    'message': fields.String(description='A descriptive error message'),
+    'status': fields.Integer(description='HTTP status code'),
+    'error_type': fields.String(description='Type of the error (e.g., "InternalServerError", "BadRequest")'),
+    'details': fields.String(description='More specific details about the error (e.g., traceback in debug mode)', allow_null=True)
+})
+
+
+# --- Global error handler for all unhandled exceptions (500 errors) ---
+@api.errorhandler(Exception)
+@api.marshal_with(error_model, code=500) # Marshal the output with our error model
+def handle_uncaught_exception(e):
+    """
+    This catches any unhandled exception (Python Exception) and returns a 500 Internal Server Error.
+    It provides a more verbose JSON response than the default Flask HTML error page.
+    """
+    # Log the full traceback to your server logs
+    full_traceback = traceback.format_exc()
+    print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
+
+    # Determine if in debug mode to expose traceback
+    # In a production environment, you typically set FLASK_DEBUG=False
+    # You might want to get this from app.config['DEBUG'] if it's set globally
+    # For now, let's assume if it's not explicitly true, we don't expose
+    import os
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Check api.app.debug as well
+
+    response = {
+        'message': 'An unexpected internal server error occurred.',
+        'status': 500,
+        'error_type': type(e).__name__,
+        'details': full_traceback if is_debug_mode else 'Please contact support with the error timestamp.'
+    }
+    return response, 500
+
+# --- Global error handler for HTTPExceptions (e.g., 404, 400, 405) ---
+@api.errorhandler(HTTPException)
+@api.marshal_with(error_model, code=lambda e: e.code) # Dynamically set status code from HTTPException
+def handle_http_exception(e):
+    """
+    This catches HTTP-related exceptions (like 404 Not Found, 400 Bad Request, etc.)
+    and returns a JSON response.
+    """
+    # Log the exception, but not necessarily the full traceback unless it's a 5xx
+    if e.code >= 500:
+        print(f"HTTP EXCEPTION (SERVER ERROR): {e}\n{traceback.format_exc()}")
+    else:
+        print(f"HTTP EXCEPTION (CLIENT ERROR): {e}")
+
+    # Determine if in debug mode to expose traceback
+    import os
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug
+
+    response = {
+        'message': e.description, # HTTPException usually has a description
+        'status': e.code,
+        'error_type': type(e).__name__,
+        'details': traceback.format_exc() if is_debug_mode and e.code >= 500 else None # Only show traceback for server-side HTTP errors in debug
+    }
+    return response, e.code
+
+
+# ... (rest of your app/api.py content remains the same) ...
+# You should place the error handlers after the 'api = Api(...)' initialization.
+
+
+# --- Your existing models and routes go here, e.g.: ---
+
+# --- New Ingredient Item Model ---
 ingredient_item_model = api.model('IngredientItem', {
     'code': fields.String(description='Ingredient code', allow_null=True),
     'name': fields.String(required=True, description='Ingredient name')
@@ -28,7 +101,6 @@ category_model = api.model('Category', {
 
 addon_model = api.model('Addon', {
     'id': fields.String(required=True, description='Addon ID'),
-    # Ensure name is always a string and required.
     'name': fields.String(required=True, description='Addon name'),
     'price': fields.Float(required=True, description='Addon price'),
     'image': fields.String(description='Addon image URL', allow_null=True)
@@ -36,7 +108,6 @@ addon_model = api.model('Addon', {
 
 recommendation_model = api.model('Recommendation', {
     'id': fields.String(required=True, description='Recommendation ID'),
-    # Ensure name is always a string and required.
     'name': fields.String(required=True, description='Recommendation name'),
     'price': fields.Float(required=True, description='Recommendation price'),
     'image': fields.String(description='Recommendation image URL', allow_null=True)
@@ -49,7 +120,6 @@ nutrition_model = api.model('Nutrition', {
     'proteins': fields.Float(description='Proteins in grams', allow_null=False, default=0.0)
 })
 
-# Modify your existing product_model
 product_model = api.model('Product', {
     'id': fields.String(required=True, description='Product ID'),
     'name': fields.String(required=True, description='Product name'),
@@ -96,11 +166,12 @@ class CategoryList(Resource):
     def get(self):
         """Get all categories"""
         categories = Category.query.all()
+        # This is where an error might occur if categories is malformed or DB connection fails
+        # For example, if a category's 'name' is None but your model requires it.
         return categories
 
 @api.route('/products')
 class ProductList(Resource):
-    # Removed @api.marshal_list_with(product_model) because we are doing manual marshalling
     @api.param('categoryId', 'Filter products by category ID')
     def get(self):
         """Get all products, optionally filtered by category"""
@@ -118,48 +189,51 @@ class ProductList(Resource):
         marshaled_products = []
 
         for product in products:
-            # Prepare nutrition data, ensuring all keys are present with defaults if missing
             nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
             for key in ["calories", "carbs", "fat", "proteins"]:
                 if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
                     nutrition_data_for_marshal[key] = 0.0
-                # Ensure values are floats if they're Decimal or something else
                 if isinstance(nutrition_data_for_marshal[key], Decimal):
                     nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
-
 
             valid_recommendations = []
             if product.recommendations:
                 for pr_association in product.recommendations:
                     rec_obj = pr_association.recommendation
-                    # Explicitly check type of 'name' and other fields
                     if (rec_obj and rec_obj.id and isinstance(rec_obj.name, str) and
                         rec_obj.name and rec_obj.price is not None):
                         valid_recommendations.append({
                             'id': str(rec_obj.id),
-                            'name': rec_obj.name, # Already checked as string
+                            'name': rec_obj.name,
                             'price': float(rec_obj.price) if isinstance(rec_obj.price, Decimal) else rec_obj.price,
                             'image': rec_obj.image
                         })
                     else:
-                        print(f"WARNING: Skipping malformed recommendation for product {product.id}: ID={getattr(rec_obj, 'id', 'N/A')}, Name={repr(getattr(rec_obj, 'name', 'N/A'))} (Type: {type(getattr(rec_obj, 'name', None))}), Price={getattr(rec_obj, 'price', 'N/A')}")
+                        print(f"WARNING: Skipping malformed recommendation for product {product.id}: ID={getattr(rec_obj, 'id', 'N/A')}, Name={repr(getattr(rec_obj, 'name', 'N/A'))} (Type: {type(getattr(rec_obj, 'name', None))}), Price={getattr(rec_obj, 'price', 'N/A')})")
 
             valid_addons = []
             if product.available_addons:
                 for pa_association in product.available_addons:
                     addon_obj = pa_association.addon
-                    # Explicitly check type of 'name' and other fields
                     if (addon_obj and addon_obj.id and isinstance(addon_obj.name, str) and
                         addon_obj.name and addon_obj.price is not None):
                         valid_addons.append({
                             'id': str(addon_obj.id),
-                            'name': addon_obj.name, # Already checked as string
+                            'name': addon_obj.name,
                             'price': float(addon_obj.price) if isinstance(addon_obj.price, Decimal) else addon_obj.price,
                             'image': addon_obj.image
                         })
                     else:
-                        print(f"WARNING: Skipping malformed addon for product {product.id}: ID={getattr(addon_obj, 'id', 'N/A')}, Name={repr(getattr(addon_obj, 'name', 'N/A'))} (Type: {type(getattr(addon_obj, 'name', None))}), Price={getattr(addon_obj, 'price', 'N/A')}")
+                        print(f"WARNING: Skipping malformed addon for product {product.id}: ID={getattr(addon_obj, 'id', 'N/A')}, Name={repr(getattr(addon_obj, 'name', 'N/A'))} (Type: {type(getattr(addon_obj, 'name', None))}), Price={getattr(addon_obj, 'price', 'N/A')})")
 
+            processed_ingredients = product.ingredients if product.ingredients is not None else []
+            cleaned_ingredients = []
+            for ing in processed_ingredients:
+                if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
+                    cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
+                else:
+                    print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
+            
             product_for_marshal = {
                 'id': str(product.id),
                 'name': product.name,
@@ -168,7 +242,7 @@ class ProductList(Resource):
                 'image': product.image,
                 'categoryId': str(product.categoryId),
                 'nutrition': nutrition_data_for_marshal,
-                'ingredients': product.ingredients if product.ingredients is not None else [],
+                'ingredients': cleaned_ingredients,
                 'availableAddons': valid_addons,
                 'recommendations': valid_recommendations
             }
@@ -176,28 +250,21 @@ class ProductList(Resource):
             try:
                 marshaled_products.append(api.marshal(product_for_marshal, product_model))
             except Exception as e:
-                # Log the error, but do NOT include this malformed product in the successful response.
-                # If you need to debug, check your server logs.
                 print(f"CRITICAL ERROR: Failed to marshal product ID: {product.id}. "
                       f"Error: {e}. Raw data: {product_for_marshal}. Traceback:\n{traceback.format_exc()}")
-                # You might return a 500 error for the entire request if this is a critical issue,
-                # or just skip this product for a list endpoint.
-                # For a list endpoint, skipping is often more user-friendly.
-                continue # Skip this product and continue to the next one
+                continue
 
         return marshaled_products
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
-    # Removed @api.marshal_with(product_model) here as well for manual marshalling with error handling
     def get(self, product_id):
         """Get a single product by ID"""
         product = Product.query.filter_by(is_hidden=False).options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        ).get_or_404(product_id)
+        ).get_or_404(product_id) # get_or_404 will automatically raise a 404 HTTPException
 
-        # Prepare nutrition data, ensuring all keys are present with defaults if missing
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
             if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -235,6 +302,14 @@ class ProductResource(Resource):
                 else:
                     print(f"WARNING: Skipping malformed addon for product {product.id}: ID={getattr(addon_obj, 'id', 'N/A')}, Name={repr(getattr(addon_obj, 'name', 'N/A'))} (Type: {type(getattr(addon_obj, 'name', None))}), Price={getattr(addon_obj, 'price', 'N/A')})")
 
+        processed_ingredients = product.ingredients if product.ingredients is not None else []
+        cleaned_ingredients = []
+        for ing in processed_ingredients:
+            if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
+                cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
+            else:
+                print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
+
         product_for_marshal = {
             'id': str(product.id),
             'name': product.name,
@@ -243,7 +318,7 @@ class ProductResource(Resource):
             'image': product.image,
             'categoryId': str(product.categoryId),
             'nutrition': nutrition_data_for_marshal,
-            'ingredients': product.ingredients if product.ingredients is not None else [],
+            'ingredients': cleaned_ingredients,
             'availableAddons': valid_addons,
             'recommendations': valid_recommendations
         }
@@ -253,19 +328,19 @@ class ProductResource(Resource):
         except Exception as e:
             print(f"CRITICAL ERROR: Failed to marshal single product ID: {product.id}. "
                   f"Error: {e}. Raw data: {product_for_marshal}. Traceback:\n{traceback.format_exc()}")
-            # For a single item endpoint, a 500 error is usually appropriate if it fails to marshal.
-            api.abort(500, f"Failed to retrieve product details due to an internal error.")
+            # Instead of abort(500), let the global error handler catch it.
+            # Raising the original exception is generally better as the error handler can get the traceback.
+            raise # Re-raise the exception to be caught by @api.errorhandler(Exception)
 
 
 @api.route('/orders')
 class OrderList(Resource):
-    # Removed @api.marshal_list_with(order_model) because we are doing manual marshalling
     def get(self):
         """Get all orders"""
         orders = Order.query.options(
-            joinedload(Order.items).joinedload(OrderItem.product), # Load product only once
-            joinedload(Order.items).joinedload(OrderItem.selected_addons), # Load selected_addons directly if mapped
-            joinedload(Order.items).joinedload(OrderItem.selected_recommendations) # Load selected_recommendations directly if mapped
+            joinedload(Order.items).joinedload(OrderItem.product),
+            joinedload(Order.items).joinedload(OrderItem.selected_addons),
+            joinedload(Order.items).joinedload(OrderItem.selected_recommendations)
         ).all()
 
         serialized_orders = []
@@ -274,11 +349,8 @@ class OrderList(Resource):
             for item in order.items:
                 product_obj = item.product
 
-                # selected_addons are directly loaded if you have a relationship on OrderItem
-                # Otherwise, if selected_addons_ids is just a list of IDs, you'd fetch them like this:
                 fetched_addons = []
                 if item.selected_addons_ids:
-                    # Filter for actual Addon objects and then check their data integrity
                     addons_from_db = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all()
                     for addon in addons_from_db:
                         if (addon and addon.id and isinstance(addon.name, str) and
@@ -294,11 +366,10 @@ class OrderList(Resource):
 
                 fetched_recommendations = []
                 if item.selected_recommendation_ids:
-                    # Filter for actual Recommendation objects and then check their data integrity
                     recs_from_db = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all()
                     for rec in recs_from_db:
                         if (rec and rec.id and isinstance(rec.name, str) and
-                            (rec.name or rec.price is not None)): # Changed `rec.name` to `rec.name` for consistency
+                            (rec.name or rec.price is not None)):
                             fetched_recommendations.append({
                                 'id': str(rec.id),
                                 'name': rec.name,
@@ -309,7 +380,6 @@ class OrderList(Resource):
                             print(f"WARNING: Skipping malformed selected recommendation ID: {getattr(rec, 'id', 'N/A')} for order item.")
 
 
-                # Prepare product data for marshalling within order item
                 product_nutrition_data_for_marshal = product_obj.nutrition if isinstance(product_obj.nutrition, dict) else {}
                 for key in ["calories", "carbs", "fat", "proteins"]:
                     if key not in product_nutrition_data_for_marshal or product_nutrition_data_for_marshal[key] is None:
@@ -317,6 +387,14 @@ class OrderList(Resource):
                     if isinstance(product_nutrition_data_for_marshal[key], Decimal):
                         product_nutrition_data_for_marshal[key] = float(product_nutrition_data_for_marshal[key])
                 
+                processed_ingredients_in_order_item = product_obj.ingredients if product_obj.ingredients is not None else []
+                cleaned_ingredients_in_order_item = []
+                for ing in processed_ingredients_in_order_item:
+                    if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
+                        cleaned_ingredients_in_order_item.append({'code': ing.get('code', ''), 'name': ing['name']})
+                    else:
+                        print(f"WARNING: Skipping malformed ingredient for product {product_obj.id} within order item: {ing!r}")
+
                 product_marshaled = {
                     'id': str(product_obj.id),
                     'name': product_obj.name,
@@ -325,8 +403,7 @@ class OrderList(Resource):
                     'image': product_obj.image,
                     'categoryId': str(product_obj.categoryId),
                     'nutrition': product_nutrition_data_for_marshal,
-                    'ingredients': product_obj.ingredients if product_obj.ingredients is not None else [],
-                    # For OrderItem, these are not relevant directly from product_obj
+                    'ingredients': cleaned_ingredients_in_order_item,
                     'availableAddons': [], 
                     'recommendations': []
                 }
@@ -335,14 +412,13 @@ class OrderList(Resource):
                     marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
                 except Exception as e:
                     print(f"ERROR: Failed to marshal product {product_obj.id} within order item. Error: {e}. Raw: {product_marshaled}")
-                    marshaled_product_in_order_item = None # Indicate failure
-
+                    marshaled_product_in_order_item = None # Or raise the exception if you want it to fail the whole request
 
                 items_data.append({
-                    'product': marshaled_product_in_order_item, # Use the marshaled product
+                    'product': marshaled_product_in_order_item,
                     'quantity': item.quantity,
-                    'selectedAddons': api.marshal(fetched_addons, addon_model), # Marshal fetched addons
-                    'selectedRecommendations': api.marshal(fetched_recommendations, recommendation_model) # Marshal fetched recommendations
+                    'selectedAddons': api.marshal(fetched_addons, addon_model),
+                    'selectedRecommendations': api.marshal(fetched_recommendations, recommendation_model)
                 })
 
             serialized_orders.append({
@@ -359,7 +435,7 @@ class OrderList(Resource):
                 'createdAt': order.created_at,
                 'estimatedDelivery': order.estimated_delivery
             })
-        return api.marshal(serialized_orders, order_model) # Marshal the entire list of orders
+        return api.marshal(serialized_orders, order_model)
 
 
     @api.expect(order_model)
@@ -464,7 +540,6 @@ class AddonList(Resource):
         addons_data = Addon.query.all()
         valid_addons = []
         for addon in addons_data:
-            # Add explicit type check for 'name'
             if addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None:
                 valid_addons.append(addon)
             else:
@@ -479,7 +554,6 @@ class RecommendationList(Resource):
         recommendations_data = Recommendation.query.all()
         valid_recommendations = []
         for rec in recommendations_data:
-            # Add explicit type check for 'name'
             if rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None):
                 valid_recommendations.append(rec)
             else:
