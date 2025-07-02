@@ -1,4 +1,5 @@
 import requests
+from app.logger import logger
 from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -70,17 +71,17 @@ def get_iiko_token():
     """
     Получить токен доступа для работы с iiko API.
     """
-    print("Fetching iiko token...")
+    logger.info("Fetching iiko token...")
     url = f"{IIKO_API_URL}/api/1/access_token"
     payload = {"apiLogin": IIKO_API_TOKEN}
     try:
         response = requests.post(url, json=payload)
         response.raise_for_status()
         token = response.json().get("token")
-        print("iiko token fetched successfully.")
+        logger.info("iiko token fetched successfully.")
         return token
     except requests.exceptions.RequestException as e:
-        print(f"Error getting iiko token: {e}")
+        logger.error(f"Error getting iiko token: {e}")
         return None
 
 @cache.memoize()
@@ -88,7 +89,7 @@ def get_organizations(token):
     """
     Получить список организаций.
     """
-    print("Fetching organizations...")
+    logger.info("Fetching organizations...")
     url = f"{IIKO_API_URL}/api/1/organizations"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"organizationIds": []} # Empty list to get all organizations
@@ -96,10 +97,10 @@ def get_organizations(token):
         response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
         organizations = response.json().get("organizations", [])
-        print(f"Fetched {len(organizations)} organizations.")
+        logger.info(f"Fetched {len(organizations)} organizations.")
         return organizations
     except requests.exceptions.RequestException as e:
-        print(f"Error getting organizations: {e}")
+        logger.error(f"Error getting organizations: {e}")
         return None
 
 @cache.memoize()
@@ -107,17 +108,17 @@ def get_menu_summary(token):
     """
     Получить сводную информацию по меню (список доступных внешних меню).
     """
-    print("Fetching menu summary...")
+    logger.info("Fetching menu summary...")
     url = f"{IIKO_API_URL}/api/2/menu"
     headers = {"Authorization": f"Bearer {token}"}
     try:
         response = requests.post(url, headers=headers)
         response.raise_for_status()
         menu_summary = response.json()
-        print(f"Menu summary fetched with {len(menu_summary.get('externalMenus', []))} external menus.")
+        logger.info(f"Menu summary fetched with {len(menu_summary.get('externalMenus', []))} external menus.")
         return menu_summary
     except requests.exceptions.RequestException as e:
-        print(f"Error getting menu summary: {e}")
+        logger.error(f"Error getting menu summary: {e}")
         return None
 
 @cache.memoize()
@@ -125,7 +126,7 @@ def get_menu_details_by_id(organization_id, menu_id, token):
     """
     Получить номенклатуру (детали меню) для конкретной организации и внешнего меню ID.
     """
-    print(f"Fetching menu details for organization {organization_id} and menu {menu_id}...")
+    logger.info(f"Fetching menu details for organization {organization_id} and menu {menu_id}...")
     url = f"{IIKO_API_URL}/api/2/menu/by_id"
     headers = {"Authorization": f"Bearer {token}"}
     json_payload = {"externalMenuId": menu_id, "organizationIds": [organization_id]}
@@ -133,10 +134,10 @@ def get_menu_details_by_id(organization_id, menu_id, token):
         response = requests.post(url, headers=headers, json=json_payload)
         response.raise_for_status()
         data = response.json()
-        print("Menu details fetched successfully.")
+        logger.info("Menu details fetched successfully.")
         return data
     except requests.exceptions.RequestException as e:
-        print(f"Error getting menu by ID: {e}")
+        logger.error(f"Error getting menu by ID: {e}")
         return None
 
 def get_iiko_menu_data():
@@ -151,39 +152,39 @@ def get_iiko_menu_data():
     try:
         organizations = get_organizations(token)
         if not organizations:
-            print("No organizations found. Cannot proceed with menu sync.")
+            logger.info("No organizations found. Cannot proceed with menu sync.")
             return None, None
         
         main_organization_id = organizations[0]["id"]
-        print(f"Using primary organization ID: {main_organization_id}")
+        logger.info(f"Using primary organization ID: {main_organization_id}")
 
         menu_summary = get_menu_summary(token)
         if not menu_summary or not menu_summary.get("externalMenus"):
-            print("No external menus found. Cannot retrieve detailed menu.")
+            logger.info("No external menus found. Cannot retrieve detailed menu.")
             return None, main_organization_id
         
         # Take the first external menu for synchronization
         first_external_menu_id = menu_summary["externalMenus"][0]["id"]
-        print(f"Using first external menu ID: {first_external_menu_id}")
+        logger.info(f"Using first external menu ID: {first_external_menu_id}")
 
         menu_data = get_menu_details_by_id(main_organization_id, first_external_menu_id, token)
         return menu_data, main_organization_id
 
     except Exception as e:
-        print(f"An error occurred during iiko menu data retrieval: {e}")
+        logger.error(f"An error occurred during iiko menu data retrieval: {e}")
         return None, None
 
 # --- Synchronization Logic ---
 def synchronize_iiko_data():
-    print("Starting iiko data synchronization...")
+    logger.info("Starting iiko data synchronization...")
     try:
         iiko_data, main_organization_id = get_iiko_menu_data()
     except Exception as e:
-        print(f"Failed to fetch data from iiko: {e}. Exiting sync.")
+        logger.error(f"Failed to fetch data from iiko: {e}. Exiting sync.")
         return
 
     if not iiko_data:
-        print("Empty data received from iiko. Exiting sync.")
+        logger.error("Empty data received from iiko. Exiting sync.")
         return
 
     iiko_categories_raw = iiko_data.get('itemCategories', [])
@@ -216,22 +217,22 @@ def synchronize_iiko_data():
         recommendation_iiko_id = rec_cat_data['id']
 
     if recommendation_iiko_id:
-        print(f"Identified iiko Recommendation Category ID: {recommendation_iiko_id}")
+        logger.info(f"Identified iiko Recommendation Category ID: {recommendation_iiko_id}")
     else:
-        print(f"WARNING: Could not identify iiko Recommendation Category by name '{RECOMMENDATION_CATEGORY_NAME}'. Recommendations won't be synced via category.")
+        logger.info(f"WARNING: Could not identify iiko Recommendation Category by name '{RECOMMENDATION_CATEGORY_NAME}'. Recommendations won't be synced via category.")
 
     # --- Initial Cleanup (Soft Delete) ---
     try:
         db.session.query(Category).update({Category.is_hidden: True})
         db.session.query(Product).update({Product.is_hidden: True})
         db.session.commit()
-        print("Marked existing categories and products as hidden for initial cleanup.")
+        logger.info("Marked existing categories and products as hidden for initial cleanup.")
     except Exception as e:
         db.session.rollback()
-        print(f"Error during initial cleanup (setting is_hidden): {e}")
+        logger.error(f"Error during initial cleanup (setting is_hidden): {e}")
 
     # --- Step 1: Sync Categories ---
-    print("Syncing Categories...")
+    logger.info("Syncing Categories...")
     existing_categories = {c.iiko_category_id: c for c in Category.query.all()}
     category_iiko_to_db_id_map = {}
 
@@ -243,7 +244,7 @@ def synchronize_iiko_data():
         is_hidden = iiko_cat.get('isHidden', False)
 
         if not cat_iiko_id or not name:
-            print(f"Skipping malformed category data: {iiko_cat}")
+            logger.info(f"Skipping malformed category data: {iiko_cat}")
             continue
 
         category = existing_categories.get(cat_iiko_id)
@@ -270,10 +271,10 @@ def synchronize_iiko_data():
             recommendation_category_internal_db_id = category.id
 
     db.session.commit()
-    print("Categories synced.")
+    logger.info("Categories synced.")
 
     # --- Step 2: Sync Products, Addons, and Recommendations ---
-    print("Syncing Products, Addons, and Recommendations...")
+    logger.info("Syncing Products, Addons, and Recommendations...")
 
     existing_products = {p.iiko_product_id: p for p in Product.query.all()}
     existing_addons = {a.iiko_addon_id: a for a in Addon.query.all()}
@@ -295,7 +296,7 @@ def synchronize_iiko_data():
         category_db_id = category_iiko_to_db_id_map.get(category_id)
 
         if not category_db_id:
-            print(f"WARNING: Category '{category_data.get('name')}' (iiko ID: {category_id}) not found in DB map. Skipping its items for product/recommendation processing.")
+            logger.info(f"WARNING: Category '{category_data.get('name')}' (iiko ID: {category_id}) not found in DB map. Skipping its items for product/recommendation processing.")
             continue
 
         for iiko_item in category_data.get('items', []):
@@ -325,10 +326,10 @@ def synchronize_iiko_data():
                             price_value = Decimal(cleaned_price_str)
                         else:
                             price_value = Decimal('0.00')
-                            print(f"WARNING: Unexpected type for price '{type(raw_price_value)}' for item '{item_name}' (ID: {item_iiko_id}). Defaulting to 0.00.")
+                            logger.info(f"WARNING: Unexpected type for price '{type(raw_price_value)}' for item '{item_name}' (ID: {item_iiko_id}). Defaulting to 0.00.")
 
                     except InvalidOperation as e:
-                        print(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
+                        logger.info(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
                         price_value = Decimal('0.00')
 
                 item_image_url = first_size.get('buttonImageUrl')
@@ -367,7 +368,7 @@ def synchronize_iiko_data():
                 ingredients_list.extend(iiko_item['labels'])
 
             if not item_iiko_id or not item_name:
-                print(f"Skipping malformed item data in category '{category_data.get('name')}': {iiko_item}")
+                logger.info(f"Skipping malformed item data in category '{category_data.get('name')}': {iiko_item}")
                 continue
 
             is_our_product = False
@@ -459,7 +460,7 @@ def synchronize_iiko_data():
                         cleaned_price_str = raw_price_value.replace(',', '.').strip()
                         price_value = Decimal(cleaned_price_str)
                 except InvalidOperation as e:
-                    print(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
+                    logger.error(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
 
             item_image_url = first_size.get('buttonImageUrl')
 
@@ -497,17 +498,17 @@ def synchronize_iiko_data():
 
 
     db.session.commit()
-    print("Products, Addons, and Recommendations synced. Now setting up relationships.")
+    logger.info("Products, Addons, and Recommendations synced. Now setting up relationships.")
 
     # --- Step 3: Clean up and Rebuild Relationships ---
     try:
         db.session.query(ProductAddon).delete()
         db.session.query(ProductRecommendation).delete()
         db.session.commit()
-        print("Existing Product-Addon and Product-Recommendation relationships cleared.")
+        logger.info("Existing Product-Addon and Product-Recommendation relationships cleared.")
     except Exception as e:
         db.session.rollback()
-        print(f"Error clearing old relationships: {e}")
+        logger.error(f"Error clearing old relationships: {e}")
 
     # --- Sync Modifiers (Addons) ---
     for iiko_mod_group in iiko_modifier_groups_raw:
@@ -515,7 +516,7 @@ def synchronize_iiko_data():
         parent_product_obj = product_iiko_to_db_map.get(product_iiko_id)
 
         if not parent_product_obj:
-            print(f"Skipping modifier group for iiko Product ID '{product_iiko_id}' not found in our Products map. It might be a non-menu item or a deleted product.")
+            logger.info(f"Skipping modifier group for iiko Product ID '{product_iiko_id}' not found in our Products map. It might be a non-menu item or a deleted product.")
             continue
 
         for iiko_modifier_item_ref in iiko_mod_group.get('modifiers', []):
@@ -525,7 +526,7 @@ def synchronize_iiko_data():
 
             # This block is now less likely to be hit as `mod1_id` should be in addon_iiko_to_db_map from the new processing loop
             if not addon_obj:
-                print(f"WARNING: Addon '{mod_iiko_id}' not found in our Addon map for product '{parent_product_obj.name}'. Trying to create it.")
+                logger.info(f"WARNING: Addon '{mod_iiko_id}' not found in our Addon map for product '{parent_product_obj.name}'. Trying to create it.")
                 full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id) # This lookup should now succeed!
 
                 if full_mod_item_data:
@@ -545,11 +546,11 @@ def synchronize_iiko_data():
                                     cleaned_mod_price_str = raw_mod_price_value.replace(',', '.').strip()
                                     mod_price = Decimal(cleaned_mod_price_str)
                                 else:
-                                    print(f"WARNING: Unexpected type for modifier price '{type(raw_mod_price_value)}' for addon '{mod_name}' (ID: {mod_iiko_id}). Defaulting to 0.00.")
+                                    logger.info(f"WARNING: Unexpected type for modifier price '{type(raw_mod_price_value)}' for addon '{mod_name}' (ID: {mod_iiko_id}). Defaulting to 0.00.")
                                     mod_price = Decimal('0.00')
 
                             except InvalidOperation as e:
-                                print(f"ERROR: Could not convert modifier price '{raw_mod_price_value}' to Decimal for addon '{mod_name}' (ID: {mod_iiko_id}). Error: {e}. Defaulting to 0.00.")
+                                logger.error(f"ERROR: Could not convert modifier price '{raw_mod_price_value}' to Decimal for addon '{mod_name}' (ID: {mod_iiko_id}). Error: {e}. Defaulting to 0.00.")
                                 mod_price = Decimal('0.00')
 
                     mod_image = None
@@ -569,9 +570,9 @@ def synchronize_iiko_data():
                     db.session.add(addon_obj)
                     db.session.flush()
                     addon_iiko_to_db_map[mod_iiko_id] = addon_obj
-                    print(f"Created Addon '{mod_name}' (ID: {mod_iiko_id}) and added to map.")
+                    logger.info(f"Created Addon '{mod_name}' (ID: {mod_iiko_id}) and added to map.")
                 else:
-                    print(f"ERROR: Could not find full data for Addon '{mod_iiko_id}'. Skipping relationship for product '{parent_product_obj.name}'.")
+                    logger.error(f"ERROR: Could not find full data for Addon '{mod_iiko_id}'. Skipping relationship for product '{parent_product_obj.name}'.")
                     continue
 
             # Add the relationship only if addon_obj was found or successfully created
@@ -594,7 +595,7 @@ def synchronize_iiko_data():
             db.session.add(product_recommendation)
 
     db.session.commit()
-    print("Relationships synced.")
+    logger.info("Relationships synced.")
 
     # Clean up hidden items after all relationships are established
     # This ensures that even if items are temporarily hidden during sync, their relationships are correctly processed
@@ -606,4 +607,4 @@ def synchronize_iiko_data():
     # db.session.commit()
     # print("Removed hidden categories and products.")
 
-    print("Data synchronization complete.")
+    logger.info("Data synchronization complete.")
