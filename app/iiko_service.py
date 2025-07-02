@@ -1,343 +1,609 @@
 import requests
+from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+import json
 import os
-from dotenv import load_dotenv
-from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation, OrderItem
-import diskcache as dc # Import diskcache
 
-# Load environment variables from .env file (important for both app and standalone scripts)
+from dotenv import load_dotenv
 load_dotenv()
+
+# Import diskcache
+from diskcache import Cache
+
+# Initialize the cache
+# The cache directory will be 'iiko_cache' in the current working directory
+# Data will expire after 900 seconds (15 minutes)
+cache = Cache('iiko_cache', expire=900)
 
 IIKO_API_URL = os.getenv("IIKO_API_URL")
 IIKO_API_TOKEN = os.getenv("IIKO_API_TOKEN")
 
-# --- Cache Configuration ---
-# Set the cache directory relative to the current script's location,
-# placing it in the project root (.cache folder)
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".cache")
+RECOMMENDATION_CATEGORY_NAME = "Рекомендованные (сиутативные)"
 
-# Get expiration from environment variable, default to -1 (no expiration)
-# Convert to integer, ensuring robustness against invalid input
-try:
-    CACHE_EXPIRATION_MINUTES = int(os.getenv("IIKO_CACHE_EXPIRATION_MINUTES", "-1"))
-except ValueError:
-    print("Warning: IIKO_CACHE_EXPIRATION_MINUTES is not a valid integer. Defaulting to -1 (no expiration).")
-    CACHE_EXPIRATION_MINUTES = -1
+# --- Icon and Color Mappings ---
+# These are custom mappings and are not sourced from iiko API directly.
+# They will be used to set default icons and colors for categories.
+icon_map = {
+    "Бургеры": "🍔", "Пицца": "🍕", "Суши": "🍣", "Салаты": "🥗",
+    "Десерты": "🍰", "Напитки": "🥤", "Закуски": "🍟", "Горячие блюда": "🍲",
+    "Вок": "🍜", "Кальцоне": "🍕", "Ламаджо": "🍖", "Осетинские пироги": "🥧",
+    "Паста": "🍝", "Роллы": "🍣", "Сеты": "🍱", "Супы": "🥣",
+    "Фокаччо": "🍞", "Хачапури": "🧀", "Хот-доги и донер": "🌭",
+    "Мясо": "🥩", "Начинка": "🌶️", "Дополнительный соус": "🧂", "Лапша": "🍜",
+    "Донер на выбор": "🥙", "Сосиска на выбор": "🌭", "Рыба и морепродукты": "🦐",
+    "Сыр": "🧀", "Допы горячий цех": "🔥", "Роллы маки": "🍣", "Спайси": "🌶️",
+    "Суши Гунканы": "🍣", "Рулетики": "🌯", "Соусы": "🥣", "Fasty rolls": "🌯",
+    "По-имеретински": "🥧",
+    "КАФЕ ПИЦЦА 35см": "🍕", "КАФЕ ПИЦЦА РИМСКАЯ": "🍕", "Пицца 35 см.": "🍕",
+    "Пицца Неаполитано 24 см": "🍕", "Пицца Чикаго 29 см": "🍕", "Римская пицца": "🍕"
+}
 
-CACHE_EXPIRATION_SECONDS = None
-if CACHE_EXPIRATION_MINUTES != -1:
-    CACHE_EXPIRATION_SECONDS = CACHE_EXPIRATION_MINUTES * 60
+color_map = {
+    "Бургеры": "from-yellow-400 to-orange-500", "Пицца": "from-red-400 to-red-600",
+    "Суши": "from-blue-400 to-purple-500", "Салаты": "from-green-400 to-lime-500",
+    "Десерты": "from-pink-400 to-rose-500", "Напитки": "from-teal-400 to-cyan-500",
+    "Закуски": "from-amber-400 to-yellow-600", "Горячие блюда": "from-orange-500 to-red-700",
+    "Вок": "from-purple-400 to-fuchsia-500", "Кальцоне": "from-red-500 to-pink-600",
+    "Ламаджо": "from-amber-500 to-orange-700", "Осетинские пироги": "from-yellow-500 to-lime-600",
+    "Паста": "from-red-300 to-red-500", "Роллы": "from-blue-300 to-indigo-500",
+    "Сеты": "from-pink-500 to-purple-600", "Супы": "from-emerald-400 to-cyan-600",
+    "Фокаччо": "from-yellow-600 to-orange-700", "Хачапури": "from-lime-500 to-green-600",
+    "Хот-доги и донер": "from-orange-400 to-red-500",
+    "Мясо": "from-red-700 to-pink-800", "Начинка": "from-green-500 to-lime-700",
+    "Дополнительный соус": "from-gray-300 to-gray-500", "Лапша": "from-purple-500 to-indigo-600",
+    "Донер на выбор": "from-yellow-700 to-orange-800", "Сосиска на выбор": "from-red-600 to-red-800",
+    "Рыба и морепродукты": "from-blue-500 to-cyan-600", "Сыр": "from-yellow-300 to-yellow-500",
+    "Допы горячий цех": "from-red-400 to-red-600", "Роллы маки": "from-blue-400 to-indigo-600",
+    "Спайси": "from-orange-500 to-red-600", "Суши Гунканы": "from-purple-400 to-fuchsia-500",
+    "Рулетики": "from-amber-400 to-orange-500", "Соусы": "from-gray-500 to-gray-700",
+    "Фаст роллы": "from-lime-400 to-green-500", "По-имеретински": "from-brown-400 to-orange-600",
+    "КАФЕ ПИЦЦА 35см": "from-orange-400 to-red-500", "КАФЕ ПИЦЦА РИМСКАЯ": "from-red-500 to-pink-600",
+    "Пицца 35 см.": "from-orange-400 to-red-500", "Пицца Неаполитано 24 см": "from-red-500 to-pink-600",
+    "Пицца Чикаго 29 см": "from-orange-400 to-red-500", "Римская пицца": "from-red-500 to-pink-600"
+}
 
-# Ensure cache directory exists
-os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Initialize diskcache
-cache = dc.Cache(CACHE_DIR)
-
-# Assuming logger is set up in app/logger.py and imported in app/__init__.py
-# For standalone testing, you might need a basic print or logging setup here.
-try:
-    from app.logger import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-# --- API Functions with Caching ---
-
-@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_token')
-def get_access_token():
+# --- Helper functions for iiko API interaction ---
+@cache.memoize()
+def get_iiko_token():
     """
     Получить токен доступа для работы с iiko API.
     """
-    logger.info("Attempting to get iiko access token (checking cache first)...")
-    if not IIKO_API_URL or not IIKO_API_TOKEN:
-        raise ValueError("IIKO_API_URL or IIKO_API_TOKEN not set in environment variables.")
-
+    print("Fetching iiko token...")
     url = f"{IIKO_API_URL}/api/1/access_token"
     payload = {"apiLogin": IIKO_API_TOKEN}
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
         token = response.json().get("token")
-        logger.info("iiko access token obtained (fresh from API and cached).")
+        print("iiko token fetched successfully.")
         return token
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error getting iiko token: {e}", exc_info=True)
-        raise Exception(f"Ошибка получения токена: {e}")
-    except ValueError as e:
-        logger.error(f"Error parsing iiko token JSON response: {e}, Response: {response.text}", exc_info=True)
-        raise Exception(f"Ошибка парсинга JSON ответа токена: {e}, Ответ: {response.text}")
+        print(f"Error getting iiko token: {e}")
+        return None
 
-
-@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_organizations')
+@cache.memoize()
 def get_organizations(token):
     """
     Получить список организаций.
     """
-    logger.info("Attempting to get iiko organizations (checking cache first)...")
+    print("Fetching organizations...")
     url = f"{IIKO_API_URL}/api/1/organizations"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"organizationIds": []} # Request all accessible organizations
+    payload = {"organizationIds": []} # Empty list to get all organizations
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
         organizations = response.json().get("organizations", [])
-        if not organizations:
-            logger.warning("No organizations found for the API token.")
-            raise Exception("Не найдено организаций по токену API.")
-        logger.info("iiko organizations obtained (fresh from API and cached).")
+        print(f"Fetched {len(organizations)} organizations.")
         return organizations
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error getting iiko organizations: {e}", exc_info=True)
-        raise Exception(f"Ошибка получения организаций: {e}")
-    except ValueError as e:
-        logger.error(f"Error parsing iiko organizations JSON response: {e}, Response: {response.text}", exc_info=True)
-        raise Exception(f"Ошибка парсинга JSON ответа организаций: {e}, Ответ: {response.text}")
+        print(f"Error getting organizations: {e}")
+        return None
 
-@cache.memoize(expire=CACHE_EXPIRATION_SECONDS, tag='iiko_menu')
-def get_menu_from_iiko(organization_id, token):
+@cache.memoize()
+def get_menu_summary(token):
     """
-    Получить номенклатуру (меню) для конкретной организации из iiko API.
+    Получить сводную информацию по меню (список доступных внешних меню).
     """
-    logger.info(f"Attempting to get iiko menu for org {organization_id} (checking cache first)...")
-    url = f"{IIKO_API_URL}/api/1/nomenclature"
+    print("Fetching menu summary...")
+    url = f"{IIKO_API_URL}/api/2/menu"
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"organizationId": organization_id}
-
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30) # Increased timeout for menu
+        response = requests.post(url, headers=headers)
         response.raise_for_status()
-        menu_data = response.json()
-        logger.info(f"iiko menu obtained for org {organization_id} (fresh from API and cached).")
-        return menu_data
+        menu_summary = response.json()
+        print(f"Menu summary fetched with {len(menu_summary.get('externalMenus', []))} external menus.")
+        return menu_summary
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error getting iiko menu: {e}", exc_info=True)
-        raise Exception(f"Ошибка получения меню из iiko: {e}")
-    except ValueError as e:
-        logger.error(f"Error parsing iiko menu JSON response: {e}, Response: {response.text}", exc_info=True)
-        raise Exception(f"Ошибка парсинга JSON ответа меню: {e}, Ответ: {response.text}")
+        print(f"Error getting menu summary: {e}")
+        return None
 
-# --- Main Synchronization Function ---
-def synchronize_iiko_data():
+@cache.memoize()
+def get_menu_details_by_id(organization_id, menu_id, token):
     """
-    Основная функция для синхронизации данных из iiko в базу данных.
-    Это функция всегда полностью очищает БД перед загрузкой новых данных.
+    Получить номенклатуру (детали меню) для конкретной организации и внешнего меню ID.
     """
-    # Список категорий-аддонов
-    addons_categories = ["Допы", "Овощные допы", "Соусы", "Фокаччо", "Сосиска на выбор", "Добавки к пицце", "Начинка", "Сыр", "Спайси", "Донер на выбор", "Мясо", "Дополнительный соус", "Мясные допы", "Допы горячий цех"]
-    logger.info("Начало синхронизации данных с iiko (режим полной перезаписи)...")
+    print(f"Fetching menu details for organization {organization_id} and menu {menu_id}...")
+    url = f"{IIKO_API_URL}/api/2/menu/by_id"
+    headers = {"Authorization": f"Bearer {token}"}
+    json_payload = {"externalMenuId": menu_id, "organizationIds": [organization_id]}
     try:
-        token = get_access_token() # This call will now use the cache
-        logger.info("Токен iiko получен.")
-        organizations = get_organizations(token) # This call will now use the cache
+        response = requests.post(url, headers=headers, json=json_payload)
+        response.raise_for_status()
+        data = response.json()
+        print("Menu details fetched successfully.")
+        return data
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting menu by ID: {e}")
+        return None
+
+def get_iiko_menu_data():
+    """
+    Оркестрирует вызовы iiko API для получения полного меню.
+    Возвращает (iiko_menu_data, main_organization_id)
+    """
+    token = get_iiko_token()
+    if not token:
+        return None, None
+
+    try:
+        organizations = get_organizations(token)
         if not organizations:
-            logger.warning("Не найдено организаций для синхронизации.")
-            return
+            print("No organizations found. Cannot proceed with menu sync.")
+            return None, None
+        
+        main_organization_id = organizations[0]["id"]
+        print(f"Using primary organization ID: {main_organization_id}")
 
-        organization_id = organizations[0]["id"]
-        logger.info(f"Синхронизация для организации ID: {organization_id} ({organizations[0]['name']})")
+        menu_summary = get_menu_summary(token)
+        if not menu_summary or not menu_summary.get("externalMenus"):
+            print("No external menus found. Cannot retrieve detailed menu.")
+            return None, main_organization_id
+        
+        # Take the first external menu for synchronization
+        first_external_menu_id = menu_summary["externalMenus"][0]["id"]
+        print(f"Using first external menu ID: {first_external_menu_id}")
 
-        iiko_menu_data = get_menu_from_iiko(organization_id, token) # This call will now use the cache
-        logger.info("Данные меню из iiko получены.")
-
-        # Always clear existing data
-        logger.info("Очистка существующих данных в базе данных...")
-        # IMPORTANT: Delete child records first to satisfy foreign key constraints
-        db.session.query(OrderItem).delete(synchronize_session='fetch')
-        db.session.query(ProductAddon).delete(synchronize_session='fetch')
-        db.session.query(ProductRecommendation).delete(synchronize_session='fetch')
-        db.session.query(Product).delete(synchronize_session='fetch')
-        db.session.query(Category).delete(synchronize_session='fetch')
-        db.session.query(Addon).delete(synchronize_session='fetch')
-        db.session.query(Recommendation).delete(synchronize_session='fetch')
-        db.session.commit()
-        logger.info("Существующие данные очищены.")
-
-        # Maps to hold newly created/updated objects
-        db_categories_map = {}
-        db_addons_map = {}
-        db_recommendations_map = {}
-        db_products_map = {}
-
-        # --- Process Groups (Categories, Addons, Recommendations) ---
-        iiko_groups = {g["id"]: g for g in iiko_menu_data.get("groups", [])}
-
-        for group_id, group_data in iiko_groups.items():
-            group_id_str = str(group_id)
-            group_name = group_data["name"]
-
-            icon_map = {
-                "Бургеры": "🍔", "Пицца": "🍕", "Суши": "🍣", "Салаты": "🥗",
-                "Десерты": "🍰", "Напитки": "🥤", "Закуски": "🍟", "Горячие блюда": "🍲",
-                "Вок": "🍜", "Кальцоне": "🍕", "Ламаджо": "🍖", "Осетинские пироги": "🥧",
-                "Паста": "🍝", "Роллы": "🍣", "Сеты": "🍱", "Супы": "🥣",
-                "Фокаччо": "🍞", "Хачапури": "🧀", "Хот-доги и донер": "🌭",
-                "Мясо": "🥩", "Начинка": "🌶️", "Дополнительный соус": "🧂", "Лапша": "🍜",
-                "Донер на выбор": "🥙", "Сосиска на выбор": "🌭", "Рыба и морепродукты": "🦐",
-                "Сыр": "🧀", "Допы горячий цех": "🔥", "Роллы маки": "🍣", "Спайси": "🌶️",
-                "Суши Гунканы": "🍣", "Рулетики": "🌯", "Соусы": "🥣", "Фаст роллы": "🌯",
-                "По-имеретински": "🥧", "Хачапури": "🧀", "Начинка": "🧅", "Дополнительный соус": "🥫",
-                "Донер на выбор": "🥙", "Сосиска на выбор": "🌭", "Горячие роллы": "🔥🍣",
-                "Запеченные роллы": "♨️🍣", "Нигири": "🍣", "Онигири": "🍙",
-                "КАФЕ ПИЦЦА 35см": "🍕", "КАФЕ ПИЦЦА РИМСКАЯ": "🍕", "Пицца 35 см.": "🍕",
-                "Пицца Неаполитано 24 см": "🍕", "Пицца Чикаго 29 см": "🍕", "Римская пицца": "🍕"
-            }
-            color_map = {
-                "Бургеры": "from-yellow-400 to-orange-500", "Пицца": "from-red-400 to-red-600",
-                "Суши": "from-blue-400 to-purple-500", "Салаты": "from-green-400 to-lime-500",
-                "Десерты": "from-pink-400 to-rose-500", "Напитки": "from-teal-400 to-cyan-500",
-                "Закуски": "from-amber-400 to-yellow-600", "Горячие блюда": "from-orange-500 to-red-700",
-                "Вок": "from-purple-400 to-fuchsia-500", "Кальцоне": "from-red-500 to-pink-600",
-                "Ламаджо": "from-amber-500 to-orange-700", "Осетинские пироги": "from-yellow-500 to-lime-600",
-                "Паста": "from-red-300 to-red-500", "Роллы": "from-blue-300 to-indigo-500",
-                "Сеты": "from-pink-500 to-purple-600", "Супы": "from-emerald-400 to-cyan-600",
-                "Фокаччо": "from-yellow-600 to-orange-700", "Хачапури": "from-lime-500 to-green-600",
-                "Хот-доги и донер": "from-orange-400 to-red-500",
-                "Мясо": "from-red-700 to-pink-800", "Начинка": "from-green-500 to-lime-700",
-                "Дополнительный соус": "from-gray-300 to-gray-500", "Лапша": "from-purple-500 to-indigo-600",
-                "Донер на выбор": "from-yellow-700 to-orange-800", "Сосиска на выбор": "from-red-600 to-red-800",
-                "Рыба и морепродукты": "from-blue-500 to-cyan-600", "Сыр": "from-yellow-300 to-yellow-500",
-                "Допы горячий цех": "from-red-400 to-red-600", "Роллы маки": "from-blue-400 to-indigo-600",
-                "Спайси": "from-orange-500 to-red-600", "Суши Гунканы": "from-purple-400 to-fuchsia-500",
-                "Рулетики": "from-amber-400 to-orange-500", "Соусы": "from-gray-500 to-gray-700",
-                "Фаст роллы": "from-lime-400 to-green-500", "По-имеретински": "from-brown-400 to-orange-600",
-                "КАФЕ ПИЦЦА 35см": "from-orange-400 to-red-500", "КАФЕ ПИЦЦА РИМСКАЯ": "from-red-500 to-pink-600",
-                "Пицца 35 см.": "from-orange-400 to-red-500", "Пицца Неаполитано 24 см": "from-red-500 to-pink-600",
-                "Пицца Чикаго 29 см": "from-orange-400 to-red-500", "Римская пицца": "from-red-500 to-pink-600"
-            }
-
-            # Heuristic for addons
-            if group_name in addons_categories:
-                addon = Addon(
-                    iiko_addon_id=group_id,
-                    name=group_name,
-                    price=0.0 # Price for group is irrelevant here
-                )
-                db.session.add(addon)
-                db_addons_map[group_id_str] = addon
-                logger.info(f"Добавлен аддон-группа: {group_name}")
-            # Heuristic for recommendations (if specific group name for them)
-            # Example: if "Рекомендации" in group_name.lower():
-            #   recommendation = Recommendation(iiko_recommendation_id=group_id, name=group_name, price=0.0)
-            #   db.session.add(recommendation)
-            #   db_recommendations_map[group_id_str] = recommendation
-            #   logger.info(f"Добавлена рекомендация-группа: {group_name}")
-            else: # Treat as regular category
-                category = Category(
-                    iiko_category_id=group_id,
-                    name=group_name,
-                    icon=icon_map.get(group_name, "❓"), # Default icon if not found
-                    color=color_map.get(group_name, "from-gray-400 to-gray-600") # Default color
-                )
-                db.session.add(category)
-                db_categories_map[group_id_str] = category
-                logger.info(f"Добавлена категория: {group_name}")
-        db.session.commit() # Commit after categories/addons to ensure they have IDs for product linking
-        logger.info("Категории, Допы и Рекомендации (группы) обработаны.")
-
-        # --- Process Products ---
-        iiko_products = iiko_menu_data.get("products", [])
-
-        for product_data in iiko_products:
-            iiko_product_id = product_data["id"]
-            iiko_product_id_str = str(iiko_product_id)
-            product_name = product_data["name"]
-            product_description = product_data.get("description", "")
-
-            size_prices = product_data.get("sizePrices", [])
-            price = size_prices[0]["price"]["currentPrice"] if size_prices else 0.0
-
-            image_links = product_data.get("imageLinks", [])
-            image_url = image_links[0] if image_links else None
-
-            iiko_parent_group_id = product_data.get("parentGroup")
-            iiko_parent_group_id_str = str(iiko_parent_group_id) if iiko_parent_group_id else None
-
-            # Check if this product should be treated as an Addon (item) or Recommendation (item) itself
-            if iiko_parent_group_id_str in db_addons_map:
-                addon = Addon(
-                    iiko_addon_id=iiko_product_id, # Use product's iiko_id for the addon item
-                    name=product_name,
-                    price=price,
-                    image=image_url
-                )
-                db.session.add(addon)
-                db_addons_map[iiko_product_id_str] = addon # Store with product's iiko ID
-                logger.debug(f"Добавлен новый элемент-аддон: {product_name}")
-                continue # Don't process as a regular product
-
-            # Similar logic for products that are recommendations themselves.
-            # You might have a specific iiko group for 'recommended products'
-            # For now, we'll assume a recommendation is either a group (already handled)
-            # or a regular product that gets linked below.
-
-            # If not an addon, process as a regular product
-            category = db_categories_map.get(iiko_parent_group_id_str)
-            if not category:
-                logger.warning(f"Предупреждение: Продукт '{product_name}' (ID: {iiko_product_id}) имеет неизвестную родительскую группу ID: {iiko_parent_group_id}. Пропуск.")
-                continue
-
-            product = Product(
-                iiko_product_id=iiko_product_id,
-                name=product_name,
-                description=product_description,
-                price=price,
-                image=image_url,
-                categoryId=category.id,
-                nutrition={}, # iiko doesn't provide this directly in nomenclature, leave empty
-                ingredients=[] # iiko doesn't provide this directly, leave empty
-            )
-            db.session.add(product)
-            db_products_map[iiko_product_id_str] = product # Store for later linking of junction tables
-            logger.debug(f"Добавлен продукт: {product_name}")
-
-        db.session.commit()
-        logger.info("Продукты обработаны.")
-
-        # --- Link Products to Addons/Recommendations ---
-        # Re-establish links for all current products. This is a general linking approach.
-        # If iiko provides specific product-modifier links, you'd integrate that here.
-
-        # Example: Link all main products to "Соевый соус" as an addon (if it exists)
-        soy_sauce_addon = Addon.query.filter_by(name="Соевый соус").first() # Assuming name is unique for common addons
-
-        # Example: Let's assume a general recommendation like "Кола 0.5л"
-        coke_rec_item = Recommendation.query.filter_by(name="Кола 0.5л").first()
-        # If "Кола 0.5л" is a product that you want to *recommend*, and it's not yet a Recommendation item, create it.
-        coke_product_for_rec = Product.query.filter_by(name="Кола 0.5л").first()
-        if coke_product_for_rec and not coke_rec_item:
-            coke_rec_item = Recommendation(
-                iiko_recommendation_id=coke_product_for_rec.iiko_product_id, # Use product's iiko ID as recommendation ID
-                name=coke_product_for_rec.name,
-                price=coke_product_for_rec.price,
-                image=coke_product_for_rec.image
-            )
-            db.session.add(coke_rec_item)
-            db.session.commit() # Commit to get its ID before linking
-            logger.info(f"Created new Recommendation entry for product: {coke_product_for_rec.name}")
-
-        for db_product in db_products_map.values():
-            # Link common addons
-            if soy_sauce_addon:
-                db.session.add(ProductAddon(product=db_product, addon=soy_sauce_addon))
-                logger.debug(f"Linked {db_product.name} to {soy_sauce_addon.name} addon.")
-
-            # Link common recommendations
-            if coke_rec_item:
-                db.session.add(ProductRecommendation(product=db_product, recommendation=coke_rec_item))
-                logger.debug(f"Linked {db_product.name} to {coke_rec_item.name} recommendation.")
-
-        db.session.commit()
-        logger.info("Продукты успешно связаны с аддонами/рекомендациями.")
-
-
-        logger.info("Синхронизация данных с iiko завершена успешно.")
+        menu_data = get_menu_details_by_id(main_organization_id, first_external_menu_id, token)
+        return menu_data, main_organization_id
 
     except Exception as e:
-        db.session.rollback() # Rollback all changes on error
-        logger.error(f"Ошибка при синхронизации данных с iiko: {e}", exc_info=True) # Log full traceback
-        raise # Re-raise the exception to propagate it
+        print(f"An error occurred during iiko menu data retrieval: {e}")
+        return None, None
+
+# --- Synchronization Logic ---
+def synchronize_iiko_data():
+    print("Starting iiko data synchronization...")
+    try:
+        iiko_data, main_organization_id = get_iiko_menu_data()
+    except Exception as e:
+        print(f"Failed to fetch data from iiko: {e}. Exiting sync.")
+        return
+
+    if not iiko_data:
+        print("Empty data received from iiko. Exiting sync.")
+        return
+
+    iiko_categories_raw = iiko_data.get('itemCategories', [])
+    iiko_modifier_groups_raw = iiko_data.get('modifierGroups', [])
+
+    # --- FIX START: Populate all_iiko_items_by_id from both 'itemCategories' and top-level 'items' ---
+    all_iiko_items_by_id = {}
+    
+    # First, populate from items nested within categories
+    for category_data in iiko_categories_raw:
+        for item_data in category_data.get('items', []):
+            item_id = item_data.get('itemId')
+            if item_id:
+                all_iiko_items_by_id[item_id] = item_data
+
+    # Second, populate from top-level 'items' array (for modifiers, sometimes products/recs)
+    for item_data in iiko_data.get('items', []):
+        item_id = item_data.get('itemId')
+        if item_id:
+            # Overwrite if already exists from categories, or add if new
+            all_iiko_items_by_id[item_id] = item_data
+    # --- FIX END ---
+
+    # --- Step 0: Identify the Recommendation Category in iiko ---
+    recommendation_category_internal_db_id = None
+    recommendation_iiko_id = None
+
+    rec_cat_data = next((c for c in iiko_categories_raw if c.get('name') == RECOMMENDATION_CATEGORY_NAME), None)
+    if rec_cat_data:
+        recommendation_iiko_id = rec_cat_data['id']
+
+    if recommendation_iiko_id:
+        print(f"Identified iiko Recommendation Category ID: {recommendation_iiko_id}")
+    else:
+        print(f"WARNING: Could not identify iiko Recommendation Category by name '{RECOMMENDATION_CATEGORY_NAME}'. Recommendations won't be synced via category.")
+
+    # --- Initial Cleanup (Soft Delete) ---
+    try:
+        db.session.query(Category).update({Category.is_hidden: True})
+        db.session.query(Product).update({Product.is_hidden: True})
+        db.session.commit()
+        print("Marked existing categories and products as hidden for initial cleanup.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error during initial cleanup (setting is_hidden): {e}")
+
+    # --- Step 1: Sync Categories ---
+    print("Syncing Categories...")
+    existing_categories = {c.iiko_category_id: c for c in Category.query.all()}
+    category_iiko_to_db_id_map = {}
+
+    for iiko_cat in iiko_categories_raw:
+        cat_iiko_id = iiko_cat.get('id')
+        name = iiko_cat.get('name')
+        description = iiko_cat.get('description')
+        image_url = iiko_cat.get('buttonImageUrl') or iiko_cat.get('headerImageUrl')
+        is_hidden = iiko_cat.get('isHidden', False)
+
+        if not cat_iiko_id or not name:
+            print(f"Skipping malformed category data: {iiko_cat}")
+            continue
+
+        category = existing_categories.get(cat_iiko_id)
+        if category:
+            category.name = name
+            category.description = description
+            category.image_url = image_url
+            category.is_hidden = is_hidden
+        else:
+            category = Category(
+                iiko_category_id=cat_iiko_id,
+                name=name,
+                description=description,
+                image_url=image_url,
+                is_hidden=is_hidden,
+                icon=icon_map.get(name, "❓"),
+                color=color_map.get(name, "from-gray-400 to-gray-600")
+            )
+            db.session.add(category)
+        db.session.flush()
+        category_iiko_to_db_id_map[cat_iiko_id] = category.id
+
+        if cat_iiko_id == recommendation_iiko_id:
+            recommendation_category_internal_db_id = category.id
+
+    db.session.commit()
+    print("Categories synced.")
+
+    # --- Step 2: Sync Products, Addons, and Recommendations ---
+    print("Syncing Products, Addons, and Recommendations...")
+
+    existing_products = {p.iiko_product_id: p for p in Product.query.all()}
+    existing_addons = {a.iiko_addon_id: a for a in Addon.query.all()}
+    existing_recommendations = {r.iiko_recommendation_id: r for r in Recommendation.query.all()}
+
+    product_iiko_to_db_map = {}
+    addon_iiko_to_db_map = {}
+    recommendation_iiko_to_db_map = {}
+
+    # Iterate through all items that are meant to be products, addons, or recommendations
+    # This loop should process items regardless of their original nesting (category or top-level 'items')
+    # Use all_iiko_items_by_id as the source to ensure all relevant items are processed once.
+    # However, for products, they *must* be associated with a category, so we still need to
+    # iterate through categories for products. Modifiers/Recommendations can be handled more flexibly.
+
+    # Process items found within categories (these will be products and possibly recommendations)
+    for category_data in iiko_categories_raw:
+        category_id = category_data.get('id')
+        category_db_id = category_iiko_to_db_id_map.get(category_id)
+
+        if not category_db_id:
+            print(f"WARNING: Category '{category_data.get('name')}' (iiko ID: {category_id}) not found in DB map. Skipping its items for product/recommendation processing.")
+            continue
+
+        for iiko_item in category_data.get('items', []):
+            item_iiko_id = iiko_item.get('itemId')
+            item_name = iiko_item.get('name')
+            item_description = iiko_item.get('description')
+            item_type = iiko_item.get('type')
+            is_hidden = iiko_item.get('isHidden', False)
+            sku = iiko_item.get('sku')
+            measure_unit = iiko_item.get('measureUnit')
+
+            price_value = Decimal('0.00')
+            item_image_url = None
+
+            item_sizes = iiko_item.get('itemSizes', [])
+            if item_sizes:
+                first_size = item_sizes[0]
+                if first_size.get('prices'):
+                    price_entry = first_size['prices'][0]
+                    raw_price_value = price_entry.get('price')
+
+                    try:
+                        if isinstance(raw_price_value, (int, float)):
+                            price_value = Decimal(str(raw_price_value))
+                        elif isinstance(raw_price_value, str):
+                            cleaned_price_str = raw_price_value.replace(',', '.').strip()
+                            price_value = Decimal(cleaned_price_str)
+                        else:
+                            price_value = Decimal('0.00')
+                            print(f"WARNING: Unexpected type for price '{type(raw_price_value)}' for item '{item_name}' (ID: {item_iiko_id}). Defaulting to 0.00.")
+
+                    except InvalidOperation as e:
+                        print(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
+                        price_value = Decimal('0.00')
+
+                item_image_url = first_size.get('buttonImageUrl')
+
+            if not item_image_url and iiko_item.get('images'):
+                item_image_url = iiko_item['images'][0].get('imageUrl')
+            elif not item_image_url and iiko_item.get('picture'):
+                item_image_url = iiko_item['picture']
+
+            # --- REFINED CRITICAL FIX: Ensure nutrition_data is always a dict with default values ---
+            nutrition_data = {
+                'calories': 0.0,
+                'carbs': 0.0,
+                'fat': 0.0,
+                'proteins': 0.0
+            }
+
+            # Only update if the iiko field exists and is not None
+            if iiko_item.get('energyAmount') is not None:
+                nutrition_data['calories'] = iiko_item['energyAmount']
+            if iiko_item.get('carbAmount') is not None:
+                nutrition_data['carbs'] = iiko_item['carbAmount']
+            # Using .get() with a default value of 0.0 for safety, though `is not None` is more explicit
+            if iiko_item.get('fatAmount') is not None:
+                nutrition_data['fat'] = iiko_item['fatAmount']
+            if iiko_item.get('proteinAmount') is not None:
+                nutrition_data['proteins'] = iiko_item['proteinAmount']
+            # --- REFINED CRITICAL FIX END ---
+
+            ingredients_list = []
+            if iiko_item.get('allergens'):
+                ingredients_list.extend([a['name'] for a in iiko_item['allergens'] if 'name' in a])
+            if iiko_item.get('tags'):
+                ingredients_list.extend(iiko_item['tags'])
+            if iiko_item.get('labels'):
+                ingredients_list.extend(iiko_item['labels'])
+
+            if not item_iiko_id or not item_name:
+                print(f"Skipping malformed item data in category '{category_data.get('name')}': {iiko_item}")
+                continue
+
+            is_our_product = False
+            is_our_addon = False # Will be handled by dedicated modifier processing
+            is_our_recommendation = False
+
+            if recommendation_category_internal_db_id and category_id == recommendation_iiko_id:
+                is_our_recommendation = True
+            # We determine if it's an addon from modifier groups later, not from category items
+            # elif item_type == 'MODIFIER':
+            #     is_our_addon = True
+            elif item_type in ['DISH', 'GOODS']: # These are main menu items
+                is_our_product = True
+
+
+            if is_our_product:
+                product = product_iiko_to_db_map.get(item_iiko_id) or existing_products.get(item_iiko_id)
+
+                if product:
+                    product.name = item_name
+                    product.description = item_description
+                    product.price = price_value
+                    product.image = item_image_url
+                    product.categoryId = category_db_id
+                    product.nutrition = nutrition_data
+                    product.ingredients = ingredients_list if ingredients_list else None
+                    product.is_hidden = is_hidden
+                    product.sku = sku
+                    product.measure_unit = measure_unit
+                    product.item_type = item_type
+                else:
+                    product = Product(
+                        iiko_product_id=item_iiko_id,
+                        name=item_name,
+                        description=item_description,
+                        price=price_value,
+                        image=item_image_url,
+                        categoryId=category_db_id,
+                        nutrition=nutrition_data,
+                        ingredients=ingredients_list if ingredients_list else None,
+                        is_hidden=is_hidden,
+                        sku=sku,
+                        measure_unit=measure_unit,
+                        item_type=item_type
+                    )
+                    db.session.add(product)
+                db.session.flush()
+                product_iiko_to_db_map[item_iiko_id] = product
+
+            # Recommendations found within a category
+            elif is_our_recommendation:
+                recommendation = recommendation_iiko_to_db_map.get(item_iiko_id) or existing_recommendations.get(item_iiko_id)
+                if recommendation:
+                    recommendation.name = item_name
+                    recommendation.price = price_value
+                    recommendation.image = item_image_url
+                else:
+                    recommendation = Recommendation(
+                        iiko_recommendation_id=item_iiko_id,
+                        name=item_name,
+                        price=price_value,
+                        image=item_image_url
+                    )
+                    db.session.add(recommendation)
+                db.session.flush()
+                recommendation_iiko_to_db_map[item_iiko_id] = recommendation
+
+    # --- NEW ADDITION: Process top-level 'items' which are often modifiers or other un-categorized items ---
+    # These items might not be associated with a specific category, but are needed for lookups
+    for iiko_item in iiko_data.get('items', []): # Loop through top-level 'items'
+        item_iiko_id = iiko_item.get('itemId')
+        item_name = iiko_item.get('name')
+        item_type = iiko_item.get('type')
+        is_hidden = iiko_item.get('isHidden', False)
+
+        price_value = Decimal('0.00')
+        item_image_url = None
+
+        item_sizes = iiko_item.get('itemSizes', [])
+        if item_sizes:
+            first_size = item_sizes[0]
+            if first_size.get('prices'):
+                price_entry = first_size['prices'][0]
+                raw_price_value = price_entry.get('price')
+                try:
+                    if isinstance(raw_price_value, (int, float)):
+                        price_value = Decimal(str(raw_price_value))
+                    elif isinstance(raw_price_value, str):
+                        cleaned_price_str = raw_price_value.replace(',', '.').strip()
+                        price_value = Decimal(cleaned_price_str)
+                except InvalidOperation as e:
+                    print(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
+
+            item_image_url = first_size.get('buttonImageUrl')
+
+        if not item_image_url and iiko_item.get('images'):
+            item_image_url = iiko_item['images'][0].get('imageUrl')
+        elif not item_image_url and iiko_item.get('picture'):
+            item_image_url = iiko_item['picture']
+        
+        # Only process as addon if it's explicitly a MODIFIER type
+        if item_type == 'MODIFIER':
+            addon = addon_iiko_to_db_map.get(item_iiko_id) or existing_addons.get(item_iiko_id)
+            if addon:
+                addon.name = item_name
+                addon.price = price_value
+                addon.image = item_image_url
+            else:
+                addon = Addon(
+                    iiko_addon_id=item_iiko_id,
+                    name=item_name,
+                    price=price_value,
+                    image=item_image_url
+                )
+                db.session.add(addon)
+            db.session.flush()
+            addon_iiko_to_db_map[item_iiko_id] = addon
+
+        # You might also find other DISH/GOODS items at the top level
+        # if they are not explicitly linked to a category in iiko, but you want to import them.
+        # However, for now, we assume products must be in itemCategories.
+        # If not, you'd need logic to assign a default/unknown category or handle them differently.
+        # if item_type in ['DISH', 'GOODS'] and item_iiko_id not in product_iiko_to_db_map:
+        #    # Handle as a product, perhaps assigning to a default category or flagging as unassigned
+        #    # This depends on your data model requirements.
+        #    pass
+
+
+    db.session.commit()
+    print("Products, Addons, and Recommendations synced. Now setting up relationships.")
+
+    # --- Step 3: Clean up and Rebuild Relationships ---
+    try:
+        db.session.query(ProductAddon).delete()
+        db.session.query(ProductRecommendation).delete()
+        db.session.commit()
+        print("Existing Product-Addon and Product-Recommendation relationships cleared.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error clearing old relationships: {e}")
+
+    # --- Sync Modifiers (Addons) ---
+    for iiko_mod_group in iiko_modifier_groups_raw:
+        product_iiko_id = iiko_mod_group.get('product')
+        parent_product_obj = product_iiko_to_db_map.get(product_iiko_id)
+
+        if not parent_product_obj:
+            print(f"Skipping modifier group for iiko Product ID '{product_iiko_id}' not found in our Products map. It might be a non-menu item or a deleted product.")
+            continue
+
+        for iiko_modifier_item_ref in iiko_mod_group.get('modifiers', []):
+            mod_iiko_id = iiko_modifier_item_ref.get('product')
+
+            addon_obj = addon_iiko_to_db_map.get(mod_iiko_id)
+
+            # This block is now less likely to be hit as `mod1_id` should be in addon_iiko_to_db_map from the new processing loop
+            if not addon_obj:
+                print(f"WARNING: Addon '{mod_iiko_id}' not found in our Addon map for product '{parent_product_obj.name}'. Trying to create it.")
+                full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id) # This lookup should now succeed!
+
+                if full_mod_item_data:
+                    mod_name = full_mod_item_data.get('name')
+                    mod_price = Decimal('0.00')
+
+                    mod_item_sizes = full_mod_item_data.get('itemSizes', [])
+                    if mod_item_sizes:
+                        first_mod_size = mod_item_sizes[0]
+                        if first_mod_size.get('prices'):
+                            raw_mod_price_value = first_mod_size['prices'][0].get('price')
+
+                            try:
+                                if isinstance(raw_mod_price_value, (int, float)):
+                                    mod_price = Decimal(str(raw_mod_price_value))
+                                elif isinstance(raw_mod_price_value, str):
+                                    cleaned_mod_price_str = raw_mod_price_value.replace(',', '.').strip()
+                                    mod_price = Decimal(cleaned_mod_price_str)
+                                else:
+                                    print(f"WARNING: Unexpected type for modifier price '{type(raw_mod_price_value)}' for addon '{mod_name}' (ID: {mod_iiko_id}). Defaulting to 0.00.")
+                                    mod_price = Decimal('0.00')
+
+                            except InvalidOperation as e:
+                                print(f"ERROR: Could not convert modifier price '{raw_mod_price_value}' to Decimal for addon '{mod_name}' (ID: {mod_iiko_id}). Error: {e}. Defaulting to 0.00.")
+                                mod_price = Decimal('0.00')
+
+                    mod_image = None
+                    if mod_item_sizes:
+                        mod_image = mod_item_sizes[0].get('buttonImageUrl')
+                    elif full_mod_item_data.get('images'):
+                        mod_image = full_mod_item_data['images'][0].get('imageUrl')
+                    elif full_mod_item_data.get('picture'):
+                        mod_image = full_mod_item_data['picture']
+
+                    addon_obj = Addon(
+                        iiko_addon_id=mod_iiko_id,
+                        name=mod_name,
+                        price=mod_price,
+                        image=mod_image
+                    )
+                    db.session.add(addon_obj)
+                    db.session.flush()
+                    addon_iiko_to_db_map[mod_iiko_id] = addon_obj
+                    print(f"Created Addon '{mod_name}' (ID: {mod_iiko_id}) and added to map.")
+                else:
+                    print(f"ERROR: Could not find full data for Addon '{mod_iiko_id}'. Skipping relationship for product '{parent_product_obj.name}'.")
+                    continue
+
+            # Add the relationship only if addon_obj was found or successfully created
+            product_addon = ProductAddon(
+                product_id=parent_product_obj.id,
+                addon_id=addon_obj.id
+            )
+            db.session.add(product_addon)
+
+    # --- Sync Recommendations (linking all products to all recommendations) ---
+    all_products_db_objects = list(product_iiko_to_db_map.values())
+    all_recommendations_db_objects = list(recommendation_iiko_to_db_map.values())
+
+    for product_obj in all_products_db_objects:
+        for rec_obj in all_recommendations_db_objects:
+            product_recommendation = ProductRecommendation(
+                product_id=product_obj.id,
+                recommendation_id=rec_obj.id
+            )
+            db.session.add(product_recommendation)
+
+    db.session.commit()
+    print("Relationships synced.")
+
+    # Clean up hidden items after all relationships are established
+    # This ensures that even if items are temporarily hidden during sync, their relationships are correctly processed
+    # before final deletion/pruning of truly hidden items.
+    # Note: If your frontend specifically filters by is_hidden, you might not need to delete them.
+    # If not, consider a separate cleanup routine or marking them for future deletion.
+    # db.session.query(Category).filter(Category.is_hidden == True).delete(synchronize_session=False)
+    # db.session.query(Product).filter(Product.is_hidden == True).delete(synchronize_session=False)
+    # db.session.commit()
+    # print("Removed hidden categories and products.")
+
+    print("Data synchronization complete.")
