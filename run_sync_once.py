@@ -1,7 +1,6 @@
 # run_sync_once.py
 import os
 import sys
-from dotenv import load_dotenv
 
 # Ensure the application root is in the Python path for imports
 # This is crucial when running a script outside of a direct Flask CLI context
