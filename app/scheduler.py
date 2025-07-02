@@ -22,21 +22,10 @@ def check_and_sync_initial_data():
     Checks if database tables are synchronized. If not, performs an initial synchronization.
     """
     with app.app_context():
-        inspector = inspect(db.engine)
-        # Check if a known table (e.g., 'category') exists in the database
-        if not inspector.has_table(Category.__tablename__):
-            logger.warning("Scheduler: Database tables not found. Performing initial data synchronization...")
-            try:
-                # Attempt to create all tables (this is idempotent)
-                db.create_all()
-                logger.info("Scheduler: Database tables created.")
-                synchronize_iiko_data()
-                logger.info("Scheduler: Initial iiko data synchronization completed successfully.")
-            except Exception as e:
-                logger.error(f"Scheduler: Error during initial data synchronization: {e}", exc_info=True)
-                db.session.rollback()
-        else:
-            logger.info("Scheduler: Database tables already exist. Skipping initial synchronization check.")
+        db.create_all()
+        logger.info("Scheduler: Database tables created.")
+        synchronize_iiko_data()
+        logger.info("Scheduler: Initial iiko data synchronization completed successfully.")
 
 def sync_data_job():
     """
