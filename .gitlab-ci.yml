@@ -5,15 +5,6 @@ include:
       - 'yaml/.gitlab-ci-build.yml'
       - 'yaml/.gitlab-ci-deploy.yml'
 
-.pull-build-image-web:
-   - docker pull ${CI_REGISTRY_IMAGE}/build:${TAG}-web || true
-.push-build-image-web:
-   - docker push ${CI_REGISTRY_IMAGE}/build:${TAG}-web
-.pull-tag-image-web:
-   - docker pull ${CI_REGISTRY_IMAGE}:${TAG}-web || true
-.push-tag-image-web:
-     - docker push ${CI_REGISTRY_IMAGE}:${TAG}-web
-
 stages:
   - set-variables
   - build
@@ -42,33 +33,57 @@ build:
       .
     - !reference [ .push-tag-image ]
 
-    - !reference [ .pull-build-image-web ]
+    - docker pull ${CI_REGISTRY_IMAGE}/build:${TAG}-web || true
     - >
       docker build
       -f Dockerfile.web
       -t ${CI_REGISTRY_IMAGE}/build:${TAG}-web
       --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web 
+      --build-arg ENVIRONMENT=${ENVIRONMENT}
       --target build-env
       .
-    - !reference [ .push-build-image-web ]
-    - !reference [ .pull-tag-image-web ]
+    - docker push ${CI_REGISTRY_IMAGE}/build:${TAG}-web
+
+    - docker pull ${CI_REGISTRY_IMAGE}:${TAG}-web || true
     - >
       docker build 
       -f Dockerfile.web
       -t ${CI_REGISTRY_IMAGE}:${TAG}-web
       --cache-from ${CI_REGISTRY_IMAGE}:${TAG}-web
       --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web  
+      --build-arg ENVIRONMENT=${ENVIRONMENT}
       .
-    - !reference [ .push-tag-image-web ]
+    - docker push ${CI_REGISTRY_IMAGE}:${TAG}-web
+
+    - docker pull ${CI_REGISTRY_IMAGE}/build:${TAG}-scheduler || true
+    - >
+      docker build
+      -f Dockerfile.scheduler
+      -t ${CI_REGISTRY_IMAGE}/build:${TAG}-scheduler
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-scheduler 
+      --target build-env
+      .
+    - docker push ${CI_REGISTRY_IMAGE}/build:${TAG}-scheduler
+
+    - docker pull ${CI_REGISTRY_IMAGE}:${TAG}-scheduler || true
+    - >
+      docker build 
+      -f Dockerfile.scheduler
+      -t ${CI_REGISTRY_IMAGE}:${TAG}-scheduler
+      --cache-from ${CI_REGISTRY_IMAGE}:${TAG}-scheduler
+      --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-scheduler  
+      .
+    - docker push ${CI_REGISTRY_IMAGE}:${TAG}-scheduler
   rules:
     - if: $CI_COMMIT_BRANCH == "dev"
       exists:
         - Dockerfile.web
         - Dockerfile.bot
+        - Dockerfile.scheduler
 
 
 deploy:
   script:
-    - ssh -p $SSH_PORT $SSH_ADDR "cd ${PROJECT_DIR} && docker-compose stop ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose rm -f ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose pull ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && docker-compose up -d ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web && exit"
+    - ssh -p $SSH_PORT $SSH_ADDR "cd ${PROJECT_DIR} && docker-compose stop ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web ${CONTAINER_SERVICE}-scheduler && docker-compose rm -f ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web ${CONTAINER_SERVICE}-scheduler && docker-compose pull ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web ${CONTAINER_SERVICE}-scheduler && docker-compose up -d ${CONTAINER_SERVICE} ${CONTAINER_SERVICE}-web ${CONTAINER_SERVICE}-scheduler && exit"
   rules:
    - if: $CI_COMMIT_BRANCH == "dev"
