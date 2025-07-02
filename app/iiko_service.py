@@ -26,42 +26,112 @@ RECOMMENDATION_CATEGORY_NAME = "Рекомендованные (сиутатив
 # These are custom mappings and are not sourced from iiko API directly.
 # They will be used to set default icons and colors for categories.
 icon_map = {
-    "Бургеры": "🍔", "Пицца": "🍕", "Суши": "🍣", "Салаты": "🥗",
-    "Десерты": "🍰", "Напитки": "🥤", "Закуски": "🍟", "Горячие блюда": "🍲",
-    "Вок": "🍜", "Кальцоне": "🍕", "Ламаджо": "🍖", "Осетинские пироги": "🥧",
-    "Паста": "🍝", "Роллы": "🍣", "Сеты": "🍱", "Супы": "🥣",
-    "Фокаччо": "🍞", "Хачапури": "🧀", "Хот-доги и донер": "🌭",
-    "Мясо": "🥩", "Начинка": "🌶️", "Дополнительный соус": "🧂", "Лапша": "🍜",
-    "Донер на выбор": "🥙", "Сосиска на выбор": "🌭", "Рыба и морепродукты": "🦐",
-    "Сыр": "🧀", "Допы горячий цех": "🔥", "Роллы маки": "🍣", "Спайси": "🌶️",
-    "Суши Гунканы": "🍣", "Рулетики": "🌯", "Соусы": "🥣", "Fasty rolls": "🌯",
-    "По-имеретински": "🥧",
-    "КАФЕ ПИЦЦА 35см": "🍕", "КАФЕ ПИЦЦА РИМСКАЯ": "🍕", "Пицца 35 см.": "🍕",
-    "Пицца Неаполитано 24 см": "🍕", "Пицца Чикаго 29 см": "🍕", "Римская пицца": "🍕"
+    # Main categories, trying to generalize where possible
+    "Доставка": "🚚",
+    "Горячие блюда": "🍲",
+    "Фокачча": "🍞",
+    "Суши и роллы/Маки": "🍣",
+    "Wok": "🍜",
+    "Паста": "🍝",
+    "Напитки": "🥤",
+    "Пицца/ Неаполитано": "🍕",
+    "Суши и роллы/Спайси": "🌶️", # Spice indicates a spicy variant
+    "Горячие закуски": "🔥", # Hot/fire for hot snacks
+    "Суши и роллы/запеченные роллы": "🍣🔥", # Sushi with a fire symbol for baked
+    "Рекомендованные (общие)": "⭐", # Star for general recommendations
+    "Пицца/Римская": "🍕",
+    "Хачапури/Хачапури по-аджарски ": "🧀🍳", # Cheese and egg for Adjaruli
+    "Салаты": "🥗",
+    "Хачапури/Хачапури по-имеретински": "🧀", # Cheese for Imeretinski
+    "Суши и роллы/Соевый соус, васаби, имбирь": "🧂", # Salt shaker for condiments
+    "Пицца/Кальцоне": "🍕",
+    "Осетинские пироги": "🥧",
+    "Пицца": "🍕", # General Pizza
+    "Суши и роллы/Роллы": "🍣", # General Rolls
+    "Суши и роллы": "🍣", # Even more general Sushi & Rolls
+    "Суши и роллы/Sеты": "🍱", # Sets
+    "Суши и роллы/онигири": "🍙", # Onigiri
+    "Суши и роллы/Серия 'Черный бархат'": "🖤🍣", # Black heart + sushi for "Black Velvet" series
+    "Рулетики": "🌯",
+    "Суши и роллы/Гунканы": "🍣", # Gunkan, using general sushi icon
+    "Супы ": "🥣", # Space after Супы, keeping as is
+    "Хачапури": "🧀", # General Khachapuri
+    "Суши и роллы/горячие роллы": "🍣🔥", # Hot rolls
+    "Суши и роллы/Нигири": "🍣", # Nigiri, using general sushi icon
+    "Добавки": "➕", # General Addons/Extras
+    "Кимпабы": "🍙", # Kimbap, using onigiri as closest
+    "Пицца/Классическая": "🍕",
+    "Пицца/Чикаго": "🍕",
+    "Хот-доги и донер": "🌭",
+    "Бургеры": "🍔",
+    "Рекомендованные (сиутативные)": "💡", # Lightbulb for situational recommendations
+
+    # Addons specific keys (from your old map, map to new specific addon types)
+    "Добавки/Сыр": "🧀",
+    "Добавки/Мясо": "🥩",
+    "Добавки/Рыба и морепродукты": "🦐",
+
+    # Keeping some very specific old keys for completeness if they might still appear as product types
+    # "Кальцоне": "🍕", # Already handled by "Пицца/Кальцоне"
+    # "Ламаджо": "🍖", # Not in new list, keeping for now if a product is "Ламаджо"
+    # "Лапша": "🍜", # Not in new list, keeping for now if a product is "Лапша"
+    # "Начинка": "🌶️", # Not in new list, implies "Добавки"
+    # "Дополнительный соус": "🧂", # Not in new list, implies "Добавки" or "Суши и роллы/Соевый соус..."
+    # "Донер на выбор": "🥙", # Not in new list, implies "Хот-доги и донер"
+    # "Сосиска на выбор": "🌭", # Not in new list, implies "Хот-доги и донер"
+    # "Допы горячий цех": "🔥", # Not in new list, implies "Горячие закуски" or "Добавки"
+    # "Fasty rolls": "🌯", # Not in new list, but matches "Рулетики"
+    # "По-имеретински": "🥧", # More specific now, covered by "Хачапури/Хачапури по-имеретински"
+    # "КАФЕ ПИЦЦА 35см": "🍕", "КАФЕ ПИЦЦА РИМСКАЯ": "🍕", "Пицца 35 см.": "🍕",
+    # "Пицца Неаполитано 24 см": "🍕", "Пицца Чикаго 29 см": "🍕", "Римская пицца": "🍕" # Covered by specific pizza types
 }
 
+
 color_map = {
-    "Бургеры": "from-yellow-400 to-orange-500", "Пицца": "from-red-400 to-red-600",
-    "Суши": "from-blue-400 to-purple-500", "Салаты": "from-green-400 to-lime-500",
-    "Десерты": "from-pink-400 to-rose-500", "Напитки": "from-teal-400 to-cyan-500",
-    "Закуски": "from-amber-400 to-yellow-600", "Горячие блюда": "from-orange-500 to-red-700",
-    "Вок": "from-purple-400 to-fuchsia-500", "Кальцоне": "from-red-500 to-pink-600",
-    "Ламаджо": "from-amber-500 to-orange-700", "Осетинские пироги": "from-yellow-500 to-lime-600",
-    "Паста": "from-red-300 to-red-500", "Роллы": "from-blue-300 to-indigo-500",
-    "Сеты": "from-pink-500 to-purple-600", "Супы": "from-emerald-400 to-cyan-600",
-    "Фокаччо": "from-yellow-600 to-orange-700", "Хачапури": "from-lime-500 to-green-600",
+    # Main categories
+    "Доставка": "from-blue-500 to-indigo-600",
+    "Горячие блюда": "from-red-600 to-pink-700",
+    "Фокачча": "from-yellow-600 to-orange-700",
+    "Суши и роллы/Маки": "from-blue-300 to-purple-500",
+    "Wok": "from-purple-400 to-fuchsia-500",
+    "Паста": "from-red-300 to-red-500",
+    "Напитки": "from-teal-400 to-cyan-500",
+    "Пицца/ Неаполитано": "from-red-400 to-red-600",
+    "Суши и роллы/Спайси": "from-orange-500 to-red-600",
+    "Горячие закуски": "from-amber-400 to-orange-600",
+    "Суши и роллы/запеченные роллы": "from-orange-400 to-red-500", # Warm tones for baked
+    "Рекомендованные (общие)": "from-yellow-400 to-yellow-600",
+    "Пицца/Римская": "from-red-500 to-pink-600",
+    "Хачапури/Хачапури по-аджарски ": "from-lime-500 to-green-600",
+    "Салаты": "from-green-400 to-lime-500",
+    "Хачапури/Хачапури по-имеретински": "from-lime-400 to-green-500",
+    "Суши и роллы/Соевый соус, васаби, имбирь": "from-gray-500 to-gray-700",
+    "Пицца/Кальцоне": "from-orange-400 to-red-500",
+    "Осетинские пироги": "from-yellow-500 to-lime-600",
+    "Пицца": "from-red-400 to-red-600", # General Pizza
+    "Суши и роллы/Роллы": "from-blue-300 to-indigo-500", # General Rolls
+    "Суши и роллы": "from-blue-400 to-purple-500", # General Sushi & Rolls
+    "Суши и роллы/Сеты": "from-pink-500 to-purple-600",
+    "Суши и роллы/онигири": "from-gray-300 to-gray-500",
+    "Суши и роллы/Серия 'Черный бархат'": "from-gray-800 to-black",
+    "Рулетики": "from-amber-400 to-orange-500",
+    "Суши и роллы/Гунканы": "from-blue-400 to-purple-500",
+    "Супы ": "from-emerald-400 to-cyan-600",
+    "Хачапури": "from-lime-500 to-green-600", # General Khachapuri
+    "Суши и роллы/горячие роллы": "from-orange-400 to-red-500", # Warm tones for hot rolls
+    "Суши и роллы/Нигири": "from-blue-400 to-purple-500",
+    "Добавки": "from-gray-400 to-gray-600",
+    "Кимпабы": "from-green-500 to-emerald-600",
+    "Пицца/Классическая": "from-red-400 to-red-600",
+    "Пицца/Чикаго": "from-red-700 to-red-900", # Deeper red for Chicago style
     "Хот-доги и донер": "from-orange-400 to-red-500",
-    "Мясо": "from-red-700 to-pink-800", "Начинка": "from-green-500 to-lime-700",
-    "Дополнительный соус": "from-gray-300 to-gray-500", "Лапша": "from-purple-500 to-indigo-600",
-    "Донер на выбор": "from-yellow-700 to-orange-800", "Сосиска на выбор": "from-red-600 to-red-800",
-    "Рыба и морепродукты": "from-blue-500 to-cyan-600", "Сыр": "from-yellow-300 to-yellow-500",
-    "Допы горячий цех": "from-red-400 to-red-600", "Роллы маки": "from-blue-400 to-indigo-600",
-    "Спайси": "from-orange-500 to-red-600", "Суши Гунканы": "from-purple-400 to-fuchsia-500",
-    "Рулетики": "from-amber-400 to-orange-500", "Соусы": "from-gray-500 to-gray-700",
-    "Фаст роллы": "from-lime-400 to-green-500", "По-имеретински": "from-brown-400 to-orange-600",
-    "КАФЕ ПИЦЦА 35см": "from-orange-400 to-red-500", "КАФЕ ПИЦЦА РИМСКАЯ": "from-red-500 to-pink-600",
-    "Пицца 35 см.": "from-orange-400 to-red-500", "Пицца Неаполитано 24 см": "from-red-500 to-pink-600",
-    "Пицца Чикаго 29 см": "from-orange-400 to-red-500", "Римская пицца": "from-red-500 to-pink-600"
+    "Бургеры": "from-yellow-400 to-orange-500",
+    "Рекомендованные (сиутативные)": "from-purple-400 to-pink-500", # Distinct color for situational recommendations
+
+    # Addons specific keys
+    "Добавки/Сыр": "from-yellow-300 to-yellow-500",
+    "Добавки/Мясо": "from-red-700 to-pink-800",
+    "Добавки/Рыба и морепродукты": "from-blue-500 to-cyan-600",
 }
 
 
