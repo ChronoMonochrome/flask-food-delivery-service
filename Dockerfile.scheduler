@@ -1,0 +1,28 @@
+# Dockerfile.scheduler
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    default-libmysqlclient-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements.txt and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install APScheduler
+RUN pip install --no-cache-dir apscheduler
+
+# Copy .env and the Flask application code
+COPY app /app/app
+COPY app/scheduler.py /app/scheduler.py
+COPY run_sync_once.py /app/run_sync_once.py
+COPY print_db_data.py /app/print_db_data.py
+COPY drop_db_tables.py /app/drop_db_tables.py
+
+# Command to run the scheduler script
+CMD ["python", "scheduler.py"]
