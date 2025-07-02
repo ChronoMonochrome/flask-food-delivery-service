@@ -262,7 +262,7 @@ def synchronize_iiko_data():
 
     # --- FIX START: Populate all_iiko_items_by_id from both 'itemCategories' and top-level 'items' ---
     all_iiko_items_by_id = {}
-    
+
     # First, populate from items nested within categories
     for category_data in iiko_categories_raw:
         for item_data in category_data.get('items', []):
@@ -354,12 +354,6 @@ def synchronize_iiko_data():
     addon_iiko_to_db_map = {}
     recommendation_iiko_to_db_map = {}
 
-    # Iterate through all items that are meant to be products, addons, or recommendations
-    # This loop should process items regardless of their original nesting (category or top-level 'items')
-    # Use all_iiko_items_by_id as the source to ensure all relevant items are processed once.
-    # However, for products, they *must* be associated with a category, so we still need to
-    # iterate through categories for products. Modifiers/Recommendations can be handled more flexibly.
-
     # Process items found within categories (these will be products and possibly recommendations)
     for category_data in iiko_categories_raw:
         category_id = category_data.get('id')
@@ -409,25 +403,22 @@ def synchronize_iiko_data():
             elif not item_image_url and iiko_item.get('picture'):
                 item_image_url = iiko_item['picture']
 
-            # --- REFINED CRITICAL FIX: Ensure nutrition_data is always a dict with default values ---
+            # --- UPDATED NUTRITION DATA EXTRACTION LOGIC ---
             nutrition_data = {
                 'calories': 0.0,
                 'carbs': 0.0,
                 'fat': 0.0,
                 'proteins': 0.0
             }
-
-            # Only update if the iiko field exists and is not None
-            if iiko_item.get('energyAmount') is not None:
-                nutrition_data['calories'] = iiko_item['energyAmount']
-            if iiko_item.get('carbAmount') is not None:
-                nutrition_data['carbs'] = iiko_item['carbAmount']
-            # Using .get() with a default value of 0.0 for safety, though `is not None` is more explicit
-            if iiko_item.get('fatAmount') is not None:
-                nutrition_data['fat'] = iiko_item['fatAmount']
-            if iiko_item.get('proteinAmount') is not None:
-                nutrition_data['proteins'] = iiko_item['proteinAmount']
-            # --- REFINED CRITICAL FIX END ---
+            if item_sizes: # Check if item_sizes exist
+                first_size_nutrition = item_sizes[0].get('nutritionPerHundredGrams')
+                if first_size_nutrition:
+                    # Use .get() with default 0.0 to safely extract values
+                    nutrition_data['calories'] = float(first_size_nutrition.get('energy', 0.0))
+                    nutrition_data['carbs'] = float(first_size_nutrition.get('carbs', 0.0))
+                    nutrition_data['fat'] = float(first_size_nutrition.get('fats', 0.0)) # Note: iiko uses 'fats'
+                    nutrition_data['proteins'] = float(first_size_nutrition.get('proteins', 0.0))
+            # --- END UPDATED NUTRITION DATA EXTRACTION ---
 
             ingredients_list = []
             if iiko_item.get('allergens'):
@@ -442,14 +433,10 @@ def synchronize_iiko_data():
                 continue
 
             is_our_product = False
-            is_our_addon = False # Will be handled by dedicated modifier processing
             is_our_recommendation = False
 
             if recommendation_category_internal_db_id and category_id == recommendation_iiko_id:
                 is_our_recommendation = True
-            # We determine if it's an addon from modifier groups later, not from category items
-            # elif item_type == 'MODIFIER':
-            #     is_our_addon = True
             elif item_type in ['DISH', 'GOODS']: # These are main menu items
                 is_our_product = True
 
@@ -463,7 +450,7 @@ def synchronize_iiko_data():
                     product.price = price_value
                     product.image = item_image_url
                     product.categoryId = category_db_id
-                    product.nutrition = nutrition_data
+                    product.nutrition = nutrition_data # Updated nutrition data
                     product.ingredients = ingredients_list if ingredients_list else None
                     product.is_hidden = is_hidden
                     product.sku = sku
@@ -477,7 +464,7 @@ def synchronize_iiko_data():
                         price=price_value,
                         image=item_image_url,
                         categoryId=category_db_id,
-                        nutrition=nutrition_data,
+                        nutrition=nutrition_data, # Updated nutrition data
                         ingredients=ingredients_list if ingredients_list else None,
                         is_hidden=is_hidden,
                         sku=sku,
@@ -538,7 +525,7 @@ def synchronize_iiko_data():
             item_image_url = iiko_item['images'][0].get('imageUrl')
         elif not item_image_url and iiko_item.get('picture'):
             item_image_url = iiko_item['picture']
-        
+
         # Only process as addon if it's explicitly a MODIFIER type
         if item_type == 'MODIFIER':
             addon = addon_iiko_to_db_map.get(item_iiko_id) or existing_addons.get(item_iiko_id)
@@ -556,16 +543,6 @@ def synchronize_iiko_data():
                 db.session.add(addon)
             db.session.flush()
             addon_iiko_to_db_map[item_iiko_id] = addon
-
-        # You might also find other DISH/GOODS items at the top level
-        # if they are not explicitly linked to a category in iiko, but you want to import them.
-        # However, for now, we assume products must be in itemCategories.
-        # If not, you'd need logic to assign a default/unknown category or handle them differently.
-        # if item_type in ['DISH', 'GOODS'] and item_iiko_id not in product_iiko_to_db_map:
-        #    # Handle as a product, perhaps assigning to a default category or flagging as unassigned
-        #    # This depends on your data model requirements.
-        #    pass
-
 
     db.session.commit()
     logger.info("Products, Addons, and Recommendations synced. Now setting up relationships.")
@@ -594,10 +571,9 @@ def synchronize_iiko_data():
 
             addon_obj = addon_iiko_to_db_map.get(mod_iiko_id)
 
-            # This block is now less likely to be hit as `mod1_id` should be in addon_iiko_to_db_map from the new processing loop
             if not addon_obj:
                 logger.info(f"WARNING: Addon '{mod_iiko_id}' not found in our Addon map for product '{parent_product_obj.name}'. Trying to create it.")
-                full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id) # This lookup should now succeed!
+                full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id)
 
                 if full_mod_item_data:
                     mod_name = full_mod_item_data.get('name')
@@ -666,15 +642,5 @@ def synchronize_iiko_data():
 
     db.session.commit()
     logger.info("Relationships synced.")
-
-    # Clean up hidden items after all relationships are established
-    # This ensures that even if items are temporarily hidden during sync, their relationships are correctly processed
-    # before final deletion/pruning of truly hidden items.
-    # Note: If your frontend specifically filters by is_hidden, you might not need to delete them.
-    # If not, consider a separate cleanup routine or marking them for future deletion.
-    # db.session.query(Category).filter(Category.is_hidden == True).delete(synchronize_session=False)
-    # db.session.query(Product).filter(Product.is_hidden == True).delete(synchronize_session=False)
-    # db.session.commit()
-    # print("Removed hidden categories and products.")
 
     logger.info("Data synchronization complete.")
