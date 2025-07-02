@@ -14,3 +14,4 @@ dotenv
 flask-restx
 requests
 diskcache
+flask-cors
