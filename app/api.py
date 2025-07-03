@@ -36,7 +36,7 @@ def handle_uncaught_exception(e):
     print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
 
     import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
 
     response = {
         'message': 'An unexpected internal server error occurred.',
