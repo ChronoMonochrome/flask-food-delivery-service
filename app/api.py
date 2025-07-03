@@ -24,52 +24,6 @@ error_model = api.model('Error', {
     'details': fields.String(description='More specific details about the error (e.g., traceback in debug mode)', allow_null=True)
 })
 
-
-# --- Global error handler for all unhandled exceptions (500 errors) ---
-@api.errorhandler(Exception)
-def handle_uncaught_exception(e):
-    """
-    This catches any unhandled exception (Python Exception) and returns a 500 Internal Server Error.
-    It provides a more verbose JSON response than the default Flask HTML error page.
-    """
-    full_traceback = traceback.format_exc()
-    print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
-
-    import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
-
-    response_data = { # Renamed to avoid confusion with Flask Response object
-        'message': 'An unexpected internal server error occurred.',
-        'status': 500,
-        'error_type': type(e).__name__,
-        'details': full_traceback if is_debug_mode else 'Please contact support with the error timestamp.'
-    }
-    return jsonify(response_data), 500
-
-# --- Global error handler for HTTPExceptions (e.g., 404, 400, 405) ---
-@api.errorhandler(HTTPException)
-def handle_http_exception(e):
-    """
-    This catches HTTP-related exceptions (like 404 Not Found, 400 Bad Request, etc.)
-    and returns a JSON response.
-    """
-    if e.code >= 500:
-        print(f"HTTP EXCEPTION (SERVER ERROR): {e}\n{traceback.format_exc()}")
-    else:
-        print(f"HTTP EXCEPTION (CLIENT ERROR): {e}")
-
-    import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
-
-    response_data = { # Renamed to avoid confusion with Flask Response object
-        'message': e.description,
-        'status': e.code,
-        'error_type': type(e).__name__,
-        'details': traceback.format_exc() if is_debug_mode and e.code >= 500 else None
-    }
-    return jsonify(response_data), e.code
-
-
 # --- Models ---
 ingredient_item_model = api.model('IngredientItem', {
     'code': fields.String(description='Ingredient code', allow_null=True),
@@ -219,11 +173,18 @@ class ProductList(Resource):
 class ProductResource(Resource):
     def get(self, product_id):
         """Get a single product by ID"""
-        product = Product.query.filter_by(is_hidden=False).options(
+        # First, try to get the product by its primary key.
+        # .get_or_404(product_id) directly uses the primary key.
+        product = Product.query.options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        ).get_or_404(product_id)
+        ).get_or_404(product_id) # Get by primary key first
 
+        # Then, apply your additional logic (e.g., check if it's hidden)
+        if product.is_hidden:
+            api.abort(404, "Product not found or is hidden.") # Or a different error code/message if appropriate
+
+        # ... (rest of your existing code for marshaling product data) ...
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
             if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -239,7 +200,6 @@ class ProductResource(Resource):
             else:
                 print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
 
-        # Correctly marshal the Recommendation objects
         marshaled_recommendations = [
             api.marshal(pr.recommendation, recommendation_model)
             for pr in product.recommendations if pr.recommendation
@@ -255,10 +215,9 @@ class ProductResource(Resource):
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
             'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
-            'recommendations': marshaled_recommendations # Use the marshaled recommendations here
+            'recommendations': marshaled_recommendations
         }
         return jsonify(api.marshal(product_for_marshal, product_model))
-
 
 @api.route('/orders')
 class OrderList(Resource):
