@@ -32,4 +32,9 @@ from app.models import db, Category, Product, Addon, Recommendation, Order, Orde
 from app import routes
 from app.api import api_bp # Import the API blueprint
 
+# UTF-8 encoding in API
+# Set this configuration BEFORE your Blueprints are registered or initialized
+app.json.ensure_ascii = False
+app.json.charset = "utf-8" # Ensure charset is explicitly set (though usually default for jsonify)
+
 app.register_blueprint(api_bp, url_prefix='/api') # Register the API blueprint
