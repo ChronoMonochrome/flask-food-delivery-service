@@ -173,11 +173,18 @@ class ProductList(Resource):
 class ProductResource(Resource):
     def get(self, product_id):
         """Get a single product by ID"""
-        product = Product.query.filter_by(is_hidden=False).options(
+        # First, try to get the product by its primary key.
+        # .get_or_404(product_id) directly uses the primary key.
+        product = Product.query.options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        ).get_or_404(product_id)
+        ).get_or_404(product_id) # Get by primary key first
 
+        # Then, apply your additional logic (e.g., check if it's hidden)
+        if product.is_hidden:
+            api.abort(404, "Product not found or is hidden.") # Or a different error code/message if appropriate
+
+        # ... (rest of your existing code for marshaling product data) ...
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
             if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -193,7 +200,6 @@ class ProductResource(Resource):
             else:
                 print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
 
-        # Correctly marshal the Recommendation objects
         marshaled_recommendations = [
             api.marshal(pr.recommendation, recommendation_model)
             for pr in product.recommendations if pr.recommendation
@@ -209,10 +215,9 @@ class ProductResource(Resource):
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
             'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
-            'recommendations': marshaled_recommendations # Use the marshaled recommendations here
+            'recommendations': marshaled_recommendations
         }
         return jsonify(api.marshal(product_for_marshal, product_model))
-
 
 @api.route('/orders')
 class OrderList(Resource):
