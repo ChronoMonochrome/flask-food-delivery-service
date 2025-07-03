@@ -116,7 +116,7 @@ product_model = api.model('Product', {
         "calories": 0.0, "carbs": 0.0, "fat": 0.0, "proteins": 0.0
     }),
     'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
-    'addonIds': fields.List(fields.String, description='List of available addon IDs for this product', allow_null=True, default=[]),
+    'availableAddons': fields.List(fields.String, description='List of available addon IDs for this product', allow_null=True, default=[]),
     'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[]) # Ensure this matches
 })
 
@@ -203,7 +203,7 @@ class ProductList(Resource):
                 'categoryId': str(product.categoryId),
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
-                'addonIds': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
+                'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
                 'recommendations': marshaled_recommendations # Use the marshaled recommendations here
             }
             # Although you're building the dict manually,
@@ -254,7 +254,7 @@ class ProductResource(Resource):
             'categoryId': str(product.categoryId),
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
-            'addonIds': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
+            'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
             'recommendations': marshaled_recommendations # Use the marshaled recommendations here
         }
         return jsonify(api.marshal(product_for_marshal, product_model))
@@ -323,7 +323,7 @@ class OrderList(Resource):
                     'categoryId': str(product_obj.categoryId),
                     'nutrition': product_nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients_in_order_item,
-                    'addonIds': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
+                    'availableAddons': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
                     # In the product model for OrderItem, recommendations are expected to be the full object, not just IDs
                     'recommendations': [
                         api.marshal(pr.recommendation, recommendation_model)
@@ -460,7 +460,7 @@ class OrderList(Resource):
                 'categoryId': str(product_obj.categoryId),
                 'nutrition': product_nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients_in_order_item,
-                'addonIds': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
+                'availableAddons': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
                 # Ensure the recommendations here are also marshaled if product_model expects objects
                 'recommendations': [
                     api.marshal(pr.recommendation, recommendation_model)
