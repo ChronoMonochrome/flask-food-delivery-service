@@ -36,7 +36,7 @@ def handle_uncaught_exception(e):
     print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
 
     import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
 
     response_data = { # Renamed to avoid confusion with Flask Response object
         'message': 'An unexpected internal server error occurred.',
@@ -59,7 +59,7 @@ def handle_http_exception(e):
         print(f"HTTP EXCEPTION (CLIENT ERROR): {e}")
 
     import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
 
     response_data = { # Renamed to avoid confusion with Flask Response object
         'message': e.description,
