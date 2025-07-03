@@ -24,52 +24,6 @@ error_model = api.model('Error', {
     'details': fields.String(description='More specific details about the error (e.g., traceback in debug mode)', allow_null=True)
 })
 
-
-# --- Global error handler for all unhandled exceptions (500 errors) ---
-@api.errorhandler(Exception)
-def handle_uncaught_exception(e):
-    """
-    This catches any unhandled exception (Python Exception) and returns a 500 Internal Server Error.
-    It provides a more verbose JSON response than the default Flask HTML error page.
-    """
-    full_traceback = traceback.format_exc()
-    print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
-
-    import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
-
-    response_data = { # Renamed to avoid confusion with Flask Response object
-        'message': 'An unexpected internal server error occurred.',
-        'status': 500,
-        'error_type': type(e).__name__,
-        'details': full_traceback if is_debug_mode else 'Please contact support with the error timestamp.'
-    }
-    return jsonify(response_data), 500
-
-# --- Global error handler for HTTPExceptions (e.g., 404, 400, 405) ---
-@api.errorhandler(HTTPException)
-def handle_http_exception(e):
-    """
-    This catches HTTP-related exceptions (like 404 Not Found, 400 Bad Request, etc.)
-    and returns a JSON response.
-    """
-    if e.code >= 500:
-        print(f"HTTP EXCEPTION (SERVER ERROR): {e}\n{traceback.format_exc()}")
-    else:
-        print(f"HTTP EXCEPTION (CLIENT ERROR): {e}")
-
-    import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
-
-    response_data = { # Renamed to avoid confusion with Flask Response object
-        'message': e.description,
-        'status': e.code,
-        'error_type': type(e).__name__,
-        'details': traceback.format_exc() if is_debug_mode and e.code >= 500 else None
-    }
-    return jsonify(response_data), e.code
-
-
 # --- Models ---
 ingredient_item_model = api.model('IngredientItem', {
     'code': fields.String(description='Ingredient code', allow_null=True),

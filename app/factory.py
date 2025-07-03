@@ -47,7 +47,7 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     # Logger configuration
-    app.config["DEBUG"] = os.getenv("DEBUG", "False").lower() in ('true', '1', 't') # Convert string to boolean
+    app.config["DEBUG"] = True #os.getenv("DEBUG", "False").lower() in ('true', '1', 't') # Convert string to boolean
     app.debug = app.config["DEBUG"]
     app.config["LOG_ROTATE_DAYS"] = int(os.getenv("LOG_ROTATE_DAYS", 30))
 
