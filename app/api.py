@@ -1,7 +1,7 @@
 # app/api.py
 
 import traceback
-from flask import Blueprint, jsonify, current_app
+from flask import Blueprint, jsonify, current_app # Keep current_app for debug checks if needed
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import db, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
@@ -36,15 +36,15 @@ def handle_uncaught_exception(e):
     print(f"UNCAUGHT EXCEPTION: {e}\n{full_traceback}")
 
     import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1'
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
 
-    response = {
+    response_data = { # Renamed to avoid confusion with Flask Response object
         'message': 'An unexpected internal server error occurred.',
         'status': 500,
         'error_type': type(e).__name__,
         'details': full_traceback if is_debug_mode else 'Please contact support with the error timestamp.'
     }
-    return jsonify(response), 500 # Use jsonify here too
+    return jsonify(response_data), 500
 
 # --- Global error handler for HTTPExceptions (e.g., 404, 400, 405) ---
 @api.errorhandler(HTTPException)
@@ -59,19 +59,18 @@ def handle_http_exception(e):
         print(f"HTTP EXCEPTION (CLIENT ERROR): {e}")
 
     import os
-    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug
+    is_debug_mode = os.environ.get('FLASK_DEBUG') == '1' or api.app.debug # Use api.app.debug
 
-    response = {
+    response_data = { # Renamed to avoid confusion with Flask Response object
         'message': e.description,
         'status': e.code,
         'error_type': type(e).__name__,
         'details': traceback.format_exc() if is_debug_mode and e.code >= 500 else None
     }
-    return jsonify(response), e.code
+    return jsonify(response_data), e.code
 
 
 # --- Models ---
-# (Models remain the same as they define the structure, not the serialization method directly)
 ingredient_item_model = api.model('IngredientItem', {
     'code': fields.String(description='Ingredient code', allow_null=True),
     'name': fields.String(required=True, description='Ingredient name')
@@ -105,6 +104,7 @@ nutrition_model = api.model('Nutrition', {
     'proteins': fields.Float(description='Proteins in grams', allow_null=False, default=0.0)
 })
 
+# Note: product_model's 'recommendations' field should be a list of marshaled Recommendation objects
 product_model = api.model('Product', {
     'id': fields.String(required=True, description='Product ID'),
     'name': fields.String(required=True, description='Product name'),
@@ -117,7 +117,7 @@ product_model = api.model('Product', {
     }),
     'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
     'addonIds': fields.List(fields.String, description='List of available addon IDs for this product', allow_null=True, default=[]),
-    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[])
+    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[]) # Ensure this matches
 })
 
 order_item_model = api.model('OrderItem', {
@@ -147,18 +147,16 @@ order_model = api.model('Order', {
 
 @api.route('/categories')
 class CategoryList(Resource):
-    # Removed @api.marshal_list_with, will marshal manually
     def get(self):
         """Get all categories"""
         categories = Category.query.all()
-        # Manually marshal the data
+        # Marshal the list of category objects using the category_model
         marshaled_categories = api.marshal(categories, category_model)
-        return jsonify(marshaled_categories) # Wrap in jsonify
+        return jsonify(marshaled_categories)
 
 
 @api.route('/products')
 class ProductList(Resource):
-    # Removed @api.marshal_list_with, will marshal manually
     @api.param('categoryId', 'Filter products by category ID')
     def get(self):
         """Get all products, optionally filtered by category"""
@@ -175,7 +173,6 @@ class ProductList(Resource):
 
         marshaled_products = []
         for product in products:
-            # Handle nutrition data
             nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
             for key in ["calories", "carbs", "fat", "proteins"]:
                 if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -183,7 +180,6 @@ class ProductList(Resource):
                 if isinstance(nutrition_data_for_marshal[key], Decimal):
                     nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
 
-            # Handle ingredients
             processed_ingredients = product.ingredients if product.ingredients is not None else []
             cleaned_ingredients = []
             for ing in processed_ingredients:
@@ -192,7 +188,12 @@ class ProductList(Resource):
                 else:
                     print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
 
-            # Prepare the data for marshalling
+            # Correctly marshal the Recommendation objects
+            marshaled_recommendations = [
+                api.marshal(pr.recommendation, recommendation_model)
+                for pr in product.recommendations if pr.recommendation
+            ]
+
             product_for_marshal = {
                 'id': str(product.id),
                 'name': product.name,
@@ -203,16 +204,19 @@ class ProductList(Resource):
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
                 'addonIds': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
-                'recommendations': [pr.recommendation for pr in product.recommendations if pr.recommendation]
+                'recommendations': marshaled_recommendations # Use the marshaled recommendations here
             }
+            # Although you're building the dict manually,
+            # you can use api.marshal on the final product_for_marshal
+            # to ensure it conforms to the product_model if needed,
+            # but jsonify will handle the dict directly.
             marshaled_products.append(product_for_marshal)
 
-        return jsonify(marshaled_products) # Wrap in jsonify
+        return jsonify(marshaled_products)
 
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
-    # Removed @api.marshal_with, will marshal manually
     def get(self, product_id):
         """Get a single product by ID"""
         product = Product.query.filter_by(is_hidden=False).options(
@@ -220,7 +224,6 @@ class ProductResource(Resource):
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
         ).get_or_404(product_id)
 
-        # Handle nutrition data
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
             if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -228,7 +231,6 @@ class ProductResource(Resource):
             if isinstance(nutrition_data_for_marshal[key], Decimal):
                 nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
 
-        # Handle ingredients
         processed_ingredients = product.ingredients if product.ingredients is not None else []
         cleaned_ingredients = []
         for ing in processed_ingredients:
@@ -237,7 +239,12 @@ class ProductResource(Resource):
             else:
                 print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
 
-        # Prepare the data for marshalling
+        # Correctly marshal the Recommendation objects
+        marshaled_recommendations = [
+            api.marshal(pr.recommendation, recommendation_model)
+            for pr in product.recommendations if pr.recommendation
+        ]
+
         product_for_marshal = {
             'id': str(product.id),
             'name': product.name,
@@ -248,14 +255,13 @@ class ProductResource(Resource):
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
             'addonIds': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
-            'recommendations': [pr.recommendation for pr in product.recommendations if pr.recommendation]
+            'recommendations': marshaled_recommendations # Use the marshaled recommendations here
         }
-        return jsonify(api.marshal(product_for_marshal, product_model)) # Marshal and wrap in jsonify
+        return jsonify(api.marshal(product_for_marshal, product_model))
 
 
 @api.route('/orders')
 class OrderList(Resource):
-    # Removed @api.marshal_list_with and @api.marshal_with for post
     def get(self):
         """Get all orders"""
         orders = Order.query.options(
@@ -272,7 +278,8 @@ class OrderList(Resource):
                 if item.selected_addons_ids:
                     addons_from_db = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all()
                     fetched_addons = [
-                        addon for addon in addons_from_db
+                        api.marshal(addon, addon_model) # Marshal addon objects
+                        for addon in addons_from_db
                         if addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None
                     ]
                     for addon in addons_from_db:
@@ -283,7 +290,8 @@ class OrderList(Resource):
                 if item.selected_recommendation_ids:
                     recs_from_db = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all()
                     fetched_recommendations = [
-                        rec for rec in recs_from_db
+                        api.marshal(rec, recommendation_model) # Marshal recommendation objects
+                        for rec in recs_from_db
                         if rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)
                     ]
                     for rec in recs_from_db:
@@ -316,7 +324,11 @@ class OrderList(Resource):
                     'nutrition': product_nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients_in_order_item,
                     'addonIds': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
-                    'recommendations': []
+                    # In the product model for OrderItem, recommendations are expected to be the full object, not just IDs
+                    'recommendations': [
+                        api.marshal(pr.recommendation, recommendation_model)
+                        for pr in product_obj.recommendations if pr.recommendation
+                    ]
                 }
                 marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
 
@@ -341,7 +353,7 @@ class OrderList(Resource):
                 'createdAt': order.created_at,
                 'estimatedDelivery': order.estimated_delivery
             })
-        return jsonify(serialized_orders) # Wrap in jsonify
+        return jsonify(serialized_orders)
 
 
     @api.expect(order_model)
@@ -416,10 +428,14 @@ class OrderList(Resource):
         response_items = []
         for item in created_order.items:
             product_obj = item.product
+            # Marshal selected_addons_ids and selected_recommendation_ids from the database
             selected_addons_objs = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all() if item.selected_addons_ids else []
-            selected_recommendations_objs = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all() if item.selected_recommendation_ids else []
+            marshaled_selected_addons = [api.marshal(addon, addon_model) for addon in selected_addons_objs]
 
-            # Prepare product data for marshalling within the order item
+            selected_recommendations_objs = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all() if item.selected_recommendation_ids else []
+            marshaled_selected_recommendations = [api.marshal(rec, recommendation_model) for rec in selected_recommendations_objs]
+
+
             product_nutrition_data_for_marshal = product_obj.nutrition if isinstance(product_obj.nutrition, dict) else {}
             for key in ["calories", "carbs", "fat", "proteins"]:
                 if key not in product_nutrition_data_for_marshal or product_nutrition_data_for_marshal[key] is None:
@@ -445,15 +461,19 @@ class OrderList(Resource):
                 'nutrition': product_nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients_in_order_item,
                 'addonIds': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
-                'recommendations': [str(pr.recommendation.id) for pr in product_obj.recommendations if pr.recommendation]
+                # Ensure the recommendations here are also marshaled if product_model expects objects
+                'recommendations': [
+                    api.marshal(pr.recommendation, recommendation_model)
+                    for pr in product_obj.recommendations if pr.recommendation
+                ]
             }
             marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
 
             response_items.append({
                 'product': marshaled_product_in_order_item,
                 'quantity': item.quantity,
-                'selectedAddons': selected_addons_objs,
-                'selectedRecommendations': selected_recommendations_objs
+                'selectedAddons': marshaled_selected_addons, # Use marshaled addons
+                'selectedRecommendations': marshaled_selected_recommendations # Use marshaled recommendations
             })
 
         response_data = {
@@ -475,24 +495,24 @@ class OrderList(Resource):
 
 @api.route('/addons')
 class AddonList(Resource):
-    # Removed @api.marshal_list_with, will marshal manually
     def get(self):
         """Get all addons"""
         addons_data = Addon.query.all()
-        valid_addons = [addon for addon in addons_data if addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None]
+        # Marshal the list of addon objects
+        valid_addons = [api.marshal(addon, addon_model) for addon in addons_data if addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None]
         for addon in addons_data:
             if not (addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None):
                 print(f"WARNING: Skipping malformed addon in AddonList: ID={getattr(addon, 'id', 'N/A')}, Name={repr(getattr(addon, 'name', 'N/A'))} (Type: {type(getattr(addon, 'name', None))}), Price={getattr(addon, 'price', 'N/A')}")
-        return jsonify(api.marshal(valid_addons, addon_model)) # Marshal and wrap in jsonify
+        return jsonify(valid_addons) # jsonify the list of marshaled dicts
 
 @api.route('/recommendations')
 class RecommendationList(Resource):
-    # Removed @api.marshal_list_with, will marshal manually
     def get(self):
         """Get all recommendations"""
         recommendations_data = Recommendation.query.all()
-        valid_recommendations = [rec for rec in recommendations_data if rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)]
+        # Marshal the list of recommendation objects
+        valid_recommendations = [api.marshal(rec, recommendation_model) for rec in recommendations_data if rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)]
         for rec in recommendations_data:
             if not (rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)):
                 print(f"WARNING: Skipping malformed recommendation in RecommendationList: ID={getattr(rec, 'id', 'N/A')}, Name={repr(getattr(rec, 'name', 'N/A'))} (Type: {type(getattr(rec, 'name', None))}), Price={getattr(rec, 'price', 'N/A')})")
-        return jsonify(api.marshal(valid_recommendations, recommendation_model)) # Marshal and wrap in jsonify
+        return jsonify(valid_recommendations) # jsonify the list of marshaled dicts
