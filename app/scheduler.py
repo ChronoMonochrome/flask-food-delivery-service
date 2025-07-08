@@ -5,22 +5,21 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 from sqlalchemy import inspect
-from sqlalchemy.exc import ProgrammingError # Import ProgrammingError for table existence check
+from sqlalchemy.exc import ProgrammingError
+from collections import defaultdict
+from sqlalchemy.exc import IntegrityError
 
 # Load environment variables specific to the scheduler if any
 load_dotenv()
 
 from app import create_app
-# Import MainCategory and ensure db is initialized
-from app.models import db, Category, MainCategory, Product # Added Product here for clarity
+from app.models import db, Category, MainCategory, Product
 from app.logger import logger
 from app.iiko_service import synchronize_iiko_data
 
 # --- Start of inlined migration logic (or import from scripts.migrate_categories) ---
-# You can put this into a separate file and import, but for self-containment in scheduler,
-# copying it here might be simpler for Docker.
 
-# Define the consolidation mapping (copied from scripts/migrate_categories.py)
+# Define the consolidation mapping
 CATEGORY_CONSOLIDATION_MAP = {
     "Wok": ["Wok"],
     "Бургеры": ["Бургеры"],
@@ -34,7 +33,7 @@ CATEGORY_CONSOLIDATION_MAP = {
     "Паста": ["Паста"],
     "Пицца": ["Пицца"],
     "Рекомендованные (общие)": ["Рекомендованные (общие)"],
-    "Рекомендованные (ситуативные)": ["Рекомендованные (сиутативные)"],
+    "Рекомендованные (сиутативные)": ["Рекомендованные (сиутативные)"], # Corrected typo "сиутативные"
     "Рулетики": ["Рулетики"],
     "Салаты": ["Салаты"],
     "Супы": ["Супы "],
@@ -44,7 +43,31 @@ CATEGORY_CONSOLIDATION_MAP = {
     "Хот-доги и донер": ["Хот-доги и донер"],
 }
 
-# Helper function to find the main category name (copied from scripts/migrate_categories.py)
+# --- NEW: Define the desired order of Main Categories ---
+DESIRED_MAIN_CATEGORY_ORDER = [
+    "Добавки",
+    "Напитки",
+    "Суши и роллы",
+    "Кимпабы",
+    "Пицца",
+    "Фокачча",
+    "Хачапури",
+    "Рулетики",
+    "Бургеры",
+    "Хот-доги и донер",
+    "Wok",
+    "Осетинские пироги",
+    "Супы",
+    "Салаты",
+    "Горячие закуски",
+    "Паста",
+    "Горячие блюда",
+    "Рекомендованные (общие)",
+    "Рекомендованные (сиутативные)",
+    "Доставка"
+]
+
+# Helper function to find the main category name
 def get_main_category_name(original_category_name):
     for main_name, prefixes in CATEGORY_CONSOLIDATION_MAP.items():
         for prefix in prefixes:
@@ -83,11 +106,6 @@ def run_category_migration_logic(current_app_instance, current_db_instance):
     Consolidates categories into main categories and updates product links.
     This function replicates the core logic from scripts/migrate_categories.py
     """
-    from collections import defaultdict
-    from sqlalchemy.exc import IntegrityError
-    from app.models import Category, Product, MainCategory # Re-import within function scope if needed
-                                                        # or ensure they are imported globally
-
     logger.info("Starting category consolidation and migration logic (inlined)...")
 
     # Step 1: Gather original categories and group them by their new main category name
@@ -101,14 +119,21 @@ def run_category_migration_logic(current_app_instance, current_db_instance):
         else:
             logger.warning(f"Migration: Original category '{cat.name}' did not map to any main category. Skipping.")
 
-    # Step 2: Create MainCategory entries and update original categories
-    for main_name, categories_to_group in grouped_categories.items():
+    # Step 2: Create MainCategory entries in the desired order and update original categories
+    # Iterate through the predefined order list
+    for main_name in DESIRED_MAIN_CATEGORY_ORDER:
+        categories_to_group = grouped_categories.get(main_name) # Get categories for this main_name
+
+        if not categories_to_group:
+            logger.info(f"Migration: No original categories found for main category '{main_name}'. Skipping creation.")
+            continue # Skip if no original categories map to this main_name
+
         logger.info(f"Migration: Processing main category: {main_name}")
 
         main_category = MainCategory.query.filter_by(name=main_name).first()
 
         if not main_category:
-            first_cat = categories_to_group[0]
+            first_cat = categories_to_group[0] # Use the first mapped original category for default values
             iiko_ids = [cat.iiko_category_id for cat in categories_to_group if cat.iiko_category_id]
 
             main_category = MainCategory(
@@ -131,6 +156,19 @@ def run_category_migration_logic(current_app_instance, current_db_instance):
                 if not main_category:
                     logger.error(f"Migration: Could not retrieve existing MainCategory '{main_name}' after rollback. Skipping.")
                     continue
+        else:
+            logger.info(f"Migration: MainCategory '{main_name}' already exists. Updating existing.")
+            # Optionally update fields of existing main_category based on the first_cat
+            # For example:
+            # first_cat = categories_to_group[0]
+            # main_category.icon = first_cat.icon
+            # main_category.color = first_cat.color
+            # main_category.description = first_cat.description
+            # main_category.image_url = first_cat.image_url
+            # main_category.iiko_category_ids = [cat.iiko_category_id for cat in categories_to_group if cat.iiko_category_id]
+            # current_db_instance.session.add(main_category) # Add it to session if modified
+            # current_db_instance.session.commit()
+
 
         for cat in categories_to_group:
             if cat.main_category_id != main_category.id: # Avoid unnecessary updates
@@ -159,8 +197,8 @@ def run_category_migration_logic(current_app_instance, current_db_instance):
                 updated_product_count += 1
         else:
             logger.warning(f"Migration: Product '{product.name}' (ID: {product.id}) original category "
-                           f"'{product.categoryId}' not found or not mapped to a MainCategory. "
-                           "Setting product.main_category_id to None if applicable.")
+                            f"'{product.categoryId}' not found or not mapped to a MainCategory. "
+                            f"Setting product.main_category_id to None if applicable.")
             # Optionally, set main_category_id to None if no mapping exists
             if product.main_category_id is not None:
                 product.main_category_id = None
@@ -187,9 +225,6 @@ def check_and_sync_initial_data():
     After sync, checks if MainCategory table is empty and runs migration if necessary.
     """
     with app.app_context():
-        # This will create tables if they don't exist.
-        # In a production setup with Flask-Migrate, 'db.create_all()'
-        # might be replaced by ensuring 'flask db upgrade' has run.
         db.create_all()
         logger.info("Scheduler: Database tables ensured (created if not existing).")
 
@@ -206,16 +241,10 @@ def check_and_sync_initial_data():
 
         # Check if main_category table exists and is empty
         inspector = inspect(db.engine)
-        # Check for both 'main_category' and 'product' tables to be safe,
-        # as the product table needs main_category_id column.
         if 'main_category' not in inspector.get_table_names() or \
            'product' not in inspector.get_table_names() or \
            'main_category_id' not in [c['name'] for c in inspector.get_columns('product')]:
             logger.warning("Scheduler: 'main_category' table or 'product.main_category_id' column does not exist. This indicates migrations might not have run correctly.")
-            # In a production environment, you would typically halt here and
-            # instruct the user to run migrations. For a first run, db.create_all()
-            # should have created it if the model was defined before.
-            # If it's truly not there after create_all, there's a deeper issue.
             return
 
         try:
@@ -226,7 +255,6 @@ def check_and_sync_initial_data():
             else:
                 logger.info("Scheduler: 'main_category' table is not empty. Skipping category consolidation migration.")
         except ProgrammingError as e:
-            # This can happen if the table wasn't created yet or other DB issues
             logger.error(f"Scheduler: Database error while checking main_category table: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Scheduler: An unexpected error occurred during category migration check: {e}", exc_info=True)
@@ -241,7 +269,6 @@ def sync_data_job():
         try:
             synchronize_iiko_data()
             logger.info("Scheduler: iiko data synchronization completed successfully.")
-            # No migration check here; migration is a one-time process on initial data load
         except Exception as e:
             logger.error(f"Scheduler: Error during iiko data synchronization: {e}", exc_info=True)
             db.session.rollback()
