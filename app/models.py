@@ -135,7 +135,6 @@ class OrderItem(db.Model):
     order_id = db.Column(db.String(36), db.ForeignKey('order.id'), nullable=False)
     product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=False) # Links to Product.id
     quantity = db.Column(db.Integer, nullable=False)
-    price_at_order = db.Column(db.Numeric(10, 2), nullable=False) # New: Store price at time of order
 
     # Store IDs of selected addons/recommendations as JSON arrays
     selected_addons_ids = db.Column(JSON, nullable=True, default=[]) # Default to empty list

@@ -59,7 +59,7 @@ def print_entries(print_all=True):
                         elif model_name == "Order":
                             logger.info(f"  ID: {entry.id}, Total: {entry.total}, Status: {entry.status}, Created At: {entry.created_at}, Delivery Address: {entry.delivery_address}, Phone: {entry.delivery_phone}, Payment Method: {entry.payment_method}, Comment: {entry.comment}")
                         elif model_name == "OrderItem":
-                            logger.info(f"  ID: {entry.id}, Order ID: {entry.order_id}, Product ID: {entry.product_id}, Quantity: {entry.quantity}, Price At Order: {entry.price_at_order}, Selected Addons: {entry.selected_addons_ids}, Selected Recommendations: {entry.selected_recommendation_ids}")
+                            logger.info(f"  ID: {entry.id}, Order ID: {entry.order_id}, Product ID: {entry.product_id}, Quantity: {entry.quantity}, Selected Addons: {entry.selected_addons_ids}, Selected Recommendations: {entry.selected_recommendation_ids}")
                         else:
                             logger.info(repr(entry)) # Fallback for any other models
                         logger.info("-" * 30) # Separator for multiple entries
