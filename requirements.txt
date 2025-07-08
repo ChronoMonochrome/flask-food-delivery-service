@@ -15,3 +15,5 @@ flask-restx
 requests
 diskcache
 flask-cors
+sqlalchemy_utils
+flask_migrate

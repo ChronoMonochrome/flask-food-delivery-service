@@ -4,7 +4,7 @@ import traceback
 from flask import Blueprint, jsonify, current_app # Keep current_app for debug checks if needed
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
-from app.models import db, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
+from app.models import db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import json
@@ -30,12 +30,17 @@ ingredient_item_model = api.model('IngredientItem', {
     'name': fields.String(required=True, description='Ingredient name')
 })
 
-category_model = api.model('Category', {
-    'id': fields.String(required=True, description='Category ID'),
-    'name': fields.String(required=True, description='Category name'),
-    'icon': fields.String(description='Category icon (emoji)'),
-    'color': fields.String(description='Category color (Tailwind CSS gradient classes)')
+# Update category_model to represent MainCategory
+main_category_model = api.model('MainCategory', {
+    'id': fields.String(required=True, description='Main Category ID'),
+    'name': fields.String(required=True, description='Main Category name'),
+    'icon': fields.String(description='Main Category icon (emoji)', allow_null=True),
+    'color': fields.String(description='Main Category color (Tailwind CSS gradient classes)', allow_null=True),
+    'description': fields.String(description='Main Category description', allow_null=True),
+    'image_url': fields.String(description='Main Category image URL', allow_null=True),
+    'iiko_category_ids': fields.List(fields.String, description='List of original iiko category IDs consolidated into this main category', allow_null=True)
 })
+
 
 addon_model = api.model('Addon', {
     'id': fields.String(required=True, description='Addon ID'),
@@ -58,23 +63,25 @@ nutrition_model = api.model('Nutrition', {
     'proteins': fields.Float(description='Proteins in grams', allow_null=False, default=0.0)
 })
 
-# Note: product_model's 'recommendations' field should be a list of marshaled Recommendation objects
+# product_model's 'categoryId' field now refers to MainCategory ID
 product_model = api.model('Product', {
     'id': fields.String(required=True, description='Product ID'),
     'name': fields.String(required=True, description='Product name'),
-    'description': fields.String(description='Product description'),
+    'description': fields.String(description='Product description', allow_null=True),
     'price': fields.Float(required=True, description='Product price'),
-    'image': fields.String(description='Product image URL'),
-    'categoryId': fields.String(required=True, description='ID of the category this product belongs to'),
+    'image': fields.String(description='Product image URL', allow_null=True),
+    'categoryId': fields.String(required=True, description='ID of the main category this product belongs to'), # Now MainCategory ID
     'nutrition': fields.Nested(nutrition_model, description='Nutritional information', allow_null=False, default={
         "calories": 0.0, "carbs": 0.0, "fat": 0.0, "proteins": 0.0
     }),
     'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
     'availableAddons': fields.List(fields.String, description='List of available addon IDs for this product', allow_null=True, default=[]),
-    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[]) # Ensure this matches
+    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[])
 })
 
 order_item_model = api.model('OrderItem', {
+    # It's better to return product ID and let client fetch product details,
+    # or embed a subset of product details, but for now we'll stick to full product model
     'product': fields.Nested(product_model, description='Product details'),
     'quantity': fields.Integer(required=True, description='Quantity of the product'),
     'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this product item', default=[]),
@@ -103,11 +110,10 @@ order_model = api.model('Order', {
 class CategoryList(Resource):
     def get(self):
         """Get all categories"""
-        categories = Category.query.all()
+        categories = MainCategory.query.all()
         # Marshal the list of category objects using the category_model
-        marshaled_categories = api.marshal(categories, category_model)
+        marshaled_categories = api.marshal(categories, main_category_model)
         return jsonify(marshaled_categories)
-
 
 @api.route('/products')
 class ProductList(Resource):
@@ -121,7 +127,7 @@ class ProductList(Resource):
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
         )
         if category_id:
-            query = query.filter_by(categoryId=category_id)
+            query = query.filter_by(main_category_id=category_id)
 
         products = query.all()
 
@@ -140,9 +146,8 @@ class ProductList(Resource):
                 if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
                     cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
                 else:
-                    print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
-
-            # Correctly marshal the Recommendation objects
+                    current_app.logger.warning(f"Skipping malformed ingredient for product {product.id}: {ing!r}") # Use current_app.logger
+                    
             marshaled_recommendations = [
                 api.marshal(pr.recommendation, recommendation_model)
                 for pr in product.recommendations if pr.recommendation
@@ -154,37 +159,30 @@ class ProductList(Resource):
                 'description': product.description,
                 'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
                 'image': product.image,
-                'categoryId': str(product.categoryId),
+                'categoryId': str(product.main_category_id), # This is now the MainCategory ID
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
                 'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],
-                'recommendations': marshaled_recommendations # Use the marshaled recommendations here
+                'recommendations': marshaled_recommendations
             }
-            # Although you're building the dict manually,
-            # you can use api.marshal on the final product_for_marshal
-            # to ensure it conforms to the product_model if needed,
-            # but jsonify will handle the dict directly.
-            marshaled_products.append(product_for_marshal)
+            marshaled_products.append(api.marshal(product_for_marshal, product_model)) # Marshal each product_for_marshal
 
         return jsonify(marshaled_products)
 
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
+    @api.marshal_with(product_model) # Use marshal_with decorator for single object output
     def get(self, product_id):
         """Get a single product by ID"""
-        # First, try to get the product by its primary key.
-        # .get_or_404(product_id) directly uses the primary key.
         product = Product.query.options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        ).get_or_404(product_id) # Get by primary key first
+        ).get_or_404(product_id)
 
-        # Then, apply your additional logic (e.g., check if it's hidden)
         if product.is_hidden:
-            api.abort(404, "Product not found or is hidden.") # Or a different error code/message if appropriate
+            api.abort(404, "Product not found or is hidden.")
 
-        # ... (rest of your existing code for marshaling product data) ...
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
             if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -198,20 +196,21 @@ class ProductResource(Resource):
             if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
                 cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
             else:
-                print(f"WARNING: Skipping malformed ingredient for product {product.id}: {ing!r}")
+                current_app.logger.warning(f"Skipping malformed ingredient for product {product.id}: {ing!r}")
 
         marshaled_recommendations = [
             api.marshal(pr.recommendation, recommendation_model)
             for pr in product.recommendations if pr.recommendation
         ]
 
+        # Prepare dictionary for marshalling. Flask-RESTx's marshal_with will handle the rest.
         product_for_marshal = {
             'id': str(product.id),
             'name': product.name,
             'description': product.description,
             'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
             'image': product.image,
-            'categoryId': str(product.categoryId),
+            'categoryId': str(product.categoryId), # This is now the MainCategory ID
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
             'availableAddons': [str(pa.addon.id) for pa in product.available_addons if pa.addon],

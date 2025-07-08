@@ -7,6 +7,9 @@ from datetime import datetime
 from os.path import join, realpath, dirname
 from flask import Flask, jsonify
 from flask_cors import CORS
+
+# Import Migrate
+from flask_migrate import Migrate #
 from flask_session import Session
 from datetime import timedelta
 import os
@@ -21,6 +24,9 @@ app = create_app()
 
 # Initialize SQLAlchemy with the app
 db.init_app(app)
+
+# Initialize Flask-Migrate AFTER db.init_app(app)
+migrate = Migrate(app, db)
 
 # Initialize CORS
 cors = CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"], "allow_headers": "*"}})

@@ -23,6 +23,7 @@ COPY app/scheduler.py /app/scheduler.py
 COPY run_sync_once.py /app/run_sync_once.py
 COPY print_db_data.py /app/print_db_data.py
 COPY drop_db_tables.py /app/drop_db_tables.py
+COPY migrate_categories.py /app/migrate_categories.py
 
 # Command to run the scheduler script
 CMD ["python", "scheduler.py"]
