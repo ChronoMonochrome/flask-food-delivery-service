@@ -19,7 +19,7 @@ def print_entries(print_all=True):
 
         models_to_check = [
             (Category, "Category"),
-            (MainCategory, "MainCategory"),
+            (MainCategory, "MainCategory"), # MainCategory specifically handled below
             (Product, "Product"),
             (Addon, "Addon"),
             (Recommendation, "Recommendation"),
@@ -29,37 +29,45 @@ def print_entries(print_all=True):
 
         for model_class, model_name in models_to_check:
             try:
-                if print_all:
-                    entries = model_class.query.all()
+                entries = []
+                if model_name == "MainCategory":
+                    # Special handling for MainCategory to ensure desired order
+                    if print_all:
+                        entries = model_class.query.order_by(model_class.display_order).all()
+                    else:
+                        entries = [model_class.query.order_by(model_class.display_order).first()] if model_class.query.first() else []
                 else:
-                    entries = [model_class.query.first()] if model_class.query.first() else []
+                    if print_all:
+                        entries = model_class.query.all()
+                    else:
+                        entries = [model_class.query.first()] if model_class.query.first() else []
 
                 if entries:
                     logger.info(f"--- {model_name} ({'all' if print_all else 'first'} entries) ---")
                     for entry in entries:
                         if model_name == "Category":
-                            logger.info(f"  ID: {entry.id}, IIKO ID: {entry.iiko_category_id}, Name: {entry.name}, MainCategory ID: {entry.main_category_id}, Is Hidden: {entry.is_hidden}")
+                            logger.info(f"    ID: {entry.id}, IIKO ID: {entry.iiko_category_id}, Name: {entry.name}, MainCategory ID: {entry.main_category_id}, Is Hidden: {entry.is_hidden}")
                         elif model_name == "MainCategory":
-                            logger.info(f"  ID: {entry.id}, Name: {entry.name}, Icon: {entry.icon}, Color: {entry.color}, IIKO Category IDs: {entry.iiko_category_ids}, Is Hidden: {entry.is_hidden}")
+                            # Added display_order to the printout for verification
+                            logger.info(f"    ID: {entry.id}, Name: {entry.name}, Icon: {entry.icon}, Color: {entry.color}, IIKO Category IDs: {entry.iiko_category_ids}, Is Hidden: {entry.is_hidden}, Display Order: {entry.display_order}")
                         elif model_name == "Product":
-                            # Crucial check for main_category_id
-                            logger.info(f"  ID: {entry.id}, IIKO ID: {entry.iiko_product_id}, Name: {entry.name}, Price: {entry.price}, Category ID (IIKO): {entry.categoryId}, MainCategory ID: {entry.main_category_id}, Is Hidden: {entry.is_hidden}")
+                            logger.info(f"    ID: {entry.id}, IIKO ID: {entry.iiko_product_id}, Name: {entry.name}, Price: {entry.price}, Category ID (IIKO): {entry.categoryId}, MainCategory ID: {entry.main_category_id}, Is Hidden: {entry.is_hidden}")
                             if entry.nutrition:
-                                logger.info(f"    Nutrition: Calories={entry.nutrition.get('calories')}, Carbs={entry.nutrition.get('carbs')}, Fat={entry.nutrition.get('fat')}, Proteins={entry.nutrition.get('proteins')}")
+                                logger.info(f"      Nutrition: Calories={entry.nutrition.get('calories')}, Carbs={entry.nutrition.get('carbs')}, Fat={entry.nutrition.get('fat')}, Proteins={entry.nutrition.get('proteins')}")
                             if entry.ingredients:
-                                logger.info(f"    Ingredients: {entry.ingredients}")
+                                logger.info(f"      Ingredients: {entry.ingredients}")
                             if entry.available_addons:
-                                logger.info(f"    Available Addon IDs: {[pa.addon_id for pa in entry.available_addons]}")
+                                logger.info(f"      Available Addon IDs: {[pa.addon_id for pa in entry.available_addons]}")
                             if entry.recommendations:
-                                logger.info(f"    Recommendation IDs: {[pr.recommendation_id for pr in entry.recommendations]}")
+                                logger.info(f"      Recommendation IDs: {[pr.recommendation_id for pr in entry.recommendations]}")
                         elif model_name == "Addon":
-                            logger.info(f"  ID: {entry.id}, IIKO Addon ID: {entry.iiko_addon_id}, Name: {entry.name}, Price: {entry.price}, Image: {entry.image}")
+                            logger.info(f"    ID: {entry.id}, IIKO Addon ID: {entry.iiko_addon_id}, Name: {entry.name}, Price: {entry.price}, Image: {entry.image}")
                         elif model_name == "Recommendation":
-                            logger.info(f"  ID: {entry.id}, IIKO Recommendation ID: {entry.iiko_recommendation_id}, Name: {entry.name}, Price: {entry.price}, Image: {entry.image}")
+                            logger.info(f"    ID: {entry.id}, IIKO Recommendation ID: {entry.iiko_recommendation_id}, Name: {entry.name}, Price: {entry.price}, Image: {entry.image}")
                         elif model_name == "Order":
-                            logger.info(f"  ID: {entry.id}, Total: {entry.total}, Status: {entry.status}, Created At: {entry.created_at}, Delivery Address: {entry.delivery_address}, Phone: {entry.delivery_phone}, Payment Method: {entry.payment_method}, Comment: {entry.comment}")
+                            logger.info(f"    ID: {entry.id}, Total: {entry.total}, Status: {entry.status}, Created At: {entry.created_at}, Delivery Address: {entry.delivery_address}, Phone: {entry.delivery_phone}, Payment Method: {entry.payment_method}, Comment: {entry.comment}")
                         elif model_name == "OrderItem":
-                            logger.info(f"  ID: {entry.id}, Order ID: {entry.order_id}, Product ID: {entry.product_id}, Quantity: {entry.quantity}, Selected Addons: {entry.selected_addons_ids}, Selected Recommendations: {entry.selected_recommendation_ids}")
+                            logger.info(f"    ID: {entry.id}, Order ID: {entry.order_id}, Product ID: {entry.product_id}, Quantity: {entry.quantity}, Selected Addons: {entry.selected_addons_ids}, Selected Recommendations: {entry.selected_recommendation_ids}")
                         else:
                             logger.info(repr(entry)) # Fallback for any other models
                         logger.info("-" * 30) # Separator for multiple entries

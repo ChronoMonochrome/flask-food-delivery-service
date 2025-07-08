@@ -110,7 +110,7 @@ order_model = api.model('Order', {
 class CategoryList(Resource):
     def get(self):
         """Get all categories"""
-        categories = MainCategory.query.all()
+        categories = MainCategory.query.order_by(MainCategory.display_order).all()
         # Marshal the list of category objects using the category_model
         marshaled_categories = api.marshal(categories, main_category_model)
         return jsonify(marshaled_categories)

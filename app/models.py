@@ -2,7 +2,7 @@ import uuid
 import pymysql
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Boolean, Numeric
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -42,6 +42,7 @@ class MainCategory(db.Model):
     image_url = db.Column(db.String(512))
     is_hidden = db.Column(db.Boolean, default=False)
     iiko_category_ids = db.Column(db.JSON) # Store a list of original iiko category IDs it consolidates
+    display_order: Mapped[int] = mapped_column(db.Integer, nullable=False, default=9999)
 
     # New relationship for products that will point directly to MainCategory after migration
     # backref can be 'products' or 'main_products'
