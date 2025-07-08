@@ -85,7 +85,7 @@ mkdir certs
 Для сборки и запуска всего стека приложения выполните следующую команду в корневом каталоге проекта:
 
 ```
-docker-compose up --build -d
+docker compose up --build -d
 
 ```
 
@@ -95,11 +95,10 @@ docker-compose up --build -d
 
 ### Первичная инициализация базы данных
 
-**После первого запуска приложения (или при очистке томов данных), для инициализации базы данных, выполните следующую команду:**
+**Выполните миграции изнутри контейнера `web`**:
 
 ```
-sudo bash sync_db.sh
-
+docker compose run --rm web flask db upgrade
 ```
 
 ## Доступ к приложению
@@ -257,36 +256,36 @@ sudo bash sync_db.sh
 -   Для Flask-приложения (web):
     
     ```
-    docker-compose logs web
+    docker compose logs web
     
     ```
     
 -   Для Telegram-бота (bot):
     
     ```
-    docker-compose logs bot
+    docker compose logs bot
     
     ```
     
 -   Для Nginx:
     
     ```
-    docker-compose logs nginx
+    docker compose logs nginx
     
     ```
     
 -   Для базы данных MySQL:
     
     ```
-    docker-compose logs db
+    docker compose logs db
     
     ```
     
 -   Для просмотра логов в реальном времени:
     
     ```
-    docker-compose logs -f <имя_сервиса> # Например, docker-compose logs -f web
-    docker-compose logs -f             # Для всех сервисов
+    docker compose logs -f <имя_сервиса> # Например, docker compose logs -f web
+    docker compose logs -f             # Для всех сервисов
     
     ```
     
@@ -296,12 +295,12 @@ sudo bash sync_db.sh
 Чтобы остановить и удалить контейнеры, сети и тома (если они не названы специально для сохранения данных), выполните:
 
 ```
-docker-compose down
+docker compose down
 
 ```
 
 Если вы хотите удалить также тома данных (и потерять данные базы данных), используйте:
 
 ```
-docker-compose down -v
+docker compose down -v
 ```
