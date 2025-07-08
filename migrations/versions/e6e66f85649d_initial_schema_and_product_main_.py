@@ -1,8 +1,8 @@
 """Initial schema and product main_category_id
 
-Revision ID: 37c2ceb25c8d
+Revision ID: e6e66f85649d
 Revises: 
-Create Date: 2025-07-08 09:25:06.560068
+Create Date: 2025-07-08 20:05:39.852869
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '37c2ceb25c8d'
+revision = 'e6e66f85649d'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -99,7 +99,6 @@ def upgrade():
     sa.Column('order_id', sa.String(length=36), nullable=False),
     sa.Column('product_id', sa.String(length=36), nullable=False),
     sa.Column('quantity', sa.Integer(), nullable=False),
-    sa.Column('price_at_order', sa.Numeric(precision=10, scale=2), nullable=False),
     sa.Column('selected_addons_ids', sa.JSON(), nullable=True),
     sa.Column('selected_recommendation_ids', sa.JSON(), nullable=True),
     sa.ForeignKeyConstraint(['order_id'], ['order.id'], ),
