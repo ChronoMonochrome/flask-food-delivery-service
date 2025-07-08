@@ -7,13 +7,13 @@ import os
 from dotenv import load_dotenv
 from .logger import logger
 
-def create_app():
+def create_app(static_folder: str = "", static_url_path: str = ""):
     # Initialize the Flask app here, so its root_path is available
     app = Flask(__name__,
                 template_folder=realpath(join(dirname(__file__), "templates")),
                 # Use app.root_path to correctly locate the static folder relative to the app module
-                static_folder=os.path.join(os.path.abspath(os.path.dirname(__file__)), "static"),
-                static_url_path='/'
+                static_folder=static_folder,
+                static_url_path=static_url_path
                )
 
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
