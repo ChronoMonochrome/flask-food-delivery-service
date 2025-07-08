@@ -4,7 +4,7 @@ import logging
 import os
 from uuid import uuid4
 from datetime import datetime
-import json
+import json # Import json for pretty printing payload
 
 app = Flask(__name__)
 
@@ -17,19 +17,21 @@ def access_token():
     data = request.json
     api_login = data.get('apiLogin')
     app.logger.info(f"Mock IIKO: Received access_token request with apiLogin: {api_login}")
-    if api_login == os.getenv("IIKO_API_TOKEN"): # Use the token from env for consistency
+    if api_login == os.getenv("IIKO_API_TOKEN"):
         return jsonify({"token": "mock-iiko-token-12345"}), 200
     return jsonify({"message": "Invalid API Login"}), 401
 
 @app.route('/api/1/organizations', methods=['POST'])
 def organizations():
     """Mocks iiko /api/1/organizations endpoint."""
+    data = request.json
     headers = request.headers
-    app.logger.info(f"Mock IIKO: Received organizations request. Headers: {headers}")
-    # Dummy organization data
+    # Use ensure_ascii=False for proper display of Cyrillic characters in logs
+    app.logger.info(f"Mock IIKO: Received organizations request. Payload: {json.dumps(data, indent=2, ensure_ascii=False)}. Headers: {headers}")
+    # Dummy organization data with Cyrillic names
     orgs = [
-        {"id": "mock-org-1", "name": "Mock Organization 1", "inn": "1234567890"},
-        {"id": "mock-org-2", "name": "Mock Organization 2", "inn": "0987654321"}
+        {"id": "mock-org-1", "name": "Тестовая Организация 1", "inn": "1234567890"},
+        {"id": "mock-org-2", "name": "Вторая Организация", "inn": "0987654321"}
     ]
     return jsonify({"organizations": orgs}), 200
 
@@ -38,20 +40,42 @@ def terminal_groups():
     """Mocks iiko /api/1/terminal_groups endpoint."""
     data = request.json
     headers = request.headers
-    app.logger.info(f"Mock IIKO: Received terminal_groups request for orgs: {data.get('organizationIds')}. Headers: {headers}")
-    # Dummy terminal group data
-    tgs = [
-        {"id": "mock-tg-1", "organizationId": "mock-org-1", "name": "Main Terminal Group"},
-        {"id": "mock-tg-2", "organizationId": "mock-org-1", "name": "Secondary Terminal Group"}
+    # Use ensure_ascii=False for proper display of Cyrillic characters in logs
+    app.logger.info(f"Mock IIKO: Received terminal_groups request for orgs: {json.dumps(data.get('organizationIds'), indent=2, ensure_ascii=False)}. Headers: {headers}")
+
+    requested_org_ids = data.get('organizationIds', [])
+    include_disabled = data.get('includeDisabled', False)
+
+    # Dummy terminal group data - link them to organization IDs with Cyrillic names
+    all_tgs = [
+        {"id": "mock-tg-alpha", "organizationId": "mock-org-1", "name": "Главная Группа Терминалов", "isOnlineOrder": True},
+        {"id": "mock-tg-beta", "organizationId": "mock-org-1", "name": "Вторичная Группа Терминалов", "isOnlineOrder": False},
+        {"id": "mock-tg-gamma", "organizationId": "mock-org-2", "name": "Группа Терминалов Гамма", "isOnlineOrder": True},
     ]
-    return jsonify({"terminalGroups": tgs}), 200
+
+    # Filter by requested organization IDs
+    filtered_tgs = [
+        tg for tg in all_tgs
+        if not requested_org_ids or tg["organizationId"] in requested_org_ids
+    ]
+
+    response_structure = []
+    for org_id in set(tg["organizationId"] for tg in filtered_tgs):
+        org_tgs = [tg for tg in filtered_tgs if tg["organizationId"] == org_id]
+        response_structure.append({
+            "organizationId": org_id,
+            "items": org_tgs
+        })
+
+    return jsonify({"terminalGroups": response_structure}), 200
 
 @app.route('/api/1/order/create', methods=['POST'])
 def create_order():
     """Mocks iiko /api/1/order/create endpoint."""
     data = request.json
     headers = request.headers
-    app.logger.info(f"Mock IIKO: Received create_order request. Headers: {headers}, Payload: {json.dumps(data, indent=2)}")
+    # Use ensure_ascii=False for proper display of Cyrillic characters in logs
+    app.logger.info(f"Mock IIKO: Received create_order request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
     organization_id = data.get('organizationId')
     terminal_group_id = data.get('terminalGroupId')
@@ -61,7 +85,6 @@ def create_order():
     if not all([organization_id, terminal_group_id, table_ids, order]):
         return jsonify({"message": "Missing required fields"}), 400
 
-    # Simulate iiko response structure
     mock_order_id = str(uuid4())
     response_data = {
         "correlationId": str(uuid4()),
@@ -73,13 +96,13 @@ def create_order():
     app.logger.info(f"Mock IIKO: Successfully created mock order with ID: {mock_order_id}")
     return jsonify(response_data), 200
 
-# Placeholder for future /api/1/deliveries/create if needed (as mentioned in your example)
 @app.route('/api/1/deliveries/create', methods=['POST'])
 def create_delivery():
     """Mocks iiko /api/1/deliveries/create endpoint."""
     data = request.json
     headers = request.headers
-    app.logger.info(f"Mock IIKO Delivery: Received create_delivery request. Headers: {headers}, Payload: {json.dumps(data, indent=2)}")
+    # Use ensure_ascii=False for proper display of Cyrillic characters in logs
+    app.logger.info(f"Mock IIKO Delivery: Received create_delivery request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
 
     organization_id = data.get('organizationId')
     terminal_group_id = data.get('terminalGroupId')
@@ -99,9 +122,7 @@ def create_delivery():
     app.logger.info(f"Mock IIKO Delivery: Successfully created mock delivery order with ID: {mock_delivery_id}")
     return jsonify(response_data), 200
 
-
 if __name__ == '__main__':
-    # Load .env for mock service as well to get IIKO_API_TOKEN for access_token endpoint
     from dotenv import load_dotenv
     load_dotenv()
     app.run(host='0.0.0.0', port=5000, debug=True)

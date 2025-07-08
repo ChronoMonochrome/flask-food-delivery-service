@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, current_app
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
+from app import iiko_service
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import json
@@ -232,9 +233,6 @@ class ProductResource(Resource):
 
 ## Order Endpoints
 
-MOCK_IIKO_ORGANIZATION_ID = "mock-org-1"
-MOCK_IIKO_TERMINAL_GROUP_ID = "mock-tg-1"
-
 @api.route('/orders')
 class OrderList(Resource):
     @api.marshal_with(order_model, as_list=True)
@@ -348,9 +346,42 @@ class OrderList(Resource):
         """Create a new order and send it to IIKO (mock for now)."""
         data = api.payload
 
+        # --- Dynamic retrieval of Organization ID and Terminal Group ID ---
+        iiko_token = iiko_service.get_iiko_token()
+        if not iiko_token:
+            api.logger.error("Failed to get IIKO access token for order creation.")
+            api.abort(500, "Failed to connect to external ordering system (IIKO).")
+
+        organization_id = None
+        terminal_group_id = None
+
+        try:
+            organizations = iiko_service.get_organizations(iiko_token)
+            if organizations:
+                organization_id = organizations[0].get("id")
+                api.logger.info(f"Using IIKO Organization ID: {organization_id}")
+            else:
+                api.logger.error("No organizations found from IIKO API.")
+                api.abort(500, "Could not determine organization ID for external order.")
+
+            terminal_groups = iiko_service.get_terminal_groups(organization_id, iiko_token)
+            if terminal_groups and terminal_groups[0].get("items"):
+                # Assuming the first item in the first terminal group list is the one we want
+                terminal_group_id = terminal_groups[0]["items"][0].get("id")
+                api.logger.info(f"Using IIKO Terminal Group ID: {terminal_group_id}")
+            else:
+                api.logger.error(f"No terminal groups found for organization {organization_id} from IIKO API.")
+                api.abort(500, "Could not determine terminal group ID for external order.")
+
+        except Exception as e:
+            api.logger.error(f"Error fetching IIKO organization/terminal group IDs: {e}", exc_info=True)
+            api.abort(500, f"Failed to initialize external ordering system: {str(e)}")
+        # --- End Dynamic retrieval ---
+
+
         calculated_total = Decimal('0.00')
         order_items_to_add = []
-        iiko_order_items = [] # To build the payload for iiko API
+        iiko_order_items = []
 
         for item_data in data['items']:
             product = Product.query.get(item_data['product']['id'])
@@ -361,7 +392,6 @@ class OrderList(Resource):
             selected_addon_ids = [a['id'] for a in item_data.get('selectedAddons', [])]
             selected_recommendation_ids = [r['id'] for r in item_data.get('selectedRecommendations', [])]
 
-            # Price calculation for internal order total
             for addon_id in selected_addon_ids:
                 addon = Addon.query.get(addon_id)
                 if addon:
@@ -369,11 +399,11 @@ class OrderList(Resource):
                 else:
                     api.logger.warning(f"Selected addon with ID {addon_id} not found. Skipping price calculation for it.")
             for rec_id in selected_recommendation_ids:
-                recommendation = Recommendation.query.get(rec_id)
-                if recommendation:
-                    item_price += recommendation.price
-                else:
-                    api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation for it.")
+                 recommendation = Recommendation.query.get(rec_id)
+                 if recommendation:
+                     item_price += recommendation.price
+                 else:
+                     api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation for it.")
 
             calculated_total += item_price * Decimal(str(item_data['quantity']))
 
@@ -384,19 +414,16 @@ class OrderList(Resource):
                 selected_recommendation_ids=selected_recommendation_ids
             ))
 
-            # Prepare item for IIKO API payload
-            # IIKO API usually expects product IDs, not nested product objects
-            # And often expects modifiers (addons/recommendations) as separate list on the item
             iiko_modifiers = []
             for addon_id in selected_addon_ids:
                 iiko_modifiers.append({
-                    "id": addon_id,
-                    "type": "Product", # IIKO treats addons/recommendations often as products/modifiers
-                    "amount": 1 # Assuming 1 quantity for each addon/rec
+                    "id": addon_id, # This should be the IIKO ID for the addon
+                    "type": "Product",
+                    "amount": 1
                 })
             for rec_id in selected_recommendation_ids:
                  iiko_modifiers.append({
-                    "id": rec_id,
+                    "id": rec_id, # This should be the IIKO ID for the recommendation
                     "type": "Product",
                     "amount": 1
                 })
@@ -409,8 +436,8 @@ class OrderList(Resource):
                 "amount": item_data['quantity'],
                 "price": float(product.price),
                 "modifiers": iiko_modifiers,
-                "comboId": None, # If part of a combo, otherwise null
-                "positionId": str(uuid4()) # Unique ID for each position in order
+                "comboId": None,
+                "positionId": str(uuid4())
             })
 
 
@@ -437,30 +464,29 @@ class OrderList(Resource):
             db.session.add(item)
 
         try:
-            # Prepare the IIKO order payload (simplified based on your example)
             iiko_order_payload = {
-                "id": new_order.id, # Use your internal order ID as iiko's order ID
-                "externalId": new_order.id, # Often iiko uses an external ID too
-                "organizationId": MOCK_IIKO_ORGANIZATION_ID, # Replace with dynamic if needed
+                "id": new_order.id,
+                "externalId": new_order.id,
+                "organizationId": organization_id, # Use dynamically retrieved ID
                 "items": iiko_order_items,
                 "phone": new_order.delivery_phone,
                 "address": {
                     "street": new_order.delivery_address,
-                    "city": "Default City" # Add city if your app captures it
+                    "city": "Default City"
                 },
                 "deliveryPoint": {
-                    "latitude": 0, "longitude": 0 # Add actual coordinates if available
+                    "latitude": 0, "longitude": 0
                 },
                 "deliveryDate": datetime.utcnow().isoformat(),
                 "deliveryTime": datetime.utcnow().strftime("%H:%M"),
                 "comment": new_order.comment,
-                "fullSum": float(final_total), # Total sum for iiko
+                "fullSum": float(final_total),
                 "isSelfService": False,
                 "paymentItems": [
                     {
                         "sum": float(final_total),
                         "paymentType": {
-                            "code": "Cash" if new_order.payment_method.lower() == "cash" else "Card", # Map payment methods
+                            "code": "Cash" if new_order.payment_method.lower() == "cash" else "Card",
                             "name": new_order.payment_method,
                             "combinable": True,
                             "externalId": None,
@@ -471,40 +497,25 @@ class OrderList(Resource):
                         "isExternal": False
                     }
                 ],
-                "sourceKey": "MandarinWebApp", # A key to identify your integration
+                "sourceKey": "MandarinWebApp",
             }
 
-            # If you want to use create_table_order (as per your request)
-            # You'll need a tableId. For delivery orders, 'deliveries/create' is more appropriate.
-            # Assuming for now we are creating a delivery order as it's more common for food apps.
-            # If specifically a 'table order', you'd need logic to select a tableId.
-            # For this example, let's stick with the 'deliveries/create' endpoint.
-            # If you really need 'create_table_order', you'll need to adapt the client input
-            # to include table IDs.
-
-            # Calling the external API (mocked by our mock_iiko service)
-            # Ensure you import iiko_service at the top: `from app import iiko_service`
-            from app import iiko_service # Import here for clarity, or at top
-
-            # For deliveries/create, the terminalGroupId is usually passed in the main payload
             iiko_response = iiko_service.create_delivery_order(
-                organization_id=MOCK_IIKO_ORGANIZATION_ID,
-                terminal_group_id=MOCK_IIKO_TERMINAL_GROUP_ID, # Terminal Group ID
+                organization_id=organization_id, # Use dynamically retrieved ID
+                terminal_group_id=terminal_group_id, # Use dynamically retrieved ID
                 order=iiko_order_payload,
-                # create_order_settings can be omitted or passed if needed
                 create_order_settings={"transportToFrontTimeout": 0}
             )
 
-            # Update order status based on IIKO response
             if iiko_response and iiko_response.get('orderId'):
-                new_order.status = 'sent_to_iiko' # Or 'created_in_iiko'
+                new_order.status = 'sent_to_iiko'
                 api.logger.info(f"Order {new_order.id} successfully sent to IIKO. IIKO Order ID: {iiko_response['orderId']}")
             else:
                 new_order.status = 'iiko_send_failed'
                 api.logger.error(f"Failed to send order {new_order.id} to IIKO. Response: {iiko_response}")
 
         except Exception as e:
-            db.session.rollback() # Rollback the new order if IIKO API call fails
+            db.session.rollback()
             api.logger.error(f"Error sending order to IIKO: {e}", exc_info=True)
             api.abort(500, f"Order created internally but failed to send to external system: {str(e)}")
 

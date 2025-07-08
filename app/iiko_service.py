@@ -136,7 +136,6 @@ color_map = {
 
 
 # --- Helper functions for iiko API interaction ---
-@cache.memoize()
 def get_iiko_token():
     """
     Получить токен доступа для работы с iiko API.
@@ -148,7 +147,7 @@ def get_iiko_token():
         response = requests.post(url, json=payload)
         response.raise_for_status()
         token = response.json().get("token")
-        logger.info("iiko token fetched successfully.")
+        logger.info(f"iiko token fetched successfully {token}.")
         return token
     except requests.exceptions.RequestException as e:
         logger.error(f"Error getting iiko token: {e}")
@@ -171,6 +170,26 @@ def get_organizations(token):
         return organizations
     except requests.exceptions.RequestException as e:
         logger.error(f"Error getting organizations: {e}")
+        return None
+
+def get_terminal_groups(organization_id: str, token: str):
+    """
+    Получить терминальные группы для организации.
+    """
+    logger.info(f"Fetching terminal groups for organization {organization_id} from IIKO... using token {token}")
+    url = f"{IIKO_API_URL}/api/1/terminal_groups"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"organizationIds": [organization_id], "includeDisabled": True}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
+        # The structure is {"terminalGroups": [{"organizationId": "...", "items": [...]}]}
+        terminal_groups_data = response.json().get("terminalGroups", [])
+        logger.info(f"Fetched {len(terminal_groups_data)} terminal group entries for organization {organization_id}.")
+        return terminal_groups_data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting terminal groups from IIKO for organization {organization_id}: {e}")
         return None
 
 @cache.memoize()
