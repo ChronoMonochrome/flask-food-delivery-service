@@ -220,6 +220,7 @@ class ProductResource(Resource):
 
 @api.route('/orders')
 class OrderList(Resource):
+    @api.marshal_with(order_model, as_list=True) # Use marshal_with for GET list
     def get(self):
         """Get all orders"""
         orders = Order.query.options(
@@ -254,7 +255,7 @@ class OrderList(Resource):
                     ]
                     for rec in recs_from_db:
                         if not (rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)):
-                               print(f"WARNING: Skipping malformed selected recommendation ID: {getattr(rec, 'id', 'N/A')} for order item {item.id}.")
+                                print(f"WARNING: Skipping malformed selected recommendation ID: {getattr(rec, 'id', 'N/A')} for order item {item.id}.")
 
 
                 product_nutrition_data_for_marshal = product_obj.nutrition if isinstance(product_obj.nutrition, dict) else {}
@@ -282,7 +283,6 @@ class OrderList(Resource):
                     'nutrition': product_nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients_in_order_item,
                     'availableAddons': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
-                    # In the product model for OrderItem, recommendations are expected to be the full object, not just IDs
                     'recommendations': [
                         api.marshal(pr.recommendation, recommendation_model)
                         for pr in product_obj.recommendations if pr.recommendation
@@ -311,10 +311,11 @@ class OrderList(Resource):
                 'createdAt': order.created_at,
                 'estimatedDelivery': order.estimated_delivery
             })
-        return jsonify(serialized_orders)
+        return serialized_orders # Return the list of dictionaries, Flask-RESTx will jsonify it.
 
 
     @api.expect(order_model)
+    @api.marshal_with(order_model, code=201) # Use marshal_with for POST, specify status code
     def post(self):
         """Create a new order"""
         data = api.payload
@@ -383,73 +384,10 @@ class OrderList(Resource):
             joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
         ).get(new_order.id)
 
-        response_items = []
-        for item in created_order.items:
-            product_obj = item.product
-            # Marshal selected_addons_ids and selected_recommendation_ids from the database
-            selected_addons_objs = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all() if item.selected_addons_ids else []
-            marshaled_selected_addons = [api.marshal(addon, addon_model) for addon in selected_addons_objs]
-
-            selected_recommendations_objs = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all() if item.selected_recommendation_ids else []
-            marshaled_selected_recommendations = [api.marshal(rec, recommendation_model) for rec in selected_recommendations_objs]
-
-
-            product_nutrition_data_for_marshal = product_obj.nutrition if isinstance(product_obj.nutrition, dict) else {}
-            for key in ["calories", "carbs", "fat", "proteins"]:
-                if key not in product_nutrition_data_for_marshal or product_nutrition_data_for_marshal[key] is None:
-                    product_nutrition_data_for_marshal[key] = 0.0
-                if isinstance(product_nutrition_data_for_marshal[key], Decimal):
-                    product_nutrition_data_for_marshal[key] = float(product_nutrition_data_for_marshal[key])
-
-            processed_ingredients_in_order_item = product_obj.ingredients if product_obj.ingredients is not None else []
-            cleaned_ingredients_in_order_item = []
-            for ing in processed_ingredients_in_order_item:
-                if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
-                    cleaned_ingredients_in_order_item.append({'code': ing.get('code', ''), 'name': ing['name']})
-                else:
-                    print(f"WARNING: Skipping malformed ingredient for product {product_obj.id} within order item: {ing!r}")
-
-            product_marshaled = {
-                'id': str(product_obj.id),
-                'name': product_obj.name,
-                'description': product_obj.description,
-                'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
-                'image': product_obj.image,
-                'categoryId': str(product_obj.categoryId),
-                'nutrition': product_nutrition_data_for_marshal,
-                'ingredients': cleaned_ingredients_in_order_item,
-                'availableAddons': [str(pa.addon.id) for pa in product_obj.available_addons if pa.addon],
-                # Ensure the recommendations here are also marshaled if product_model expects objects
-                'recommendations': [
-                    api.marshal(pr.recommendation, recommendation_model)
-                    for pr in product_obj.recommendations if pr.recommendation
-                ]
-            }
-            marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
-
-            response_items.append({
-                'product': marshaled_product_in_order_item,
-                'quantity': item.quantity,
-                'selectedAddons': marshaled_selected_addons, # Use marshaled addons
-                'selectedRecommendations': marshaled_selected_recommendations # Use marshaled recommendations
-            })
-
-        response_data = {
-            'id': str(created_order.id),
-            'items': response_items,
-            'total': float(created_order.total) if isinstance(created_order.total, Decimal) else created_order.total,
-            'deliveryInfo': {
-                'address': created_order.delivery_address,
-                'phone': created_order.delivery_phone,
-                'paymentMethod': created_order.payment_method,
-                'comment': created_order.comment
-            },
-            'status': created_order.status,
-            'createdAt': created_order.created_at,
-            'estimatedDelivery': created_order.estimated_delivery
-        }
-        return jsonify(response_data), 201
-
+        # Instead of building the response_data dictionary manually and then calling jsonify,
+        # return the 'created_order' object directly. Flask-RESTx's @api.marshal_with
+        # decorator will handle the serialization based on 'order_model'.
+        return created_order, 201 # Return the SQLAlchemy object and the status code.
 
 @api.route('/addons')
 class AddonList(Resource):
