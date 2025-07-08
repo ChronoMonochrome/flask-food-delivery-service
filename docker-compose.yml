@@ -103,7 +103,18 @@ services:
       - web
     networks:
       - app_network
-
+  # NEW: Mock IIKO API Service
+  mock_iiko:
+    build:
+      context: .
+      dockerfile: mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
+    container_name: mock_iiko_service
+    ports:
+      - "8888:5000" # Map host port 8888 to container port 5000
+    networks:
+      - app_network
+    env_file:
+      - ./.env # Load .env variables for the mock service too (e.g., IIKO_API_TOKEN)
 volumes:
   # Define named volume for database persistence
   db_data:

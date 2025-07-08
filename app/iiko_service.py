@@ -348,6 +348,48 @@ def get_addons_from_iiko_item(iiko_item):
                             })
     return addons
 
+def create_delivery_order(organization_id: str, terminal_group_id: str, order: dict, create_order_settings: dict = None):
+    """
+    Создать заказ на доставку в iiko (или в mock-сервис).
+
+    :param organization_id: ID организации.
+    :param terminal_group_id: ID терминальной группы.
+    :param order: Полностью сформированный заказ (словарь).
+    :param create_order_settings: Дополнительные настройки для создания заказа (словарь).
+    :return: Ответ API iiko.
+    """
+    logger.info(f"Attempting to create delivery order in IIKO for organization: {organization_id}, terminal group: {terminal_group_id}")
+    url = f"http://mock_iiko:5000/api/1/deliveries/create" # This is the endpoint for delivery orders
+    token = get_iiko_token() # Get token for each request, or cache it appropriately
+    if not token:
+        logger.error("Failed to get IIKO access token, cannot create delivery order.")
+        raise Exception("Failed to get IIKO access token.")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=utf-8"
+    }
+
+    payload = {
+        "organizationId": organization_id,
+        "terminalGroupId": terminal_group_id,
+        "order": order,
+        "createOrderSettings": create_order_settings or {"transportToFrontTimeout": 0}
+    }
+    logger.debug(f"Sending IIKO delivery order payload: {json.dumps(payload, indent=2)}")
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        response_json = response.json()
+        logger.info(f"Successfully created delivery order in IIKO. Response: {response_json}")
+        return response_json
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error creating delivery order in IIKO: {e}")
+        if response is not None:
+            logger.error(f"IIKO API Response content: {response.text}")
+        raise
+
 def synchronize_iiko_data():
     logger.info("Starting iiko data synchronization...")
     try:
