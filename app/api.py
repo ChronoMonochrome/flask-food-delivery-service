@@ -235,7 +235,6 @@ class ProductResource(Resource):
 
 @api.route('/orders')
 class OrderList(Resource):
-    @api.marshal_with(order_model, as_list=True)
     def get(self):
         """Get all orders"""
         orders = Order.query.options(
@@ -338,7 +337,8 @@ class OrderList(Resource):
                 'createdAt': order.created_at,
                 'estimatedDelivery': order.estimated_delivery
             })
-        return serialized_orders
+        marshaled_orders = api.marshal(serialized_orders, order_model)
+        return jsonify(marshaled_orders)
 
     @api.expect(order_model)
     @api.marshal_with(order_model, code=201)
