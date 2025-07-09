@@ -11,19 +11,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements.txt and install Python dependencies
-COPY requirements.txt .
+COPY back/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install APScheduler
 RUN pip install --no-cache-dir apscheduler
 
 # Copy .env and the Flask application code
-COPY app /app/app
-COPY app/scheduler.py /app/scheduler.py
-COPY run_sync_once.py /app/run_sync_once.py
-COPY print_db_data.py /app/print_db_data.py
-COPY drop_db_tables.py /app/drop_db_tables.py
-COPY migrate_categories.py /app/migrate_categories.py
+COPY back/app /app/app
+COPY back/app/scheduler.py /app/scheduler.py
+COPY back/scripts/run_sync_once.py /app/run_sync_once.py
+COPY back/scripts/print_db_data.py /app/print_db_data.py
+COPY back/scripts/drop_db_tables.py /app/drop_db_tables.py
 
 # Command to run the scheduler script
 CMD ["python", "scheduler.py"]

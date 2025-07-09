@@ -47,7 +47,7 @@ services:
       # Connect to the custom application network
       - app_network
     volumes:
-      - .:/app # Mount the entire project directory to /app in the container
+      - ./migrations:/back/app/migrations # Mount the migrations folder
     environment: #
       TZ: Europe/Moscow
 
@@ -101,7 +101,7 @@ services:
       - "8443:443"
     volumes:
       # Mount SSL certificates from your host machine into the Nginx container.
-      - ./certs:/etc/nginx/certs:ro # :ro makes it read-only inside the container
+      - ./back/certs:/etc/nginx/certs:ro # :ro makes it read-only inside the container
     depends_on:
       # Ensure the web service is up before starting Nginx
       - web
@@ -114,7 +114,7 @@ services:
   mock_iiko:
     build:
       context: .
-      dockerfile: mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
+      dockerfile: back/mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
     container_name: mock_iiko_service
     ports:
       - "8888:5000" # Map host port 8888 to container port 5000

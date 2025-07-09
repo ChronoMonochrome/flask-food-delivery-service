@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy local requirements.txt and install Python dependencies
-COPY requirements.txt .
+COPY back/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the built frontend assets from the frontend_builder stage.
@@ -47,7 +47,7 @@ RUN chmod -R 775 /app/app/static
 
 # Copy the rest of the Flask application code (app/ directory, logger.py)
 # Make sure your local 'app' directory and 'logger.py' are in the root of your project context
-COPY app /app/app
+COPY back/app /app/app
 
 # Expose port 8011, where Gunicorn will listen
 EXPOSE 8011
