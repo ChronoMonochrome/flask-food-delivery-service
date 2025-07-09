@@ -379,13 +379,13 @@ class OrderList(Resource):
                 api.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
                 api.abort(500, "Could not determine payment types for external order.")
 
-            # --- Select an IIKO Payment Type ---
+            # --- Select an IIKO Payment Type based on client's paymentMethod ---
             selected_iiko_payment_type = None
             client_payment_method = data['deliveryInfo']['paymentMethod'].lower()
 
             for pt in iiko_payment_types:
                 pt_kind = pt.get('paymentTypeKind', '').lower()
-                pt_name = pt.get('name', '').lower()
+                pt_code = pt.get('code', '').lower() # Get the code for more precise matching
 
                 if client_payment_method == "cash" and pt_kind == "cash":
                     selected_iiko_payment_type = pt
@@ -393,15 +393,18 @@ class OrderList(Resource):
                 elif client_payment_method == "card" and pt_kind == "card":
                     selected_iiko_payment_type = pt
                     break
-                elif client_payment_method == "card" and pt_kind in ["loyaltycard", "external"]:
+                # If 'card' is sent by client, but IIKO's paymentTypeKind is 'External' or 'LoyaltyCard'
+                # and its code indicates a card-like payment (e.g., 'BANK'), consider it.
+                # This makes the mapping more flexible if IIKO uses different kinds for cards.
+                elif client_payment_method == "card" and (pt_kind in ["loyaltycard", "external"] or pt_code == "bank"):
                     selected_iiko_payment_type = pt
                     break
 
             if not selected_iiko_payment_type:
-                api.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type.")
-                selected_iiko_payment_type = iiko_payment_types[0]
+                api.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type as fallback.")
+                selected_iiko_payment_type = iiko_payment_types[0] # Fallback to the very first type
 
-            api.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}'")
+            api.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}', Code='{selected_iiko_payment_type.get('code')}'")
 
         except Exception as e:
             api.logger.error(f"Error fetching IIKO organization/terminal group/payment type IDs: {e}", exc_info=True)
@@ -418,22 +421,35 @@ class OrderList(Resource):
             if not product:
                 api.abort(400, f"Product with ID {item_data['product']['id']} not found.")
 
-            item_price = product.price
+            item_price = Decimal(str(product.price)) # Ensure Decimal for calculations
             selected_addon_ids = [a['id'] for a in item_data.get('selectedAddons', [])]
             selected_recommendation_ids = [r['id'] for r in item_data.get('selectedRecommendations', [])]
+
+            iiko_modifiers = [] # Initialize modifiers for each item
 
             for addon_id in selected_addon_ids:
                 addon = Addon.query.get(addon_id)
                 if addon:
-                    item_price += addon.price
+                    item_price += Decimal(str(addon.price))
+                    iiko_modifiers.append({
+                        "id": addon.iiko_addon_id, # Assuming Addon model has iiko_addon_id
+                        "type": "Product",
+                        "amount": 1
+                    })
                 else:
-                    api.logger.warning(f"Selected addon with ID {addon_id} not found. Skipping price calculation for it.")
+                    api.logger.warning(f"Selected addon with ID {addon_id} not found. Skipping price calculation and IIKO modifier for it.")
+
             for rec_id in selected_recommendation_ids:
                 recommendation = Recommendation.query.get(rec_id)
                 if recommendation:
-                    item_price += recommendation.price
+                    item_price += Decimal(str(recommendation.price))
+                    iiko_modifiers.append({
+                        "id": recommendation.iiko_recommendation_id, # Assuming Recommendation model has iiko_recommendation_id
+                        "type": "Product",
+                        "amount": 1
+                    })
                 else:
-                    api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation for it.")
+                    api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation and IIKO modifier for it.")
 
             calculated_total += item_price * Decimal(str(item_data['quantity']))
 
@@ -444,27 +460,12 @@ class OrderList(Resource):
                 selected_recommendation_ids=selected_recommendation_ids
             ))
 
-            iiko_modifiers = []
-            for addon_id in selected_addon_ids:
-                iiko_modifiers.append({
-                    "id": addon_id, # This should be the IIKO ID for the addon
-                    "type": "Product",
-                    "amount": 1
-                })
-            for rec_id in selected_recommendation_ids:
-                iiko_modifiers.append({
-                    "id": rec_id, # This should be the IIKO ID for the recommendation
-                    "type": "Product",
-                    "amount": 1
-                })
-
-
             iiko_order_items.append({
                 "productId": product.iiko_product_id, # Assuming your Product model has iiko_product_id
                 "productCode": product.iiko_product_id, # iiko sometimes uses productCode as well
                 "name": product.name,
                 "amount": item_data['quantity'],
-                "price": float(product.price), # Ensure price is float for IIKO payload
+                "price": float(item_price), # Use the item_price which includes addons/recommendations, convert to float
                 "modifiers": iiko_modifiers,
                 "comboId": None,
                 "positionId": str(uuid4())
