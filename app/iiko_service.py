@@ -489,7 +489,9 @@ def synchronize_iiko_data():
             category.image_url = image_url
             category.is_hidden = is_hidden
         else:
+            # Set the id to iiko_category_id for new records
             category = Category(
+                id=cat_iiko_id,
                 iiko_category_id=cat_iiko_id,
                 name=name,
                 description=description,
@@ -518,7 +520,7 @@ def synchronize_iiko_data():
     product_iiko_to_db_map = {}
     addon_iiko_to_db_map = {}
     recommendation_iiko_to_db_map = {}
-    
+
     # NEW: A temporary map to store product_iiko_id -> list of addon_iiko_ids for relationships
     product_addon_relationships_to_build = {}
 
@@ -626,7 +628,9 @@ def synchronize_iiko_data():
                     product.measure_unit = measure_unit
                     product.item_type = item_type
                 else:
+                    # Set the id to iiko_product_id for new records
                     product = Product(
+                        id=item_iiko_id,
                         iiko_product_id=item_iiko_id,
                         name=item_name,
                         description=item_description,
@@ -662,7 +666,9 @@ def synchronize_iiko_data():
                         addon.price = addon_price
                         addon.image = addon_image
                     else:
+                        # Set the id to iiko_addon_id for new records
                         addon = Addon(
+                            id=addon_id,
                             iiko_addon_id=addon_id,
                             name=addon_name,
                             price=addon_price,
@@ -686,7 +692,9 @@ def synchronize_iiko_data():
                     recommendation.price = price_value
                     recommendation.image = item_image_url
                 else:
+                    # Set the id to iiko_recommendation_id for new records
                     recommendation = Recommendation(
+                        id=item_iiko_id,
                         iiko_recommendation_id=item_iiko_id,
                         name=item_name,
                         price=price_value,
@@ -738,7 +746,9 @@ def synchronize_iiko_data():
                 addon.price = price_value
                 addon.image = item_image_url
             else:
+                # Set the id to iiko_addon_id for new records
                 addon = Addon(
+                    id=item_iiko_id,
                     iiko_addon_id=item_iiko_id,
                     name=item_name,
                     price=price_value,
@@ -762,7 +772,7 @@ def synchronize_iiko_data():
         logger.error(f"Error clearing old relationships: {e}")
 
     # MODIFICATION START: Use product_addon_relationships_to_build to create ProductAddon relationships
-    logger.info("Building Product-Addon relationships...")
+    logger.info("Building Product-Addon relationships from extracted data...")
     for product_iiko_id, addon_iiko_ids in product_addon_relationships_to_build.items():
         parent_product_obj = product_iiko_to_db_map.get(product_iiko_id)
         if not parent_product_obj:
@@ -772,9 +782,9 @@ def synchronize_iiko_data():
         for addon_iiko_id in addon_iiko_ids:
             addon_obj = addon_iiko_to_db_map.get(addon_iiko_id)
             if not addon_obj:
-                logger.warning(f"Addon '{addon_iiko_id}' not found in DB map for product '{parent_product_obj.name}'. This should ideally not happen if get_addons_from_iiko_item works correctly.")
+                logger.warning(f"Addon '{addon_iiko_id}' not found in DB map for product '{parent_product_obj.name}'. This should ideally not happen if get_addons_from_iiko_item works correctly and top-level modifiers are processed.")
                 continue
-            
+
             try:
                 product_addon = ProductAddon(
                     product_id=parent_product_obj.id,
@@ -840,7 +850,9 @@ def synchronize_iiko_data():
                     elif full_mod_item_data.get('picture'):
                         mod_image = full_mod_item_data['picture']
 
+                    # Set the id to mod_iiko_id for new records created from modifier groups
                     addon_obj = Addon(
+                        id=mod_iiko_id,
                         iiko_addon_id=mod_iiko_id,
                         name=mod_name,
                         price=mod_price,
