@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     default-libmysqlclient-dev \
     gcc \
+    netcat-traditional \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements.txt and install Python dependencies
@@ -25,5 +26,7 @@ COPY print_db_data.py /app/print_db_data.py
 COPY drop_db_tables.py /app/drop_db_tables.py
 COPY migrate_categories.py /app/migrate_categories.py
 
-# Command to run the scheduler script
-CMD ["python", "scheduler.py"]
+COPY entrypoint_scheduler.sh /usr/local/bin/entrypoint_scheduler.sh
+RUN chmod +x /usr/local/bin/entrypoint_scheduler.sh
+
+ENTRYPOINT ["entrypoint_scheduler.sh"]
