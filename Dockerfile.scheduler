@@ -24,5 +24,9 @@ COPY back/scripts/run_sync_once.py /app/run_sync_once.py
 COPY back/scripts/print_db_data.py /app/print_db_data.py
 COPY back/scripts/drop_db_tables.py /app/drop_db_tables.py
 
-# Command to run the scheduler script
-CMD ["python", "scheduler.py"]
+# Copy the entrypoint script from the new 'back' folder
+COPY back/entrypoint_scheduler.sh /usr/local/bin/entrypoint_scheduler.sh
+RUN chmod +x /usr/local/bin/entrypoint_scheduler.sh
+
+# Command to run the scheduler script (CMD remains the same relative path in container)
+ENTRYPOINT ["entrypoint_scheduler.sh"]
