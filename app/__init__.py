@@ -29,9 +29,6 @@ FRONTEND_BUILD_ROOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__
 # as it contains both index.html and the 'assets' folder directly.
 app = create_app(static_folder=FRONTEND_BUILD_ROOT_PATH, static_url_path='/static')
 
-# Create the Flask app instance using the factory function
-app = create_app(static_folder=FRONTEND_BUILD_ROOT_PATH, static_url_path='/static')
-
 # Initialize SQLAlchemy with the app
 db.init_app(app)
 
