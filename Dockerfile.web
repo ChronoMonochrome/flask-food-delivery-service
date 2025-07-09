@@ -46,16 +46,20 @@ COPY --from=build-env /usr/src/app/repo_source/dist /app/app/static
 # Set permissions for the static folder recursively
 RUN chmod -R 775 /app/app/static
 
-# Copy the rest of the Flask application code (app/ directory, logger.py)
-# Make sure your local 'app' directory and 'logger.py' are in the root of your project context
+# Copy the rest of the Flask application code (app/ directory)
 COPY back/app /app/app
+
+# ADD THIS LINE TO COPY THE MIGRATIONS FOLDER
+# This copies 'back/migrations' from your host into '/app/migrations' in the container.
+COPY back/migrations /app/migrations
 
 # Expose port 8011, where Gunicorn will listen
 EXPOSE 8011
 
 # Copy the entrypoint script from the new 'back' folder
+# Change the destination to something like /usr/local/bin/ or directly /entrypoint_web.sh
+# to ensure it's in the PATH, or directly reference it in ENTRYPOINT.
 COPY back/entrypoint_web.sh /usr/local/bin/entrypoint_web.sh
 RUN chmod +x /usr/local/bin/entrypoint_web.sh
 
-EXPOSE 8011
 ENTRYPOINT ["entrypoint_web.sh"]
