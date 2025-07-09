@@ -409,6 +409,27 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: d
             logger.error(f"IIKO API Response content: {response.text}")
         raise
 
+def get_payment_types(organization_ids, token):
+    """
+    Retrieves payment types for given organization IDs from IIKO.
+    """
+    try:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8"
+        }
+        payload = {"organizationIds": organization_ids}
+        response = requests.post(f"{IIKO_API_URL}/api/1/payment_types", headers=headers, json=payload)
+        response.raise_for_status()
+        response_data = response.json()
+        logger.info(f"Successfully retrieved IIKO payment types.")
+        return response_data.get("paymentTypes", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting IIKO payment types: {e}", exc_info=True)
+        if e.response:
+            logger.error(f"IIKO Payment Types Error Response: {e.response.text}")
+        return None
+
 def synchronize_iiko_data():
     logger.info("Starting iiko data synchronization...")
     try:
@@ -628,6 +649,7 @@ def synchronize_iiko_data():
                     product.measure_unit = measure_unit
                     product.item_type = item_type
                 else:
+                    logger.info(f"Created product {item_name} with id {item_iiko_id}")
                     # Set the id to iiko_product_id for new records
                     product = Product(
                         id=item_iiko_id,
@@ -667,6 +689,7 @@ def synchronize_iiko_data():
                         addon.image = addon_image
                     else:
                         # Set the id to iiko_addon_id for new records
+                        logger.info(f"Created addon {addon_name} with id {addon_id}")
                         addon = Addon(
                             id=addon_id,
                             iiko_addon_id=addon_id,

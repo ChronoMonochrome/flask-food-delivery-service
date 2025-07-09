@@ -373,8 +373,38 @@ class OrderList(Resource):
                 api.logger.error(f"No terminal groups found for organization {organization_id} from IIKO API.")
                 api.abort(500, "Could not determine terminal group ID for external order.")
 
+            # --- Fetch Payment Types ---
+            iiko_payment_types = iiko_service.get_payment_types([organization_id], iiko_token)
+            if not iiko_payment_types:
+                api.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
+                api.abort(500, "Could not determine payment types for external order.")
+
+            # --- Select an IIKO Payment Type ---
+            selected_iiko_payment_type = None
+            client_payment_method = data['deliveryInfo']['paymentMethod'].lower()
+
+            for pt in iiko_payment_types:
+                pt_kind = pt.get('paymentTypeKind', '').lower()
+                pt_name = pt.get('name', '').lower()
+
+                if client_payment_method == "cash" and pt_kind == "cash":
+                    selected_iiko_payment_type = pt
+                    break
+                elif client_payment_method == "card" and pt_kind == "card":
+                    selected_iiko_payment_type = pt
+                    break
+                elif client_payment_method == "card" and pt_kind in ["loyaltycard", "external"]:
+                    selected_iiko_payment_type = pt
+                    break
+
+            if not selected_iiko_payment_type:
+                api.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type.")
+                selected_iiko_payment_type = iiko_payment_types[0]
+
+            api.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}'")
+
         except Exception as e:
-            api.logger.error(f"Error fetching IIKO organization/terminal group IDs: {e}", exc_info=True)
+            api.logger.error(f"Error fetching IIKO organization/terminal group/payment type IDs: {e}", exc_info=True)
             api.abort(500, f"Failed to initialize external ordering system: {str(e)}")
         # --- End Dynamic retrieval ---
 
@@ -399,11 +429,11 @@ class OrderList(Resource):
                 else:
                     api.logger.warning(f"Selected addon with ID {addon_id} not found. Skipping price calculation for it.")
             for rec_id in selected_recommendation_ids:
-                 recommendation = Recommendation.query.get(rec_id)
-                 if recommendation:
-                     item_price += recommendation.price
-                 else:
-                     api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation for it.")
+                recommendation = Recommendation.query.get(rec_id)
+                if recommendation:
+                    item_price += recommendation.price
+                else:
+                    api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation for it.")
 
             calculated_total += item_price * Decimal(str(item_data['quantity']))
 
@@ -422,7 +452,7 @@ class OrderList(Resource):
                     "amount": 1
                 })
             for rec_id in selected_recommendation_ids:
-                 iiko_modifiers.append({
+                iiko_modifiers.append({
                     "id": rec_id, # This should be the IIKO ID for the recommendation
                     "type": "Product",
                     "amount": 1
@@ -434,7 +464,7 @@ class OrderList(Resource):
                 "productCode": product.iiko_product_id, # iiko sometimes uses productCode as well
                 "name": product.name,
                 "amount": item_data['quantity'],
-                "price": float(product.price),
+                "price": float(product.price), # Ensure price is float for IIKO payload
                 "modifiers": iiko_modifiers,
                 "comboId": None,
                 "positionId": str(uuid4())
@@ -447,7 +477,7 @@ class OrderList(Resource):
             final_total = calculated_total
 
         new_order = Order(
-            id=f'order-{int(datetime.now().timestamp() * 1000)}',
+            id=str(uuid4()), # Use UUID4 for internal order ID consistency
             total=final_total,
             delivery_address=data['deliveryInfo']['address'],
             delivery_phone=data['deliveryInfo']['phone'],
@@ -457,54 +487,63 @@ class OrderList(Resource):
             created_at=datetime.utcnow()
         )
         db.session.add(new_order)
-        db.session.flush()
+        db.session.flush() # Flush to get new_order.id if it's auto-generated
 
         for item in order_items_to_add:
             item.order_id = new_order.id
             db.session.add(item)
 
         try:
-            iiko_order_payload = {
-                "id": new_order.id,
-                "externalId": new_order.id,
-                "organizationId": organization_id, # Use dynamically retrieved ID
-                "items": iiko_order_items,
+            # THIS IS THE CORRECTED PART:
+            # The 'order' object for the IIKO API call should contain all the order details.
+            # The top-level payload sent to IIKO's /deliveries/create endpoint
+            # then wraps this 'order' object along with 'organizationId', 'terminalGroupId',
+            # and 'createOrderSettings'.
+
+            # Construct the inner 'order' object first
+            iiko_order_data_for_payload = {
+                "id": new_order.id, # External system's order ID (your internal UUID)
+                "externalNumber": f"WEB-{new_order.id.split('-')[0]}", # A human-readable external number
                 "phone": new_order.delivery_phone,
-                "address": {
-                    "street": new_order.delivery_address,
-                    "city": "Default City"
-                },
+                "items": iiko_order_items,
                 "deliveryPoint": {
-                    "latitude": 0, "longitude": 0
+                    "address": {
+                        "street": new_order.delivery_address,
+                        "city": "Default City" # IIKO may require a city
+                    },
+                    "coordinates": {
+                        "latitude": 0.0, # Placeholder, replace with actual coordinates if available
+                        "longitude": 0.0
+                    }
                 },
-                "deliveryDate": datetime.utcnow().isoformat(),
-                "deliveryTime": datetime.utcnow().strftime("%H:%M"),
-                "comment": new_order.comment,
-                "fullSum": float(final_total),
-                "isSelfService": False,
-                "paymentItems": [
+                "payments": [
                     {
                         "sum": float(final_total),
-                        "paymentType": {
-                            "code": "Cash" if new_order.payment_method.lower() == "cash" else "Card",
-                            "name": new_order.payment_method,
-                            "combinable": True,
-                            "externalId": None,
-                            "isProcessed": True,
-                            "isFiscal": True
-                        },
-                        "isPrepay": False,
-                        "isExternal": False
+                        "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
+                        "paymentTypeId": selected_iiko_payment_type.get('id'), # Use the dynamically retrieved IIKO payment type ID
+                        "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
+                        "isFiscalizedExternally": False, # Assuming not fiscalized externally for now
+                        "isPrepay": False
                     }
                 ],
-                "sourceKey": "MandarinWebApp",
+                "comment": new_order.comment,
+                "completeBefore": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], # Current time + buffer typically
+                # Fields like organizationId and terminalGroupId should NOT be nested inside this 'order' object
+                # for the /api/1/deliveries/create endpoint payload. They are top-level.
+                # If iiko's *internal* `order` object schema for other endpoints
+                # *also* includes these, that's different. But for `create_delivery`, they are top-level.
             }
 
+            # Construct the top-level payload that iiko_service.create_delivery_order expects to *build*
+            # the full request body for /api/1/deliveries/create.
+            # Your iiko_service.py's create_delivery_order function should handle creating the final JSON.
+            # So, you pass it the components it needs.
+
             iiko_response = iiko_service.create_delivery_order(
-                organization_id=organization_id, # Use dynamically retrieved ID
-                terminal_group_id=terminal_group_id, # Use dynamically retrieved ID
-                order=iiko_order_payload,
-                create_order_settings={"transportToFrontTimeout": 0}
+                organization_id=organization_id,
+                terminal_group_id=terminal_group_id,
+                order=iiko_order_data_for_payload, # Pass the correctly structured inner order object
+                create_order_settings={"transportToFrontTimeout": 0} # This object goes at the top-level too
             )
 
             if iiko_response and iiko_response.get('orderId'):
@@ -513,6 +552,7 @@ class OrderList(Resource):
             else:
                 new_order.status = 'iiko_send_failed'
                 api.logger.error(f"Failed to send order {new_order.id} to IIKO. Response: {iiko_response}")
+                api.abort(500, f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}")
 
         except Exception as e:
             db.session.rollback()
