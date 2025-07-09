@@ -49,8 +49,10 @@ RUN chmod -R 775 /app/app/static
 # Make sure your local 'app' directory and 'logger.py' are in the root of your project context
 COPY app /app/app
 
-COPY entrypoint_web.sh /usr/local/bin/entrypoint_web.sh
-RUN chmod +x /usr/local/bin/entrypoint_web.sh
-
+# Expose port 8011, where Gunicorn will listen
 EXPOSE 8011
-ENTRYPOINT ["entrypoint_web.sh"]
+
+# Command to run Gunicorn.
+# 'app:app' refers to the 'app' Flask instance within the 'app' module (i.e., app/__init__.py).
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8011", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+
