@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 load_dotenv() # Load environment variables from .env file
 
 from app import create_app
-from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation
+from app.models import db, MainCategory, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation
 from app.logger import logger
 
 def truncate_all_tables():
@@ -28,7 +28,7 @@ def truncate_all_tables():
             # or to disable FK checks temporarily.
 
             # Get all mapped classes
-            all_models = [Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation]
+            all_models = [MainCategory,Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation]
             
             # Sort models based on dependencies for safer truncation if not using CASCADE
             # This simple sorting might not cover all complex dependency graphs.
@@ -51,6 +51,7 @@ def truncate_all_tables():
                 Addon.__tablename__,
                 Recommendation.__tablename__,
                 Category.__tablename__,
+                MainCategory.__tablename__,
             ]
             
             # If your database supports TRUNCATE ... CASCADE, it's generally cleaner.

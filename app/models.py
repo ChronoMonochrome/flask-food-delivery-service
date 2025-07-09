@@ -2,7 +2,7 @@ import uuid
 import pymysql
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Boolean, Numeric
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -17,17 +17,38 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 class Category(db.Model):
-    __tablename__ = 'category' # Explicitly define table name
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    iiko_category_id = db.Column(db.String(36), unique=True, nullable=True) # New: iiko's ID for the category
-    name = db.Column(db.String(120), nullable=False)
-    icon = db.Column(db.String(20), nullable=True) # Custom: Icon from your app, not iiko
-    color = db.Column(db.String(100), nullable=True) # Custom: Color from your app, not iiko
-    description = db.Column(db.Text, nullable=True) # From iiko category.description
-    image_url = db.Column(db.String(255), nullable=True) # From iiko category.buttonImageUrl/headerImageUrl
-    is_hidden = db.Column(db.Boolean, default=False, nullable=False) # From iiko category.isHidden
+    __tablename__ = 'category'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    iiko_category_id = db.Column(db.String(36), unique=True, nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    icon = db.Column(db.String(255))
+    color = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    image_url = db.Column(db.String(512))
+    is_hidden = db.Column(db.Boolean, default=False)
+    # This relationship is crucial for the IIKO sync to fetch products per category
+    products = db.relationship('Product', backref='original_category', lazy=True) # Renamed backref for clarity
+    main_category_id = db.Column(db.String(36), db.ForeignKey('main_category.id'), nullable=True)
+    main_category = db.relationship('MainCategory', backref='original_categories', lazy=True)
 
-    products = db.relationship('Product', backref='category', lazy=True)
+
+class MainCategory(db.Model):
+    __tablename__ = 'main_category'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(255), unique=True, nullable=False)
+    icon = db.Column(db.String(255))
+    color = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    image_url = db.Column(db.String(512))
+    is_hidden = db.Column(db.Boolean, default=False)
+    iiko_category_ids = db.Column(db.JSON) # Store a list of original iiko category IDs it consolidates
+    display_order: Mapped[int] = mapped_column(db.Integer, nullable=False, default=9999)
+
+    # New relationship for products that will point directly to MainCategory after migration
+    # backref can be 'products' or 'main_products'
+    products = db.relationship('Product', backref='main_category', lazy=True,
+                               primaryjoin="Product.main_category_id == MainCategory.id")
+
 
 class Addon(db.Model):
     __tablename__ = 'addon' # Explicitly define table name
@@ -59,7 +80,14 @@ class Product(db.Model):
     description = db.Column(db.Text, nullable=True)
     price = db.Column(db.Numeric(10, 2), nullable=False) # Use Numeric for currency
     image = db.Column(db.String(255), nullable=True) # From iiko item.itemSizes[0].buttonImageUrl
-    categoryId = db.Column(db.String(36), db.ForeignKey('category.id'), nullable=False) # Foreign key to your Category.id
+    # THIS IS THE CRUCIAL PART:
+    # Keep the original categoryId linked to the 'category' table for IIKO sync
+    categoryId = db.Column(db.String(36), db.ForeignKey('category.id'), nullable=False)
+    # The 'original_category' backref in Category model will link to this
+
+    # Add a *NEW* column for the main_category_id, which will be populated during migration
+    main_category_id = db.Column(db.String(36), db.ForeignKey('main_category.id'), nullable=True)
+    # The 'main_category' backref in MainCategory model will link to this
 
     nutrition = db.Column(JSON, nullable=True) # Store as JSON (from iiko item.itemSizes[0].nutritions)
     # The 'ingredients' field in your API will map to a combination of iiko allergens, tags, labels
@@ -108,7 +136,6 @@ class OrderItem(db.Model):
     order_id = db.Column(db.String(36), db.ForeignKey('order.id'), nullable=False)
     product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=False) # Links to Product.id
     quantity = db.Column(db.Integer, nullable=False)
-    price_at_order = db.Column(db.Numeric(10, 2), nullable=False) # New: Store price at time of order
 
     # Store IDs of selected addons/recommendations as JSON arrays
     selected_addons_ids = db.Column(JSON, nullable=True, default=[]) # Default to empty list

@@ -136,7 +136,6 @@ color_map = {
 
 
 # --- Helper functions for iiko API interaction ---
-@cache.memoize()
 def get_iiko_token():
     """
     Получить токен доступа для работы с iiko API.
@@ -148,7 +147,7 @@ def get_iiko_token():
         response = requests.post(url, json=payload)
         response.raise_for_status()
         token = response.json().get("token")
-        logger.info("iiko token fetched successfully.")
+        logger.info(f"iiko token fetched successfully {token}.")
         return token
     except requests.exceptions.RequestException as e:
         logger.error(f"Error getting iiko token: {e}")
@@ -171,6 +170,26 @@ def get_organizations(token):
         return organizations
     except requests.exceptions.RequestException as e:
         logger.error(f"Error getting organizations: {e}")
+        return None
+
+def get_terminal_groups(organization_id: str, token: str):
+    """
+    Получить терминальные группы для организации.
+    """
+    logger.info(f"Fetching terminal groups for organization {organization_id} from IIKO... using token {token}")
+    url = f"{IIKO_API_URL}/api/1/terminal_groups"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"organizationIds": [organization_id], "includeDisabled": True}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
+        response.raise_for_status()
+        # The structure is {"terminalGroups": [{"organizationId": "...", "items": [...]}]}
+        terminal_groups_data = response.json().get("terminalGroups", [])
+        logger.info(f"Fetched {len(terminal_groups_data)} terminal group entries for organization {organization_id}.")
+        return terminal_groups_data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting terminal groups from IIKO for organization {organization_id}: {e}")
         return None
 
 @cache.memoize()
@@ -348,6 +367,69 @@ def get_addons_from_iiko_item(iiko_item):
                             })
     return addons
 
+def create_delivery_order(organization_id: str, terminal_group_id: str, order: dict, create_order_settings: dict = None):
+    """
+    Создать заказ на доставку в iiko (или в mock-сервис).
+
+    :param organization_id: ID организации.
+    :param terminal_group_id: ID терминальной группы.
+    :param order: Полностью сформированный заказ (словарь).
+    :param create_order_settings: Дополнительные настройки для создания заказа (словарь).
+    :return: Ответ API iiko.
+    """
+    logger.info(f"Attempting to create delivery order in IIKO for organization: {organization_id}, terminal group: {terminal_group_id}")
+    url = f"http://mock_iiko:5000/api/1/deliveries/create" # This is the endpoint for delivery orders
+    token = get_iiko_token() # Get token for each request, or cache it appropriately
+    if not token:
+        logger.error("Failed to get IIKO access token, cannot create delivery order.")
+        raise Exception("Failed to get IIKO access token.")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=utf-8"
+    }
+
+    payload = {
+        "organizationId": organization_id,
+        "terminalGroupId": terminal_group_id,
+        "order": order,
+        "createOrderSettings": create_order_settings or {"transportToFrontTimeout": 0}
+    }
+    logger.debug(f"Sending IIKO delivery order payload: {json.dumps(payload, indent=2)}")
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        response_json = response.json()
+        logger.info(f"Successfully created delivery order in IIKO. Response: {response_json}")
+        return response_json
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error creating delivery order in IIKO: {e}")
+        if response is not None:
+            logger.error(f"IIKO API Response content: {response.text}")
+        raise
+
+def get_payment_types(organization_ids, token):
+    """
+    Retrieves payment types for given organization IDs from IIKO.
+    """
+    try:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8"
+        }
+        payload = {"organizationIds": organization_ids}
+        response = requests.post(f"{IIKO_API_URL}/api/1/payment_types", headers=headers, json=payload)
+        response.raise_for_status()
+        response_data = response.json()
+        logger.info(f"Successfully retrieved IIKO payment types.")
+        return response_data.get("paymentTypes", [])
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting IIKO payment types: {e}", exc_info=True)
+        if e.response:
+            logger.error(f"IIKO Payment Types Error Response: {e.response.text}")
+        return None
+
 def synchronize_iiko_data():
     logger.info("Starting iiko data synchronization...")
     try:
@@ -428,7 +510,9 @@ def synchronize_iiko_data():
             category.image_url = image_url
             category.is_hidden = is_hidden
         else:
+            # Set the id to iiko_category_id for new records
             category = Category(
+                id=cat_iiko_id,
                 iiko_category_id=cat_iiko_id,
                 name=name,
                 description=description,
@@ -457,7 +541,7 @@ def synchronize_iiko_data():
     product_iiko_to_db_map = {}
     addon_iiko_to_db_map = {}
     recommendation_iiko_to_db_map = {}
-    
+
     # NEW: A temporary map to store product_iiko_id -> list of addon_iiko_ids for relationships
     product_addon_relationships_to_build = {}
 
@@ -565,7 +649,10 @@ def synchronize_iiko_data():
                     product.measure_unit = measure_unit
                     product.item_type = item_type
                 else:
+                    logger.info(f"Created product {item_name} with id {item_iiko_id}")
+                    # Set the id to iiko_product_id for new records
                     product = Product(
+                        id=item_iiko_id,
                         iiko_product_id=item_iiko_id,
                         name=item_name,
                         description=item_description,
@@ -601,7 +688,10 @@ def synchronize_iiko_data():
                         addon.price = addon_price
                         addon.image = addon_image
                     else:
+                        # Set the id to iiko_addon_id for new records
+                        logger.info(f"Created addon {addon_name} with id {addon_id}")
                         addon = Addon(
+                            id=addon_id,
                             iiko_addon_id=addon_id,
                             name=addon_name,
                             price=addon_price,
@@ -625,7 +715,9 @@ def synchronize_iiko_data():
                     recommendation.price = price_value
                     recommendation.image = item_image_url
                 else:
+                    # Set the id to iiko_recommendation_id for new records
                     recommendation = Recommendation(
+                        id=item_iiko_id,
                         iiko_recommendation_id=item_iiko_id,
                         name=item_name,
                         price=price_value,
@@ -677,7 +769,9 @@ def synchronize_iiko_data():
                 addon.price = price_value
                 addon.image = item_image_url
             else:
+                # Set the id to iiko_addon_id for new records
                 addon = Addon(
+                    id=item_iiko_id,
                     iiko_addon_id=item_iiko_id,
                     name=item_name,
                     price=price_value,
@@ -701,7 +795,7 @@ def synchronize_iiko_data():
         logger.error(f"Error clearing old relationships: {e}")
 
     # MODIFICATION START: Use product_addon_relationships_to_build to create ProductAddon relationships
-    logger.info("Building Product-Addon relationships...")
+    logger.info("Building Product-Addon relationships from extracted data...")
     for product_iiko_id, addon_iiko_ids in product_addon_relationships_to_build.items():
         parent_product_obj = product_iiko_to_db_map.get(product_iiko_id)
         if not parent_product_obj:
@@ -711,9 +805,9 @@ def synchronize_iiko_data():
         for addon_iiko_id in addon_iiko_ids:
             addon_obj = addon_iiko_to_db_map.get(addon_iiko_id)
             if not addon_obj:
-                logger.warning(f"Addon '{addon_iiko_id}' not found in DB map for product '{parent_product_obj.name}'. This should ideally not happen if get_addons_from_iiko_item works correctly.")
+                logger.warning(f"Addon '{addon_iiko_id}' not found in DB map for product '{parent_product_obj.name}'. This should ideally not happen if get_addons_from_iiko_item works correctly and top-level modifiers are processed.")
                 continue
-            
+
             try:
                 product_addon = ProductAddon(
                     product_id=parent_product_obj.id,
@@ -779,7 +873,9 @@ def synchronize_iiko_data():
                     elif full_mod_item_data.get('picture'):
                         mod_image = full_mod_item_data['picture']
 
+                    # Set the id to mod_iiko_id for new records created from modifier groups
                     addon_obj = Addon(
+                        id=mod_iiko_id,
                         iiko_addon_id=mod_iiko_id,
                         name=mod_name,
                         price=mod_price,

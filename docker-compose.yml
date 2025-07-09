@@ -16,6 +16,10 @@ services:
     networks:
       # Connect to the custom application network
       - app_network
+    environment: #
+      TZ: Europe/Moscow # UTC+03:00 for most of the year (no DST consideration for fixed offset)
+      # Or you could specify the offset directly if the OS supports it, like 'UTC+3'
+      # But 'Europe/Moscow' is a common choice for UTC+3.
     healthcheck: # Added healthcheck for the database service
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pyour_root_password"]
       interval: 10s
@@ -42,6 +46,10 @@ services:
     networks:
       # Connect to the custom application network
       - app_network
+    volumes:
+      - .:/app # Mount the entire project directory to /app in the container
+    environment: #
+      TZ: Europe/Moscow
 
   # New Scheduler Service for periodic iiko data synchronization
   scheduler:
@@ -57,6 +65,8 @@ services:
         condition: service_healthy # Ensure DB is ready
     networks:
       - app_network
+    environment:
+      TZ: Europe/Moscow
 
   # Telegram Bot Service
   bot:
@@ -70,6 +80,7 @@ services:
     environment:
       TELEGRAM_TOKEN: "7666900832:AAHu7U0wTgXssv659Z2-lff8bMy6A-DxNmk" # Your Telegram Bot token
       WEB_APP_URL: "https://mytestapp001.ru/" # Your web app URL
+      TZ: Europe/Moscow
     depends_on:
       - web # The bot depends on the web app being available for the WEB_APP_URL
     networks:
@@ -95,8 +106,24 @@ services:
       # Ensure the web service is up before starting Nginx
       - web
     networks:
-      # Connect to the custom application network
       - app_network
+    environment:
+      TZ: Europe/Moscow
+
+  # NEW: Mock IIKO API Service
+  mock_iiko:
+    build:
+      context: .
+      dockerfile: mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
+    container_name: mock_iiko_service
+    ports:
+      - "8888:5000" # Map host port 8888 to container port 5000
+    networks:
+      - app_network
+    env_file:
+      - ./.env # Load .env variables for the mock service too (e.g., IIKO_API_TOKEN)
+    environment:
+      TZ: Europe/Moscow
 
 volumes:
   # Define named volume for database persistence
