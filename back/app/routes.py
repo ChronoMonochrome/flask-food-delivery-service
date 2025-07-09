@@ -30,7 +30,15 @@ FRONTEND_BUILD_ROOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__
 @app.route('/')
 def serve_react_app():
     current_app.logger.info(f"Serving index.html for / from host {request.remote_addr}")
-    return send_from_directory(FRONTEND_BUILD_ROOT_PATH, 'index.html')
+    # Assign the result of send_from_directory to 'response' first
+    response = send_from_directory(FRONTEND_BUILD_ROOT_PATH, 'index.html')
+
+    # Add cache-control headers to prevent caching of index.html
+    # This tells browsers/proxies to always revalidate or not cache at all.
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # 2. Serve root-level static assets (favicon.ico, manifest.json)
 #    and handle client-side routing fallback.
