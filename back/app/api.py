@@ -874,58 +874,46 @@ class AddToCartResource(Resource):
             if not product:
                 api.abort(404, "Product not found.")
 
-        # Determine if this is a custom item (e.g., Wok) based on customWok data
         is_custom_item = custom_wok_data is not None
 
-        # Find existing cart item matching criteria
-        # For non-custom items, match product_id, addons, and recommendations
-        # For custom items, match custom_wok_data, custom_name, etc.
         existing_item = None
         for item in cart.items:
-            # Check for non-custom item match
             if not is_custom_item and item.product_id == product_id:
-                # Compare addons
                 current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
                 request_addons = sorted(addons_data, key=lambda x: x['id'])
                 addons_match = (current_addons == request_addons)
 
-                # Compare recommendations
                 current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
                 request_recs = sorted(recommendation_ids)
                 recs_match = (current_recs == request_recs)
 
-                if addons_match and recs_match and item.custom_wok_data is None: # Ensure it's also not a custom wok item
+                if addons_match and recs_match and item.custom_wok_data is None:
                     existing_item = item
                     break
-            # Check for custom item match
             elif is_custom_item and item.custom_wok_data is not None:
-                # Deep comparison of custom_wok_data
                 if item.custom_wok_data == custom_wok_data:
-                    # Also compare custom name/description/price if relevant
                     if item.custom_name == custom_name and \
                        item.custom_description == custom_description and \
                        item.custom_price == (Decimal(str(custom_price)) if custom_price is not None else None):
                         existing_item = item
                         break
 
-
         if existing_item:
             existing_item.quantity += quantity_to_add
         else:
             new_cart_item = CartItem(
                 cart_id=cart.id,
-                product_id=product_id if not is_custom_item else None, # Only link product_id if not a custom item
+                product_id=product_id if not is_custom_item else None,
                 quantity=quantity_to_add,
                 custom_wok_data=custom_wok_data,
                 custom_name=custom_name,
                 custom_description=custom_description,
                 custom_price=Decimal(str(custom_price)) if custom_price is not None else None,
-                custom_image=product.image if product and is_custom_item else None # Use product image as default for custom items if available
+                custom_image=product.image if product and is_custom_item else None
             )
             db.session.add(new_cart_item)
-            db.session.flush() # To get new_cart_item.id
+            db.session.flush()
 
-            # Add selected addons to CartAddon table
             for addon_data in addons_data:
                 addon_obj = Addon.query.get(addon_data['id'])
                 if addon_obj:
@@ -938,7 +926,6 @@ class AddToCartResource(Resource):
                 else:
                     current_app.logger.warning(f"Addon with ID {addon_data['id']} not found.")
 
-            # Add selected recommendations to CartRecommendation table
             for rec_id in recommendation_ids:
                 rec_obj = Recommendation.query.get(rec_id)
                 if rec_obj:
@@ -953,7 +940,9 @@ class AddToCartResource(Resource):
         db.session.commit()
         update_cart_total(cart)
 
-        return api.marshal(self.get().json, cart_response_model), 201 # Return the updated cart
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model), 201
 
 @api.route('/cart/update')
 class UpdateCartItemResource(Resource):
@@ -981,7 +970,10 @@ class UpdateCartItemResource(Resource):
         
         db.session.commit()
         update_cart_total(cart)
-        return api.marshal(self.get().json, cart_response_model)
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
 
 
 @api.route('/cart/remove')
@@ -1002,7 +994,10 @@ class RemoveFromCartResource(Resource):
         db.session.delete(item_to_remove)
         db.session.commit()
         update_cart_total(cart)
-        return api.marshal(self.get().json, cart_response_model)
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
 
 @api.route('/cart/clear')
 class ClearCartResource(Resource):
@@ -1014,8 +1009,10 @@ class ClearCartResource(Resource):
         CartItem.query.filter_by(cart_id=cart.id).delete()
         db.session.commit()
         update_cart_total(cart) # This will set total to 0
-        return api.marshal(self.get().json, cart_response_model) # Return an empty cart representation
-
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
 
 ## Order Endpoints (Existing - no changes requested)
 
@@ -1066,6 +1063,3 @@ def handle_exception(e):
     })
     response.status_code = InternalServerError.code
     return response
-
-# Register the blueprint with the API
-api.add_namespace(api.namespace('api', description='API Operations'))
