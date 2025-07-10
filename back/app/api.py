@@ -149,8 +149,8 @@ cart_item_response_model = api.model('CartItemResponse', {
 })
 
 cart_response_model = api.model('CartResponse', {
-    'items': fields.List(fields.Nested(cart_item_response_model), description='List of items in the cart'),
-    'total': fields.Float(required=True, description='Total price of the cart')
+    'items': fields.List(fields.Nested(cart_item_response_model), description='List of items in the cart', default=[]),
+    'total': fields.Float(required=True, description='Total price of the cart', default=0.0)
 })
 
 # **FIX FOR THE ERROR:** Define AddonRequest model separately, then use fields.Nested
