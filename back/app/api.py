@@ -153,14 +153,17 @@ cart_response_model = api.model('CartResponse', {
     'total': fields.Float(required=True, description='Total price of the cart')
 })
 
+# **FIX FOR THE ERROR:** Define AddonRequest model separately, then use fields.Nested
+addon_request_model = api.model('AddonRequest', {
+    'id': fields.String(required=True),
+    'quantity': fields.Integer(required=True, default=1)
+})
+
 # Request Models for Cart Operations
 add_to_cart_request = api.model('AddToCartRequest', {
     'productId': fields.String(required=True, description='ID of the product to add'),
     'quantity': fields.Integer(description='Quantity to add (default 1)', default=1),
-    'addons': fields.List(api.model('AddonRequest', { # Addons with quantity for a cart item
-        'id': fields.String(required=True),
-        'quantity': fields.Integer(required=True, default=1)
-    }), description='List of selected addon IDs and their quantities', default=[]),
+    'addons': fields.List(fields.Nested(addon_request_model), description='List of selected addon IDs and their quantities', default=[]),
     'recommendations': fields.List(fields.String, description='List of selected recommendation IDs', default=[]),
     'customWok': fields.Nested(custom_wok_request_model, description='Wok customization details if adding a custom Wok', allow_null=True),
     'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
