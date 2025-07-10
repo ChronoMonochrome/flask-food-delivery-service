@@ -1,11 +1,15 @@
 # app/api.py
 
 import traceback
-from flask import Blueprint, jsonify, current_app
+from flask import Blueprint, jsonify, current_app, request
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
-from app.models import db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation, Order, OrderItem, ProductRecommendation
-from app import iiko_service
+from app.models import (
+    db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
+    Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
+    WokBase, WokMeat, WokTopping, WokSauce # Import new Wok models
+)
+from app import iiko_service # Assuming this is your IIKO integration service
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import json
@@ -63,21 +67,20 @@ nutrition_model = api.model('Nutrition', {
     'proteins': fields.Float(description='Proteins in grams', allow_null=False, default=0.0)
 })
 
-# product_model's 'categoryId' field now refers to MainCategory ID
 product_model = api.model('Product', {
     'id': fields.String(required=True, description='Product ID'),
     'name': fields.String(required=True, description='Product name'),
     'description': fields.String(description='Product description', allow_null=True),
     'price': fields.Float(required=True, description='Product price'),
     'image': fields.String(description='Product image URL', allow_null=True),
-    'categoryId': fields.String(required=True, description='ID of the main category this product belongs to'), # Now MainCategory ID
+    'categoryId': fields.String(required=True, description='ID of the main category this product belongs to'),
     'nutrition': fields.Nested(nutrition_model, description='Nutritional information', allow_null=False, default={
         "calories": 0.0, "carbs": 0.0, "fat": 0.0, "proteins": 0.0
     }),
     'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
-    # CHANGED: Now returns nested addon_model for availableAddons
     'availableAddons': fields.List(fields.Nested(addon_model), description='List of available addons for this product', allow_null=True, default=[]),
-    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[])
+    'recommendations': fields.List(fields.Nested(recommendation_model), description='List of recommended products for this product', allow_null=True, default=[]),
+    'isCustomizable': fields.Boolean(required=True, description='Indicates if the product is customizable (e.g., Wok)', default=False) # New field
 })
 
 order_item_model = api.model('OrderItem', {
@@ -104,6 +107,159 @@ order_model = api.model('Order', {
     'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
 })
 
+# --- Cart Models ---
+
+# Mock User ID - In a real app, this would come from an authenticated session
+MOCK_USER_ID = "mock_user_123"
+
+# Wok Customization Models
+wok_component_model = api.model('WokComponent', {
+    'id': fields.String(required=True),
+    'name': fields.String(required=True),
+    'price': fields.Float(required=True),
+    'image': fields.String(allow_null=True)
+})
+
+custom_wok_request_model = api.model('CustomWokRequest', {
+    'baseId': fields.String(required=True),
+    'meatIds': fields.List(fields.String, required=True),
+    'toppingIds': fields.List(fields.String, required=True),
+    'sauceIds': fields.List(fields.String, required=True)
+})
+
+custom_wok_response_model = api.model('CustomWokResponse', {
+    'base': fields.Nested(wok_component_model, required=True),
+    'meats': fields.List(fields.Nested(wok_component_model), required=True),
+    'toppings': fields.List(fields.Nested(wok_component_model), required=True),
+    'sauces': fields.List(fields.Nested(wok_component_model), required=True)
+})
+
+cart_item_response_model = api.model('CartItemResponse', {
+    'id': fields.String(required=True, description='Unique ID of the cart item'),
+    'productId': fields.String(description='ID of the product', allow_null=True), # Null for custom items
+    'product': fields.Nested(product_model, description='Product details for non-custom items', allow_null=True),
+    'quantity': fields.Integer(required=True, description='Quantity of the item'),
+    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this item', default=[]),
+    'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this item', default=[]),
+    'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
+    'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
+    'customDescription': fields.String(description='Custom description for the item (e.g., for Wok)', allow_null=True),
+    'customPrice': fields.Float(description='Custom price for the item (e.g., for Wok)', allow_null=True),
+    'customImage': fields.String(description='Custom image for the item (e.g., for Wok)', allow_null=True)
+})
+
+cart_response_model = api.model('CartResponse', {
+    'items': fields.List(fields.Nested(cart_item_response_model), description='List of items in the cart', default=[]),
+    'total': fields.Float(required=True, description='Total price of the cart', default=0.0)
+})
+
+# **FIX FOR THE ERROR:** Define AddonRequest model separately, then use fields.Nested
+addon_request_model = api.model('AddonRequest', {
+    'id': fields.String(required=True),
+    'quantity': fields.Integer(required=True, default=1)
+})
+
+# Request Models for Cart Operations
+add_to_cart_request = api.model('AddToCartRequest', {
+    'productId': fields.String(required=True, description='ID of the product to add'),
+    'quantity': fields.Integer(description='Quantity to add (default 1)', default=1),
+    'addons': fields.List(fields.Nested(addon_request_model), description='List of selected addon IDs and their quantities', default=[]),
+    'recommendations': fields.List(fields.String, description='List of selected recommendation IDs', default=[]),
+    'customWok': fields.Nested(custom_wok_request_model, description='Wok customization details if adding a custom Wok', allow_null=True),
+    'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
+    'customDescription': fields.String(description='Custom description for the item (e.g., for Wok)', allow_null=True),
+    'customPrice': fields.Float(description='Custom price for the item (e.g., for Wok)', allow_null=True),
+})
+
+update_cart_item_request = api.model('UpdateCartItemRequest', {
+    'itemId': fields.String(required=True, description='ID of the cart item to update'),
+    'quantity': fields.Integer(required=True, description='New quantity for the item')
+})
+
+remove_from_cart_request = api.model('RemoveFromCartRequest', {
+    'itemId': fields.String(required=True, description='ID of the cart item to remove')
+})
+
+# Helper to calculate individual cart item price
+def calculate_item_price(product, selected_addons_data, selected_recommendations_data, custom_wok_data, custom_price):
+    item_price = Decimal('0.00')
+
+    if custom_price is not None:
+        item_price = Decimal(str(custom_price))
+    elif product:
+        item_price = Decimal(str(product.price))
+
+    # Add addon prices
+    for addon_data in selected_addons_data:
+        addon_id = addon_data['id']
+        addon_quantity = addon_data.get('quantity', 1)
+        addon = Addon.query.get(addon_id)
+        if addon:
+            item_price += Decimal(str(addon.price)) * addon_quantity
+
+    # Add recommendation prices (only if not a custom WOK, as per frontend logic)
+    if not custom_wok_data:
+        for rec_id in selected_recommendations_data:
+            rec = Recommendation.query.get(rec_id)
+            if rec:
+                item_price += Decimal(str(rec.price))
+
+    # Add custom Wok component prices if it's a custom Wok (overrides product price)
+    if custom_wok_data:
+        if 'baseId' in custom_wok_data:
+            base = WokBase.query.get(custom_wok_data['baseId'])
+            if base:
+                item_price += Decimal(str(base.price))
+        for meat_id in custom_wok_data.get('meatIds', []):
+            meat = WokMeat.query.get(meat_id)
+            if meat:
+                item_price += Decimal(str(meat.price))
+        for topping_id in custom_wok_data.get('toppingIds', []):
+            topping = WokTopping.query.get(topping_id)
+            if topping:
+                item_price += Decimal(str(topping.price))
+        for sauce_id in custom_wok_data.get('sauceIds', []):
+            sauce = WokSauce.query.get(sauce_id)
+            if sauce:
+                item_price += Decimal(str(sauce.price))
+
+    return item_price
+
+def get_or_create_cart(user_id):
+    cart = Cart.query.filter_by(user_id=user_id).first()
+    if not cart:
+        cart = Cart(user_id=user_id)
+        db.session.add(cart)
+        db.session.commit()
+    return cart
+
+def update_cart_total(cart):
+    total = Decimal('0.00')
+    for item in cart.items:
+        # Load product if available, else use custom price
+        product = item.product
+        current_app.logger.debug(f"Calculating price for cart item {item.id}: Product ID: {item.product_id}, Custom Wok: {item.custom_wok_data is not None}")
+
+        # Re-fetch selected addons and recommendations to get current prices
+        selected_addons_for_calc = []
+        for ca in item.selected_addons:
+            selected_addons_for_calc.append({'id': ca.addon_id, 'quantity': ca.quantity})
+
+        selected_recommendations_for_calc = []
+        for cr in item.selected_recommendations:
+            selected_recommendations_for_calc.append(cr.recommendation_id)
+
+        item_price_unit = calculate_item_price(
+            product,
+            selected_addons_for_calc,
+            selected_recommendations_for_calc,
+            item.custom_wok_data,
+            item.custom_price
+        )
+        total += item_price_unit * item.quantity
+    cart.total = total
+    db.session.commit()
+
 ## Category Endpoints
 
 @api.route('/categories')
@@ -123,7 +279,6 @@ class ProductList(Resource):
         """Get all products, optionally filtered by category"""
         category_id = api.parser().add_argument('categoryId', type=str, location='args').parse_args()['categoryId']
 
-        # Ensure that Addons are also loaded so you can access their details
         query = Product.query.filter_by(is_hidden=False).options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
@@ -155,7 +310,6 @@ class ProductList(Resource):
                 for pr in product.recommendations if pr.recommendation
             ]
 
-            # CHANGED: Marshal available_addons to their full model representation
             marshaled_available_addons = [
                 api.marshal(pa.addon, addon_model)
                 for pa in product.available_addons if pa.addon
@@ -170,8 +324,9 @@ class ProductList(Resource):
                 'categoryId': str(product.main_category_id), # This is now the MainCategory ID
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
-                'availableAddons': marshaled_available_addons, # Use the marshaled list
-                'recommendations': marshaled_recommendations
+                'availableAddons': marshaled_available_addons,
+                'recommendations': marshaled_recommendations,
+                'isCustomizable': product.is_customizable # Include new field
             }
             marshaled_products.append(api.marshal(product_for_marshal, product_model))
 
@@ -179,10 +334,8 @@ class ProductList(Resource):
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
-    @api.marshal_with(product_model)
     def get(self, product_id):
         """Get a single product by ID"""
-        # Ensure Addons are also loaded here
         product = Product.query.options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
@@ -211,7 +364,6 @@ class ProductResource(Resource):
             for pr in product.recommendations if pr.recommendation
         ]
 
-        # CHANGED: Marshal available_addons to their full model representation
         marshaled_available_addons = [
             api.marshal(pa.addon, addon_model)
             for pa in product.available_addons if pa.addon
@@ -223,13 +375,15 @@ class ProductResource(Resource):
             'description': product.description,
             'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
             'image': product.image,
-            'categoryId': str(product.main_category_id), # Corrected from product.categoryId
+            'categoryId': str(product.main_category_id),
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
-            'availableAddons': marshaled_available_addons, # Use the marshaled list
-            'recommendations': marshaled_recommendations
+            'availableAddons': marshaled_available_addons,
+            'recommendations': marshaled_recommendations,
+            'isCustomizable': product.is_customizable # Include new field
         }
-        return product_for_marshal # Flask-RESTx's @api.marshal_with will jsonify this.
+        return jsonify(product_for_marshal)
+
 
 ## Order Endpoints
 
@@ -593,3 +747,318 @@ class RecommendationList(Resource):
             if not (rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)):
                 print(f"WARNING: Skipping malformed recommendation in RecommendationList: ID={getattr(rec, 'id', 'N/A')}, Name={repr(getattr(rec, 'name', 'N/A'))} (Type: {type(getattr(rec, 'name', None))}), Price={getattr(rec, 'price', 'N/A')})")
         return jsonify(valid_recommendations)
+
+
+## Cart Endpoints
+
+@api.route('/cart')
+class CartResource(Resource):
+    @api.marshal_with(cart_response_model)
+    def get(self):
+        """Get the current user's cart"""
+        cart = get_or_create_cart(MOCK_USER_ID)
+        
+        # Eager load related data for cart items
+        cart = db.session.query(Cart).filter_by(user_id=MOCK_USER_ID).options(
+            joinedload(Cart.items).joinedload(CartItem.product),
+            joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
+            joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
+        ).first()
+
+        if not cart:
+            return {'items': [], 'total': 0.0}, 200
+
+        marshaled_items = []
+        for item in cart.items:
+            product_data = None
+            if item.product:
+                # Marshal product details if it's a standard product
+                nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
+                for key in ["calories", "carbs", "fat", "proteins"]:
+                    if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
+                        nutrition_data_for_marshal[key] = 0.0
+                    if isinstance(nutrition_data_for_marshal[key], Decimal):
+                        nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
+
+                processed_ingredients = item.product.ingredients if item.product.ingredients is not None else []
+                cleaned_ingredients = []
+                for ing in processed_ingredients:
+                    if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
+                        cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
+
+                product_data = api.marshal({
+                    'id': str(item.product.id),
+                    'name': item.product.name,
+                    'description': item.product.description,
+                    'price': float(item.product.price) if isinstance(item.product.price, Decimal) else item.product.price,
+                    'image': item.product.image,
+                    'categoryId': str(item.product.main_category_id),
+                    'nutrition': nutrition_data_for_marshal,
+                    'ingredients': cleaned_ingredients,
+                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in item.product.available_addons if pa.addon],
+                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in item.product.recommendations if pr.recommendation],
+                    'isCustomizable': item.product.is_customizable
+                }, product_model)
+            
+            marshaled_selected_addons = []
+            for ca in item.selected_addons:
+                if ca.addon:
+                    marshaled_selected_addons.append(api.marshal(ca.addon, addon_model))
+            
+            marshaled_selected_recommendations = []
+            for cr in item.selected_recommendations:
+                if cr.recommendation:
+                    marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
+
+            custom_wok_details = None
+            if item.custom_wok_data:
+                # Reconstruct customWok object with full details
+                base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+                
+                custom_wok_details = api.marshal({
+                    'base': api.marshal(base, wok_component_model) if base else None,
+                    'meats': [api.marshal(m, wok_component_model) for m in meats if m],
+                    'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
+                    'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
+                }, custom_wok_response_model)
+
+            marshaled_items.append({
+                'id': str(item.id),
+                'productId': str(item.product_id) if item.product_id else None,
+                'product': product_data,
+                'quantity': item.quantity,
+                'selectedAddons': marshaled_selected_addons,
+                'selectedRecommendations': marshaled_selected_recommendations,
+                'customWok': custom_wok_details,
+                'customName': item.custom_name,
+                'customDescription': item.custom_description,
+                'customPrice': float(item.custom_price) if item.custom_price is not None else None,
+                'customImage': item.custom_image
+            })
+        
+        # Ensure total is up-to-date before returning
+        update_cart_total(cart)
+        
+        return {
+            'items': marshaled_items,
+            'total': float(cart.total)
+        }
+
+@api.route('/cart/add')
+class AddToCartResource(Resource):
+    @api.expect(add_to_cart_request)
+    @api.marshal_with(cart_response_model, code=201)
+    def post(self):
+        """Add an item to the cart or increment quantity if it exists."""
+        data = api.payload
+        product_id = data.get('productId')
+        quantity_to_add = data.get('quantity', 1)
+        addons_data = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
+        recommendation_ids = data.get('recommendations', [])
+        custom_wok_data = data.get('customWok')
+        custom_name = data.get('customName')
+        custom_description = data.get('customDescription')
+        custom_price = data.get('customPrice')
+
+        current_app.logger.debug(f"Received add to cart request: {data}")
+
+        cart = get_or_create_cart(MOCK_USER_ID)
+
+        product = None
+        if product_id:
+            product = Product.query.get(product_id)
+            if not product:
+                api.abort(404, "Product not found.")
+
+        is_custom_item = custom_wok_data is not None
+
+        existing_item = None
+        for item in cart.items:
+            if not is_custom_item and item.product_id == product_id:
+                current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
+                request_addons = sorted(addons_data, key=lambda x: x['id'])
+                addons_match = (current_addons == request_addons)
+
+                current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
+                request_recs = sorted(recommendation_ids)
+                recs_match = (current_recs == request_recs)
+
+                if addons_match and recs_match and item.custom_wok_data is None:
+                    existing_item = item
+                    break
+            elif is_custom_item and item.custom_wok_data is not None:
+                if item.custom_wok_data == custom_wok_data:
+                    if item.custom_name == custom_name and \
+                       item.custom_description == custom_description and \
+                       item.custom_price == (Decimal(str(custom_price)) if custom_price is not None else None):
+                        existing_item = item
+                        break
+
+        if existing_item:
+            existing_item.quantity += quantity_to_add
+        else:
+            new_cart_item = CartItem(
+                cart_id=cart.id,
+                product_id=product_id if not is_custom_item else None,
+                quantity=quantity_to_add,
+                custom_wok_data=custom_wok_data,
+                custom_name=custom_name,
+                custom_description=custom_description,
+                custom_price=Decimal(str(custom_price)) if custom_price is not None else None,
+                custom_image=product.image if product and is_custom_item else None
+            )
+            db.session.add(new_cart_item)
+            db.session.flush()
+
+            for addon_data in addons_data:
+                addon_obj = Addon.query.get(addon_data['id'])
+                if addon_obj:
+                    cart_addon = CartAddon(
+                        cart_item_id=new_cart_item.id,
+                        addon_id=addon_obj.id,
+                        quantity=addon_data.get('quantity', 1)
+                    )
+                    db.session.add(cart_addon)
+                else:
+                    current_app.logger.warning(f"Addon with ID {addon_data['id']} not found.")
+
+            for rec_id in recommendation_ids:
+                rec_obj = Recommendation.query.get(rec_id)
+                if rec_obj:
+                    cart_rec = CartRecommendation(
+                        cart_item_id=new_cart_item.id,
+                        recommendation_id=rec_obj.id
+                    )
+                    db.session.add(cart_rec)
+                else:
+                    current_app.logger.warning(f"Recommendation with ID {rec_id} not found.")
+
+        db.session.commit()
+        update_cart_total(cart)
+
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model), 201
+
+@api.route('/cart/update')
+class UpdateCartItemResource(Resource):
+    @api.expect(update_cart_item_request)
+    @api.marshal_with(cart_response_model)
+    def put(self):
+        """Update the quantity of a specific item in the cart."""
+        data = api.payload
+        item_id = data.get('itemId')
+        new_quantity = data.get('quantity')
+
+        if new_quantity is None or new_quantity < 0:
+            api.abort(400, "Quantity must be a non-negative integer.")
+
+        cart = get_or_create_cart(MOCK_USER_ID)
+        item_to_update = CartItem.query.filter_by(id=item_id, cart_id=cart.id).first()
+
+        if not item_to_update:
+            api.abort(404, "Cart item not found in your cart.")
+
+        if new_quantity == 0:
+            db.session.delete(item_to_update)
+        else:
+            item_to_update.quantity = new_quantity
+        
+        db.session.commit()
+        update_cart_total(cart)
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
+
+
+@api.route('/cart/remove')
+class RemoveFromCartResource(Resource):
+    @api.expect(remove_from_cart_request)
+    @api.marshal_with(cart_response_model)
+    def delete(self):
+        """Remove a specific item from the cart."""
+        data = api.payload
+        item_id = data.get('itemId')
+
+        cart = get_or_create_cart(MOCK_USER_ID)
+        item_to_remove = CartItem.query.filter_by(id=item_id, cart_id=cart.id).first()
+
+        if not item_to_remove:
+            api.abort(404, "Cart item not found in your cart.")
+
+        db.session.delete(item_to_remove)
+        db.session.commit()
+        update_cart_total(cart)
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
+
+@api.route('/cart/clear')
+class ClearCartResource(Resource):
+    @api.marshal_with(cart_response_model)
+    def delete(self):
+        """Clear all items from the cart."""
+        cart = get_or_create_cart(MOCK_USER_ID)
+        # Delete all cart items associated with this cart
+        CartItem.query.filter_by(cart_id=cart.id).delete()
+        db.session.commit()
+        update_cart_total(cart) # This will set total to 0
+        
+        # Corrected line: Instantiate CartResource and call its get method
+        updated_cart_data = CartResource().get() 
+        return api.marshal(updated_cart_data, cart_response_model)
+
+## Order Endpoints (Existing - no changes requested)
+
+order_item_model = api.model('OrderItem', {
+    'product': fields.Nested(product_model, description='Product details'),
+    'quantity': fields.Integer(required=True, description='Quantity of the product'),
+    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this product item', default=[]),
+    'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this product item', default=[]),
+    # Note: frontend CartItem also has customWok. If orders need to store this, OrderItem model needs update.
+})
+
+delivery_info_model = api.model('DeliveryInfo', {
+    'address': fields.String(required=True, description='Delivery address'),
+    'phone': fields.String(required=True, description='Contact phone number'),
+    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
+    'comment': fields.String(description='Additional comments for delivery', allow_null=True)
+})
+
+order_model = api.model('Order', {
+    'id': fields.String(required=True, description='Order ID'),
+    'items': fields.List(fields.Nested(order_item_model), description='List of items in the order'),
+    'total': fields.Float(required=True, description='Total price of the order'),
+    'deliveryInfo': fields.Nested(delivery_info_model, required=True, description='Delivery information'),
+    'status': fields.String(required=True, description='Current status of the order'),
+    'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
+    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
+})
+
+
+# Error handling for the API blueprint
+@api_bp.errorhandler(Exception)
+def handle_exception(e):
+    if isinstance(e, HTTPException):
+        response = jsonify({
+            'message': e.description,
+            'status': e.code,
+            'error_type': e.__class__.__name__
+        })
+        response.status_code = e.code
+        return response
+    
+    current_app.logger.error(f"An unhandled error occurred: {e}", exc_info=True)
+    response = jsonify({
+        'message': 'An unexpected error occurred. Please try again later.',
+        'status': InternalServerError.code,
+        'error_type': 'InternalServerError',
+        'details': str(e) if current_app.debug else None
+    })
+    response.status_code = InternalServerError.code
+    return response

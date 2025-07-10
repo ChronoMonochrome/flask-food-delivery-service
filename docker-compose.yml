@@ -113,8 +113,8 @@ services:
   # NEW: Mock IIKO API Service
   mock_iiko:
     build:
-      context: .
-      dockerfile: back/mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
+      context: ./back/mock_iiko_api
+      dockerfile: Dockerfile
     container_name: mock_iiko_service
     ports:
       - "8888:5000" # Map host port 8888 to container port 5000
@@ -124,7 +124,29 @@ services:
       - ./.env # Load .env variables for the mock service too (e.g., IIKO_API_TOKEN)
     environment:
       TZ: Europe/Moscow
-
+  # New dedicated service for database migrations
+  migrator:
+    container_name: flask_migrator_service
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    networks:
+      - app_network
+    env_file:
+      - ./.env
+    volumes:
+      - ./back/migrations:/app/migrations
+      - ./back/app:/app/app
+      - ./back/requirements.txt:/app/requirements.txt
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    environment:
+      FLASK_APP: app
+      FLASK_ENV: production
+      TZ: Europe/Moscow
+    working_dir: /app
 volumes:
   # Define named volume for database persistence
   db_data:

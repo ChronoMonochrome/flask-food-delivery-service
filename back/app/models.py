@@ -98,6 +98,8 @@ class Product(db.Model):
     measure_unit = db.Column(db.String(50), nullable=True) # From iiko item.measureUnit
     item_type = db.Column(db.String(50), nullable=True) # From iiko item.type (e.g., "GOODS", "DISH")
 
+    is_customizable = db.Column(db.Boolean, default=False, nullable=False) # New: for Wok or other customizable items
+
     # Many-to-many relationships with Addons and Recommendations
     available_addons = db.relationship('ProductAddon', back_populates='product')
     recommendations = db.relationship('ProductRecommendation', back_populates='product')
@@ -115,6 +117,85 @@ class ProductRecommendation(db.Model):
     recommendation_id = db.Column(db.String(36), db.ForeignKey('recommendation.id'), primary_key=True)
     product = db.relationship('Product', back_populates='recommendations')
     recommendation = db.relationship('Recommendation', back_populates='product_associations')
+
+# --- New Models for Cart and Wok Customization ---
+
+class WokBase(db.Model):
+    __tablename__ = 'wok_base'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    image = db.Column(db.String(255), nullable=True)
+
+class WokMeat(db.Model):
+    __tablename__ = 'wok_meat'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    image = db.Column(db.String(255), nullable=True)
+
+class WokTopping(db.Model):
+    __tablename__ = 'wok_topping'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    image = db.Column(db.String(255), nullable=True)
+
+class WokSauce(db.Model):
+    __tablename__ = 'wok_sauce'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    image = db.Column(db.String(255), nullable=True)
+
+class Cart(db.Model):
+    __tablename__ = 'cart'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    user_id = db.Column(db.String(36), unique=True, nullable=False) # Each user has one cart
+    total = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal('0.00'))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    items = db.relationship('CartItem', backref='cart', lazy=True, cascade="all, delete-orphan")
+
+class CartItem(db.Model):
+    __tablename__ = 'cart_item'
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    cart_id = db.Column(db.String(36), db.ForeignKey('cart.id'), nullable=False)
+    product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=True) # Can be null if it's a custom item (like a wok)
+    quantity = db.Column(db.Integer, nullable=False, default=1)
+
+    # Fields for custom items (e.g., custom Wok)
+    custom_name = db.Column(db.String(255), nullable=True)
+    custom_description = db.Column(db.Text, nullable=True)
+    custom_price = db.Column(db.Numeric(10, 2), nullable=True)
+    custom_image = db.Column(db.String(255), nullable=True) # e.g., default Wok image
+
+    # JSON field to store Wok customization details if applicable
+    # Storing IDs and quantities for addons within the JSON, and IDs for recommendations
+    # This structure mirrors the frontend's WokCustomization for simplicity of storage
+    custom_wok_data = db.Column(JSON, nullable=True)
+
+    # Relationships to Addons and Recommendations selected for *this specific cart item*
+    # These are distinct from the Product's available_addons and recommendations
+    selected_addons = db.relationship('CartAddon', backref='cart_item', lazy=True, cascade="all, delete-orphan")
+    selected_recommendations = db.relationship('CartRecommendation', backref='cart_item', lazy=True, cascade="all, delete-orphan")
+
+    # Link to the actual product (if not a custom item derived solely from custom_wok_data)
+    product = db.relationship('Product')
+
+class CartAddon(db.Model):
+    __tablename__ = 'cart_addon'
+    cart_item_id = db.Column(db.String(36), db.ForeignKey('cart_item.id'), primary_key=True)
+    addon_id = db.Column(db.String(36), db.ForeignKey('addon.id'), primary_key=True)
+    quantity = db.Column(db.Integer, nullable=False, default=1) # Quantity of this specific addon within the cart item
+    addon = db.relationship('Addon')
+
+class CartRecommendation(db.Model):
+    __tablename__ = 'cart_recommendation'
+    cart_item_id = db.Column(db.String(36), db.ForeignKey('cart_item.id'), primary_key=True)
+    recommendation_id = db.Column(db.String(36), db.ForeignKey('recommendation.id'), primary_key=True)
+    recommendation = db.relationship('Recommendation')
 
 class Order(db.Model):
     __tablename__ = 'order' # Explicitly define table name
