@@ -7,6 +7,7 @@ export default {
         'mandarin': {
           'bg': '#1D1D1B',
           'card': '#2C2C2A',
+          'card-light': '#3A3A37',
           'orange': '#EAB545',
         }
       }
