@@ -753,99 +753,24 @@ class RecommendationList(Resource):
 
 @api.route('/cart')
 class CartResource(Resource):
-    @api.marshal_with(cart_response_model)
+    @api.marshal_with(cart_response_model) # This decorator handles JSON conversion AND encoding
     def get(self):
         """Get the current user's cart"""
-        cart = get_or_create_cart(MOCK_USER_ID)
+        cart = get_or_create_cart(MOCK_USER_ID) # Ensures a Cart object exists
         
-        # Eager load related data for cart items
-        cart = db.session.query(Cart).filter_by(user_id=MOCK_USER_ID).options(
+        # Eager load related data
+        # Use cart.id from the already-fetched object for robustness
+        cart = db.session.query(Cart).filter_by(id=cart.id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
             joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
         ).first()
 
-        if not cart:
-            return {'items': [], 'total': 0.0}, 200
-
-        marshaled_items = []
-        for item in cart.items:
-            product_data = None
-            if item.product:
-                # Marshal product details if it's a standard product
-                nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
-                for key in ["calories", "carbs", "fat", "proteins"]:
-                    if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
-                        nutrition_data_for_marshal[key] = 0.0
-                    if isinstance(nutrition_data_for_marshal[key], Decimal):
-                        nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
-
-                processed_ingredients = item.product.ingredients if item.product.ingredients is not None else []
-                cleaned_ingredients = []
-                for ing in processed_ingredients:
-                    if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
-                        cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
-
-                product_data = api.marshal({
-                    'id': str(item.product.id),
-                    'name': item.product.name,
-                    'description': item.product.description,
-                    'price': float(item.product.price) if isinstance(item.product.price, Decimal) else item.product.price,
-                    'image': item.product.image,
-                    'categoryId': str(item.product.main_category_id),
-                    'nutrition': nutrition_data_for_marshal,
-                    'ingredients': cleaned_ingredients,
-                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in item.product.available_addons if pa.addon],
-                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in item.product.recommendations if pr.recommendation],
-                    'isCustomizable': item.product.is_customizable
-                }, product_model)
-            
-            marshaled_selected_addons = []
-            for ca in item.selected_addons:
-                if ca.addon:
-                    marshaled_selected_addons.append(api.marshal(ca.addon, addon_model))
-            
-            marshaled_selected_recommendations = []
-            for cr in item.selected_recommendations:
-                if cr.recommendation:
-                    marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
-
-            custom_wok_details = None
-            if item.custom_wok_data:
-                # Reconstruct customWok object with full details
-                base = WokBase.query.get(item.custom_wok_data.get('baseId'))
-                meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
-                toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
-                sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
-                
-                custom_wok_details = api.marshal({
-                    'base': api.marshal(base, wok_component_model) if base else None,
-                    'meats': [api.marshal(m, wok_component_model) for m in meats if m],
-                    'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
-                    'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
-                }, custom_wok_response_model)
-
-            marshaled_items.append({
-                'id': str(item.id),
-                'productId': str(item.product_id) if item.product_id else None,
-                'product': product_data,
-                'quantity': item.quantity,
-                'selectedAddons': marshaled_selected_addons,
-                'selectedRecommendations': marshaled_selected_recommendations,
-                'customWok': custom_wok_details,
-                'customName': item.custom_name,
-                'customDescription': item.custom_description,
-                'customPrice': float(item.custom_price) if item.custom_price is not None else None,
-                'customImage': item.custom_image
-            })
-        
-        # Ensure total is up-to-date before returning
+        # Update total (this will set cart.total to Decimal('0.00') if items list is empty)
         update_cart_total(cart)
         
-        return {
-            'items': marshaled_items,
-            'total': float(cart.total)
-        }
+        # Simply return the SQLAlchemy object. Flask-RESTx's marshaller handles the rest.
+        return cart
 
 @api.route('/cart/add')
 class AddToCartResource(Resource):
@@ -1062,3 +987,47 @@ def handle_exception(e):
     })
     response.status_code = InternalServerError.code
     return response
+    
+# --- Define a simple SQLAlchemy Model for the Alembic Version Table ---
+# We don't need to add this to db.init_app or db.create_all; it's just for querying.
+class AlembicVersion(db.Model):
+    __tablename__ = 'alembic_version' # Default Alembic table name
+    version_num = db.Column(db.String(32), primary_key=True) # Column that holds the current version UUID
+
+    def __repr__(self):
+        return f"<AlembicVersion {self.version_num}>"
+
+# --- New Model for Alembic Version Response ---
+alembic_version_model = api.model('AlembicVersion', {
+    'version': fields.String(required=True, description='Current Alembic migration version (UUID)'),
+    'timestamp': fields.String(description='Timestamp of when the version was retrieved', attribute='_timestamp', default=lambda: datetime.now().isoformat())
+})
+
+# --- New Alembic Version Endpoint ---
+@api.route('/alembic-version')
+class AlembicVersionResource(Resource):
+    @api.marshal_with(alembic_version_model)
+    def get(self):
+        """Get the current Alembic database migration version."""
+        version = "unknown"
+        try:
+            # Query the alembic_version table
+            # There should only ever be one row in this table, representing the current head.
+            alembic_rec = db.session.query(AlembicVersion).first()
+
+            if alembic_rec:
+                version = alembic_rec.version_num
+            else:
+                current_app.logger.warning("Alembic version table 'alembic_version' found, but it is empty. No migrations applied?")
+                # Return a default, or an error if you consider an empty table an issue.
+                version = "no_migrations_applied"
+        except Exception as e:
+            # This could happen if the table doesn't exist yet, or other DB errors.
+            current_app.logger.error(f"Error querying Alembic version from DB: {e}")
+            # Depending on your desired behavior, you might want to return an error,
+            # or a default value like "unknown" or "db_error".
+            api.abort(500, "Could not retrieve Alembic version from database.")
+
+        # Flask-RESTx will automatically jsonify and set headers with UTF-8
+        # because ensure_ascii=False is already configured.
+        return {'version': version}
