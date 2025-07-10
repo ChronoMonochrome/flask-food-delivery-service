@@ -56,7 +56,7 @@ export const HomePage: React.FC = () => {
     const tg = (window as any).Telegram?.WebApp
 
     if (tg?.initDataUnsafe?.user) {
-      const user = tg.initDataUnsafe.user
+      const user = tg.initDataUnsafe
 
       setUserTg(user)
     }
