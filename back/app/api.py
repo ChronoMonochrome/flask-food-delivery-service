@@ -55,6 +55,15 @@ addon_model = api.model('Addon', {
     'image': fields.String(description='Addon image URL', allow_null=True)
 })
 
+cart_addon_response_model = api.model('CartAddonResponse', {
+    'id': fields.String(required=True, description='ID of the addon'),
+    'group_name': fields.String(description='The group this addon belongs to (e.g., "Sauces")', allow_null=True),
+    'name': fields.String(required=True, description='Name of the addon'),
+    'price': fields.Float(required=True, description='Price of the addon'),
+    'image': fields.String(allow_null=True, description='Image URL of the addon'),
+    'quantity': fields.Integer(required=True, description='Quantity of this specific addon for the cart item') # <-- New quantity field
+})
+
 recommendation_model = api.model('Recommendation', {
     'id': fields.String(required=True, description='Recommendation ID'),
     'name': fields.String(required=True, description='Recommendation name'),
@@ -136,12 +145,13 @@ custom_wok_response_model = api.model('CustomWokResponse', {
     'sauces': fields.List(fields.Nested(wok_component_model), required=True)
 })
 
+# Update cart_item_response_model to use the new cart_addon_response_model
 cart_item_response_model = api.model('CartItemResponse', {
     'id': fields.String(required=True, description='Unique ID of the cart item'),
-    'productId': fields.String(description='ID of the product', allow_null=True), # Null for custom items
+    'productId': fields.String(description='ID of the product', allow_null=True),
     'product': fields.Nested(product_model, description='Product details for non-custom items', allow_null=True),
     'quantity': fields.Integer(required=True, description='Quantity of the item'),
-    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this item', default=[]),
+    'selectedAddons': fields.List(fields.Nested(cart_addon_response_model), description='Selected addons for this item', default=[]), # <--- UPDATED THIS LINE
     'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this item', default=[]),
     'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
     'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
@@ -825,7 +835,6 @@ class CartResource(Resource):
         for item in cart.items:
             product_data = None
             if item.product:
-                # Marshal product details if it's a standard product
                 nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
                 for key in ["calories", "carbs", "fat", "proteins"]:
                     if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -853,10 +862,21 @@ class CartResource(Resource):
                     'isCustomizable': item.product.is_customizable
                 }, product_model)
             
+            # --- FIX STARTS HERE ---
             marshaled_selected_addons = []
             for ca in item.selected_addons:
                 if ca.addon:
-                    marshaled_selected_addons.append(api.marshal(ca.addon, addon_model))
+                    # Manually construct the dictionary to include quantity from CartAddon (ca)
+                    # and other fields from the actual Addon (ca.addon)
+                    marshaled_selected_addons.append({
+                        'id': str(ca.addon.id),
+                        'group_name': ca.addon.group_name,
+                        'name': ca.addon.name,
+                        'price': float(ca.addon.price) if isinstance(ca.addon.price, Decimal) else ca.addon.price,
+                        'image': ca.addon.image,
+                        'quantity': ca.quantity # <-- Get quantity from the CartAddon relationship
+                    })
+            # --- FIX ENDS HERE ---
             
             marshaled_selected_recommendations = []
             for cr in item.selected_recommendations:
@@ -883,7 +903,7 @@ class CartResource(Resource):
                 'productId': str(item.product_id) if item.product_id else None,
                 'product': product_data,
                 'quantity': item.quantity,
-                'selectedAddons': marshaled_selected_addons,
+                'selectedAddons': marshaled_selected_addons, # This now uses the correctly constructed list
                 'selectedRecommendations': marshaled_selected_recommendations,
                 'customWok': custom_wok_details,
                 'customName': item.custom_name,
