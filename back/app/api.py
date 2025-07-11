@@ -195,7 +195,6 @@ addon_ns = api.namespace('addons', description='Addon related operations')
 @addon_ns.route('/groups')
 class AddonGroupList(Resource):
     @addon_ns.doc('list_addon_groups')
-    @addon_ns.marshal_list_with(addon_group_name_model)
     def get(self):
         """
         List all unique addon group names.
@@ -208,12 +207,11 @@ class AddonGroupList(Resource):
             {'name': group_name[0]}
             for group_name in unique_group_names
         ]
-        return result
+        return jsonify(result)
 
 @addon_ns.route('/by_group_name/<string:group_name>')
 class AddonsByGroupName(Resource):
     @addon_ns.doc('get_addons_by_group_name')
-    @addon_ns.marshal_list_with(addon_model)
     def get(self, group_name):
         """
         Returns a list of addons belonging to a specific group name.
@@ -221,7 +219,7 @@ class AddonsByGroupName(Resource):
         addons = Addon.query.filter_by(group_name=group_name).all()
         if not addons:
             addon_ns.abort(404, message=f"No addons found for group name '{group_name}'")
-        return addons
+        return jsonify(api.marshal(addons, addon_model))
 
 # Helper to calculate individual cart item price
 def calculate_item_price(product, selected_addons_data, selected_recommendations_data, custom_wok_data, custom_price):
