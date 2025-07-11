@@ -816,7 +816,6 @@ class RecommendationList(Resource):
 
 @api.route('/cart')
 class CartResource(Resource):
-    @api.marshal_with(cart_response_model)
     def get(self):
         """Get the current user's cart"""
         cart = get_or_create_cart(MOCK_USER_ID)
@@ -915,10 +914,10 @@ class CartResource(Resource):
         # Ensure total is up-to-date before returning
         update_cart_total(cart)
         
-        return {
+        return jsonify(api.marshal({
             'items': marshaled_items,
             'total': float(cart.total)
-        }
+        }, cart_response_model))
 
 @api.route('/cart/add')
 class AddToCartResource(Resource):
