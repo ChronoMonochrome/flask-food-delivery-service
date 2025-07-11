@@ -145,13 +145,28 @@ custom_wok_response_model = api.model('CustomWokResponse', {
     'sauces': fields.List(fields.Nested(wok_component_model), required=True)
 })
 
+# --- NEW: Simplified Product Model for Cart Items ---
+product_summary_model = api.model('ProductSummary', {
+    'id': fields.String(required=True),
+    'name': fields.String(required=True),
+    'description': fields.String(allow_null=True),
+    'price': fields.Float(required=True),
+    'image': fields.String(allow_null=True),
+    'categoryId': fields.String(attribute='main_category_id', required=True),
+    'nutrition': fields.Nested(nutrition_model),
+    'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
+    'isCustomizable': fields.Boolean
+    # Removed 'availableAddons' and 'recommendations'
+})
+# --- END NEW MODEL ---
+
 # Update cart_item_response_model to use the new cart_addon_response_model
 cart_item_response_model = api.model('CartItemResponse', {
     'id': fields.String(required=True, description='Unique ID of the cart item'),
     'productId': fields.String(description='ID of the product', allow_null=True),
-    'product': fields.Nested(product_model, description='Product details for non-custom items', allow_null=True),
+    'product': fields.Nested(product_summary_model, description='Product details for non-custom items', allow_null=True), # <--- UPDATED THIS LINE
     'quantity': fields.Integer(required=True, description='Quantity of the item'),
-    'selectedAddons': fields.List(fields.Nested(cart_addon_response_model), description='Selected addons for this item', default=[]), # <--- UPDATED THIS LINE
+    'selectedAddons': fields.List(fields.Nested(cart_addon_response_model), description='Selected addons for this item', default=[]),
     'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this item', default=[]),
     'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
     'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
@@ -847,6 +862,7 @@ class CartResource(Resource):
                     if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
                         cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
 
+                # --- FIX STARTS HERE: Use product_summary_model ---
                 product_data = api.marshal({
                     'id': str(item.product.id),
                     'name': item.product.name,
@@ -856,10 +872,10 @@ class CartResource(Resource):
                     'categoryId': str(item.product.main_category_id),
                     'nutrition': nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients,
-                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in item.product.available_addons if pa.addon],
-                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in item.product.recommendations if pr.recommendation],
-                    'isCustomizable': item.product.is_customizable
-                }, product_model)
+                    'isCustomizable': item.product.is_customizable # This field is still relevant
+                    # No longer including 'availableAddons' or 'recommendations' here
+                }, product_summary_model) # <--- UPDATED THIS LINE
+                # --- FIX ENDS HERE ---
             
             # --- FIX STARTS HERE ---
             marshaled_selected_addons = []
