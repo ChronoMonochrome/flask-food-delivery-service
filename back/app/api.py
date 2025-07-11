@@ -334,6 +334,7 @@ class ProductList(Resource):
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
+    @api.marshal_with(product_model)
     def get(self, product_id):
         """Get a single product by ID"""
         product = Product.query.options(
@@ -382,7 +383,7 @@ class ProductResource(Resource):
             'recommendations': marshaled_recommendations,
             'isCustomizable': product.is_customizable # Include new field
         }
-        return jsonify(product_for_marshal)
+        return product_for_marshal
 
 
 ## Order Endpoints
