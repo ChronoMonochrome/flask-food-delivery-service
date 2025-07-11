@@ -329,6 +329,10 @@ def get_addons_from_iiko_item(iiko_item):
         for size in iiko_item["itemSizes"]:
             if "itemModifierGroups" in size and size["itemModifierGroups"]:
                 for modifier_group in size["itemModifierGroups"]:
+                    if "name" in modifier_group and modifier_group["name"]:
+                        addon_group_name = modifier_group["name"]
+                    else:
+                        addon_group_name = "Ungrouped"
                     if "items" in modifier_group and modifier_group["items"]:
                         for addon_data in modifier_group["items"]:
                             addon_id = addon_data.get("id") or addon_data.get("itemId")
@@ -366,6 +370,7 @@ def get_addons_from_iiko_item(iiko_item):
 
                             addons.append({
                                 "iiko_addon_id": addon_id,
+                                "group_name": addon_group_name,
                                 "name": addon_name,
                                 "price": addon_price,
                                 "image": addon_image

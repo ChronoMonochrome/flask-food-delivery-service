@@ -10,6 +10,7 @@ from app.models import (
     WokBase, WokMeat, WokTopping, WokSauce # Import new Wok models
 )
 from app import iiko_service # Assuming this is your IIKO integration service
+from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import json
@@ -180,6 +181,47 @@ update_cart_item_request = api.model('UpdateCartItemRequest', {
 remove_from_cart_request = api.model('RemoveFromCartRequest', {
     'itemId': fields.String(required=True, description='ID of the cart item to remove')
 })
+
+# --- New Models for Addon Group Names ---
+
+# Model for listing unique addon group names with a placeholder ID
+addon_group_name_model = api.model('AddonGroupName', {
+    'name': fields.String(required=True, description='Unique addon group name')
+})
+
+# Namespace for addon-related operations
+addon_ns = api.namespace('addons', description='Addon related operations')
+
+@addon_ns.route('/groups')
+class AddonGroupList(Resource):
+    @addon_ns.doc('list_addon_groups')
+    @addon_ns.marshal_list_with(addon_group_name_model)
+    def get(self):
+        """
+        List all unique addon group names.
+        Returns a list of objects, each with a placeholder ID and the group name.
+        """
+        unique_group_names = db.session.query(distinct(Addon.group_name)).all()
+        # Transform the list of tuples into a list of dictionaries
+
+        result = [
+            {'name': group_name[0]}
+            for group_name in unique_group_names
+        ]
+        return result
+
+@addon_ns.route('/by_group_name/<string:group_name>')
+class AddonsByGroupName(Resource):
+    @addon_ns.doc('get_addons_by_group_name')
+    @addon_ns.marshal_list_with(addon_model)
+    def get(self, group_name):
+        """
+        Returns a list of addons belonging to a specific group name.
+        """
+        addons = Addon.query.filter_by(group_name=group_name).all()
+        if not addons:
+            addon_ns.abort(404, message=f"No addons found for group name '{group_name}'")
+        return addons
 
 # Helper to calculate individual cart item price
 def calculate_item_price(product, selected_addons_data, selected_recommendations_data, custom_wok_data, custom_price):
