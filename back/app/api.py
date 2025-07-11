@@ -970,6 +970,8 @@ class UpdateCartItemResource(Resource):
 
         cart = get_or_create_cart(MOCK_USER_ID)
         item_to_update = CartItem.query.filter_by(id=item_id, cart_id=cart.id).first()
+        if not item_to_update:
+            item_to_update = CartItem.query.filter_by(product_id=item_id, cart_id=cart.id).first()
 
         if not item_to_update:
             api.abort(404, "Cart item not found in your cart.")
