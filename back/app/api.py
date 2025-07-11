@@ -149,8 +149,8 @@ cart_item_response_model = api.model('CartItemResponse', {
 })
 
 cart_response_model = api.model('CartResponse', {
-    'items': fields.List(fields.Nested(cart_item_response_model), description='List of items in the cart', default=[]),
-    'total': fields.Float(required=True, description='Total price of the cart', default=0.0)
+    'items': fields.List(fields.Nested(cart_item_response_model), description='List of items in the cart'),
+    'total': fields.Float(required=True, description='Total price of the cart')
 })
 
 # **FIX FOR THE ERROR:** Define AddonRequest model separately, then use fields.Nested
@@ -266,8 +266,19 @@ def update_cart_total(cart):
 class CategoryList(Resource):
     def get(self):
         """Get all categories"""
-        categories = MainCategory.query.order_by(MainCategory.display_order).all()
-        marshaled_categories = api.marshal(categories, main_category_model)
+        # Define the prefixes to exclude
+        EXCLUDED_PREFIXES = ["Доставка", "Рекомендованные", "Добавки"]
+
+        # Fetch all categories from the database, ordered by display_order
+        all_categories = MainCategory.query.order_by(MainCategory.display_order).all()
+
+        # Filter the categories based on the excluded prefixes
+        filtered_categories = []
+        for category in all_categories:
+            # Check if the category name starts with any of the excluded prefixes
+            if not any(category.name.startswith(prefix) for prefix in EXCLUDED_PREFIXES):
+                filtered_categories.append(category)
+        marshaled_categories = api.marshal(filtered_categories, main_category_model)
         return jsonify(marshaled_categories)
 
 ## Product Endpoints
