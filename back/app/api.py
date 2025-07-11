@@ -334,6 +334,7 @@ class ProductList(Resource):
 
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
+    @api.marshal_with(product_model)
     def get(self, product_id):
         """Get a single product by ID"""
         product = Product.query.options(
@@ -382,7 +383,7 @@ class ProductResource(Resource):
             'recommendations': marshaled_recommendations,
             'isCustomizable': product.is_customizable # Include new field
         }
-        return jsonify(product_for_marshal)
+        return product_for_marshal
 
 
 ## Order Endpoints
@@ -753,24 +754,99 @@ class RecommendationList(Resource):
 
 @api.route('/cart')
 class CartResource(Resource):
-    @api.marshal_with(cart_response_model) # This decorator handles JSON conversion AND encoding
+    @api.marshal_with(cart_response_model)
     def get(self):
         """Get the current user's cart"""
-        cart = get_or_create_cart(MOCK_USER_ID) # Ensures a Cart object exists
+        cart = get_or_create_cart(MOCK_USER_ID)
         
-        # Eager load related data
-        # Use cart.id from the already-fetched object for robustness
-        cart = db.session.query(Cart).filter_by(id=cart.id).options(
+        # Eager load related data for cart items
+        cart = db.session.query(Cart).filter_by(user_id=MOCK_USER_ID).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
             joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
         ).first()
 
-        # Update total (this will set cart.total to Decimal('0.00') if items list is empty)
+        if not cart:
+            return {'items': [], 'total': 0.0}, 200
+
+        marshaled_items = []
+        for item in cart.items:
+            product_data = None
+            if item.product:
+                # Marshal product details if it's a standard product
+                nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
+                for key in ["calories", "carbs", "fat", "proteins"]:
+                    if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
+                        nutrition_data_for_marshal[key] = 0.0
+                    if isinstance(nutrition_data_for_marshal[key], Decimal):
+                        nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
+
+                processed_ingredients = item.product.ingredients if item.product.ingredients is not None else []
+                cleaned_ingredients = []
+                for ing in processed_ingredients:
+                    if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
+                        cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
+
+                product_data = api.marshal({
+                    'id': str(item.product.id),
+                    'name': item.product.name,
+                    'description': item.product.description,
+                    'price': float(item.product.price) if isinstance(item.product.price, Decimal) else item.product.price,
+                    'image': item.product.image,
+                    'categoryId': str(item.product.main_category_id),
+                    'nutrition': nutrition_data_for_marshal,
+                    'ingredients': cleaned_ingredients,
+                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in item.product.available_addons if pa.addon],
+                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in item.product.recommendations if pr.recommendation],
+                    'isCustomizable': item.product.is_customizable
+                }, product_model)
+            
+            marshaled_selected_addons = []
+            for ca in item.selected_addons:
+                if ca.addon:
+                    marshaled_selected_addons.append(api.marshal(ca.addon, addon_model))
+            
+            marshaled_selected_recommendations = []
+            for cr in item.selected_recommendations:
+                if cr.recommendation:
+                    marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
+
+            custom_wok_details = None
+            if item.custom_wok_data:
+                # Reconstruct customWok object with full details
+                base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+                
+                custom_wok_details = api.marshal({
+                    'base': api.marshal(base, wok_component_model) if base else None,
+                    'meats': [api.marshal(m, wok_component_model) for m in meats if m],
+                    'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
+                    'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
+                }, custom_wok_response_model)
+
+            marshaled_items.append({
+                'id': str(item.id),
+                'productId': str(item.product_id) if item.product_id else None,
+                'product': product_data,
+                'quantity': item.quantity,
+                'selectedAddons': marshaled_selected_addons,
+                'selectedRecommendations': marshaled_selected_recommendations,
+                'customWok': custom_wok_details,
+                'customName': item.custom_name,
+                'customDescription': item.custom_description,
+                'customPrice': float(item.custom_price) if item.custom_price is not None else None,
+                'customImage': item.custom_image
+            })
+        
+        # Ensure total is up-to-date before returning
         update_cart_total(cart)
         
-        # Simply return the SQLAlchemy object. Flask-RESTx's marshaller handles the rest.
-        return cart
+        return {
+            'items': marshaled_items,
+            'total': float(cart.total)
+        }
 
 @api.route('/cart/add')
 class AddToCartResource(Resource):
