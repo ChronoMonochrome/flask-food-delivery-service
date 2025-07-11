@@ -10,6 +10,7 @@ from app.models import (
     WokBase, WokMeat, WokTopping, WokSauce # Import new Wok models
 )
 from app import iiko_service # Assuming this is your IIKO integration service
+from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import json
@@ -48,9 +49,19 @@ main_category_model = api.model('MainCategory', {
 
 addon_model = api.model('Addon', {
     'id': fields.String(required=True, description='Addon ID'),
+    'group_name': fields.String(required=True, description='Addon group name'),
     'name': fields.String(required=True, description='Addon name'),
     'price': fields.Float(required=True, description='Addon price'),
     'image': fields.String(description='Addon image URL', allow_null=True)
+})
+
+cart_addon_response_model = api.model('CartAddonResponse', {
+    'id': fields.String(required=True, description='ID of the addon'),
+    'group_name': fields.String(description='The group this addon belongs to (e.g., "Sauces")', allow_null=True),
+    'name': fields.String(required=True, description='Name of the addon'),
+    'price': fields.Float(required=True, description='Price of the addon'),
+    'image': fields.String(allow_null=True, description='Image URL of the addon'),
+    'quantity': fields.Integer(required=True, description='Quantity of this specific addon for the cart item') # <-- New quantity field
 })
 
 recommendation_model = api.model('Recommendation', {
@@ -134,12 +145,28 @@ custom_wok_response_model = api.model('CustomWokResponse', {
     'sauces': fields.List(fields.Nested(wok_component_model), required=True)
 })
 
+# --- NEW: Simplified Product Model for Cart Items ---
+product_summary_model = api.model('ProductSummary', {
+    'id': fields.String(required=True),
+    'name': fields.String(required=True),
+    'description': fields.String(allow_null=True),
+    'price': fields.Float(required=True),
+    'image': fields.String(allow_null=True),
+    'categoryId': fields.String(attribute='main_category_id', required=True),
+    'nutrition': fields.Nested(nutrition_model),
+    'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True, default=[]),
+    'isCustomizable': fields.Boolean
+    # Removed 'availableAddons' and 'recommendations'
+})
+# --- END NEW MODEL ---
+
+# Update cart_item_response_model to use the new cart_addon_response_model
 cart_item_response_model = api.model('CartItemResponse', {
     'id': fields.String(required=True, description='Unique ID of the cart item'),
-    'productId': fields.String(description='ID of the product', allow_null=True), # Null for custom items
-    'product': fields.Nested(product_model, description='Product details for non-custom items', allow_null=True),
+    'productId': fields.String(description='ID of the product', allow_null=True),
+    'product': fields.Nested(product_summary_model, description='Product details for non-custom items', allow_null=True), # <--- UPDATED THIS LINE
     'quantity': fields.Integer(required=True, description='Quantity of the item'),
-    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this item', default=[]),
+    'selectedAddons': fields.List(fields.Nested(cart_addon_response_model), description='Selected addons for this item', default=[]),
     'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this item', default=[]),
     'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
     'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
@@ -179,6 +206,45 @@ update_cart_item_request = api.model('UpdateCartItemRequest', {
 remove_from_cart_request = api.model('RemoveFromCartRequest', {
     'itemId': fields.String(required=True, description='ID of the cart item to remove')
 })
+
+# --- New Models for Addon Group Names ---
+
+# Model for listing unique addon group names with a placeholder ID
+addon_group_name_model = api.model('AddonGroupName', {
+    'name': fields.String(required=True, description='Unique addon group name')
+})
+
+# Namespace for addon-related operations
+addon_ns = api.namespace('addons', description='Addon related operations')
+
+@addon_ns.route('/groups')
+class AddonGroupList(Resource):
+    @addon_ns.doc('list_addon_groups')
+    def get(self):
+        """
+        List all unique addon group names.
+        Returns a list of objects, each with a placeholder ID and the group name.
+        """
+        unique_group_names = db.session.query(distinct(Addon.group_name)).all()
+        # Transform the list of tuples into a list of dictionaries
+
+        result = [
+            {'name': group_name[0]}
+            for group_name in unique_group_names
+        ]
+        return jsonify(result)
+
+@addon_ns.route('/by_group_name/<string:group_name>')
+class AddonsByGroupName(Resource):
+    @addon_ns.doc('get_addons_by_group_name')
+    def get(self, group_name):
+        """
+        Returns a list of addons belonging to a specific group name.
+        """
+        addons = Addon.query.filter_by(group_name=group_name).all()
+        if not addons:
+            addon_ns.abort(404, message=f"No addons found for group name '{group_name}'")
+        return jsonify(api.marshal(addons, addon_model))
 
 # Helper to calculate individual cart item price
 def calculate_item_price(product, selected_addons_data, selected_recommendations_data, custom_wok_data, custom_price):
@@ -765,7 +831,6 @@ class RecommendationList(Resource):
 
 @api.route('/cart')
 class CartResource(Resource):
-    @api.marshal_with(cart_response_model)
     def get(self):
         """Get the current user's cart"""
         cart = get_or_create_cart(MOCK_USER_ID)
@@ -784,7 +849,6 @@ class CartResource(Resource):
         for item in cart.items:
             product_data = None
             if item.product:
-                # Marshal product details if it's a standard product
                 nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
                 for key in ["calories", "carbs", "fat", "proteins"]:
                     if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -798,6 +862,7 @@ class CartResource(Resource):
                     if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
                         cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
 
+                # --- FIX STARTS HERE: Use product_summary_model ---
                 product_data = api.marshal({
                     'id': str(item.product.id),
                     'name': item.product.name,
@@ -807,15 +872,26 @@ class CartResource(Resource):
                     'categoryId': str(item.product.main_category_id),
                     'nutrition': nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients,
-                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in item.product.available_addons if pa.addon],
-                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in item.product.recommendations if pr.recommendation],
-                    'isCustomizable': item.product.is_customizable
-                }, product_model)
+                    'isCustomizable': item.product.is_customizable # This field is still relevant
+                    # No longer including 'availableAddons' or 'recommendations' here
+                }, product_summary_model) # <--- UPDATED THIS LINE
+                # --- FIX ENDS HERE ---
             
+            # --- FIX STARTS HERE ---
             marshaled_selected_addons = []
             for ca in item.selected_addons:
                 if ca.addon:
-                    marshaled_selected_addons.append(api.marshal(ca.addon, addon_model))
+                    # Manually construct the dictionary to include quantity from CartAddon (ca)
+                    # and other fields from the actual Addon (ca.addon)
+                    marshaled_selected_addons.append({
+                        'id': str(ca.addon.id),
+                        'group_name': ca.addon.group_name,
+                        'name': ca.addon.name,
+                        'price': float(ca.addon.price) if isinstance(ca.addon.price, Decimal) else ca.addon.price,
+                        'image': ca.addon.image,
+                        'quantity': ca.quantity # <-- Get quantity from the CartAddon relationship
+                    })
+            # --- FIX ENDS HERE ---
             
             marshaled_selected_recommendations = []
             for cr in item.selected_recommendations:
@@ -842,7 +918,7 @@ class CartResource(Resource):
                 'productId': str(item.product_id) if item.product_id else None,
                 'product': product_data,
                 'quantity': item.quantity,
-                'selectedAddons': marshaled_selected_addons,
+                'selectedAddons': marshaled_selected_addons, # This now uses the correctly constructed list
                 'selectedRecommendations': marshaled_selected_recommendations,
                 'customWok': custom_wok_details,
                 'customName': item.custom_name,
@@ -854,10 +930,10 @@ class CartResource(Resource):
         # Ensure total is up-to-date before returning
         update_cart_total(cart)
         
-        return {
+        return jsonify(api.marshal({
             'items': marshaled_items,
             'total': float(cart.total)
-        }
+        }, cart_response_model))
 
 @api.route('/cart/add')
 class AddToCartResource(Resource):
