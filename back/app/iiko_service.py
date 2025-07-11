@@ -280,6 +280,10 @@ def get_addons_from_iiko_item(iiko_item):
     # Check for itemModifierGroups directly under the main item (less common but possible)
     if "itemModifierGroups" in iiko_item and iiko_item["itemModifierGroups"]:
         for modifier_group in iiko_item["itemModifierGroups"]:
+            if "name" in modifier_group and modifier_group["name"]:
+                addon_group_name = modifier_group[name]
+            else:
+                addon_group_name = "Ungrouped"
             if "items" in modifier_group and modifier_group["items"]:
                 for addon_data in modifier_group["items"]:
                     addon_id = addon_data.get("id") or addon_data.get("itemId") # Use 'id' or 'itemId'
@@ -314,6 +318,7 @@ def get_addons_from_iiko_item(iiko_item):
 
                     addons.append({
                         "iiko_addon_id": addon_id,
+                        "group_name": addon_group_name,
                         "name": addon_name,
                         "price": addon_price,
                         "image": addon_image
@@ -677,6 +682,7 @@ def synchronize_iiko_data():
 
                 for addon_info in extracted_addons_data:
                     addon_id = addon_info['iiko_addon_id']
+                    addon_group_name = addon_info['group_name']
                     addon_name = addon_info['name']
                     addon_price = addon_info['price']
                     addon_image = addon_info['image']
@@ -684,6 +690,7 @@ def synchronize_iiko_data():
                     # Update existing addon or create new one in the Addon table
                     addon = addon_iiko_to_db_map.get(addon_id) or existing_addons.get(addon_id)
                     if addon:
+                        addon.group_name = addon_group_name
                         addon.name = addon_name
                         addon.price = addon_price
                         addon.image = addon_image
@@ -693,6 +700,7 @@ def synchronize_iiko_data():
                         addon = Addon(
                             id=addon_id,
                             iiko_addon_id=addon_id,
+                            group_name=addon_group_name,
                             name=addon_name,
                             price=addon_price,
                             image=addon_image
@@ -765,6 +773,7 @@ def synchronize_iiko_data():
 
             addon = existing_addons.get(item_iiko_id)
             if addon:
+                addon.group_name = "Ungrouped"
                 addon.name = item_name
                 addon.price = price_value
                 addon.image = item_image_url
@@ -773,6 +782,7 @@ def synchronize_iiko_data():
                 addon = Addon(
                     id=item_iiko_id,
                     iiko_addon_id=item_iiko_id,
+                    group_name="Ungrouped",
                     name=item_name,
                     price=price_value,
                     image=item_image_url
@@ -842,6 +852,7 @@ def synchronize_iiko_data():
                 full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id)
 
                 if full_mod_item_data:
+                    mod_group_name = full_mod_item_data.get('group_name')
                     mod_name = full_mod_item_data.get('name')
                     mod_price = Decimal('0.00')
 
@@ -877,6 +888,7 @@ def synchronize_iiko_data():
                     addon_obj = Addon(
                         id=mod_iiko_id,
                         iiko_addon_id=mod_iiko_id,
+                        group_name=mod_group_name,
                         name=mod_name,
                         price=mod_price,
                         image=mod_image

@@ -48,6 +48,7 @@ main_category_model = api.model('MainCategory', {
 
 addon_model = api.model('Addon', {
     'id': fields.String(required=True, description='Addon ID'),
+    'group_name': fields.String(required=True, description='Addon group name'),
     'name': fields.String(required=True, description='Addon name'),
     'price': fields.Float(required=True, description='Addon price'),
     'image': fields.String(description='Addon image URL', allow_null=True)

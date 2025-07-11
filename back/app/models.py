@@ -54,6 +54,7 @@ class Addon(db.Model):
     __tablename__ = 'addon' # Explicitly define table name
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     iiko_addon_id = db.Column(db.String(36), unique=True, nullable=True) # New: iiko's ID for the addon item (iiko Modifier ID)
+    group_name = db.Column(db.String(120), nullable=False)
     name = db.Column(db.String(120), nullable=False)
     price = db.Column(db.Numeric(10, 2), nullable=False) # Use Numeric for currency
     image = db.Column(db.String(255), nullable=True) # If addons (modifiers) have images in iiko
