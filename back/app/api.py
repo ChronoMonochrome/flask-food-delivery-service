@@ -165,19 +165,29 @@ product_summary_model = api.model('ProductSummary', {
 })
 # --- END NEW MODEL ---
 
-# Update cart_item_response_model to use the new cart_addon_response_model
+# --- MODIFIED: cart_item_response_model ---
 cart_item_response_model = api.model('CartItemResponse', {
     'id': fields.String(required=True, description='Unique ID of the cart item'),
     'productId': fields.String(description='ID of the product', allow_null=True),
-    'product': fields.Nested(product_summary_model, description='Product details for non-custom items', allow_null=True), # <--- UPDATED THIS LINE
+    # Flattened product details:
+    'name': fields.String(description='Name of the product/custom item', required=True),
+    'description': fields.String(description='Description of the product/custom item', allow_null=True),
+    'image': fields.String(description='Image URL of the product/custom item', allow_null=True),
+    'isCustomizable': fields.Boolean(description='Is the item customizable?'),
+    #'categoryId': fields.String(description='Category ID of the product', allow_null=True),
+    #'nutrition': fields.Nested(nutrition_model, description='Nutrition information', allow_null=True),
+    #'ingredients': fields.List(fields.Nested(ingredient_item_model), description='List of ingredients', allow_null=True),
+
     'quantity': fields.Integer(required=True, description='Quantity of the item'),
+    'priceTotal': fields.Float(required=True, description='Total price for this single cart item (base price + addons + recommendations)'), # NEW FIELD
+
     'selectedAddons': fields.List(fields.Nested(cart_addon_response_model), description='Selected addons for this item', default=[]),
     'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this item', default=[]),
-    'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
-    'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
-    'customDescription': fields.String(description='Custom description for the item (e.g., for Wok)', allow_null=True),
-    'customPrice': fields.Float(description='Custom price for the item (e.g., for Wok)', allow_null=True),
-    'customImage': fields.String(description='Custom image for the item (e.g., for Wok)', allow_null=True)
+    #'customWok': fields.Nested(custom_wok_response_model, description='Wok customization details if applicable', allow_null=True),
+    #'customName': fields.String(description='Custom name for the item (e.g., for Wok)', allow_null=True),
+    #'customDescription': fields.String(description='Custom description for the item (e.g., for Wok)', allow_null=True),
+    #'customPrice': fields.Float(description='Custom price for the item (e.g., for Wok)', allow_null=True), # Keep customPrice for internal calculations, but priceTotal is what client sees
+    #'customImage': fields.String(description='Custom image for the item (e.g., for Wok)', allow_null=True)
 })
 
 cart_response_model = api.model('CartResponse', {
@@ -838,80 +848,115 @@ class RecommendationList(Resource):
 class CartResource(Resource):
     def get(self):
         """Get the current user's cart"""
-        user_id = get_telegram_user_id() # <--- Get real user ID
-        cart = get_or_create_cart(user_id) # <--- Use real user ID
+        user_id = get_telegram_user_id()
+        cart = get_or_create_cart(user_id)
 
-        cart = db.session.query(Cart).filter_by(user_id=user_id).options( # <--- Use real user ID
+        # Eager load related data for cart items
+        # (This part of the query remains the same)
+        cart = db.session.query(Cart).filter_by(user_id=user_id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
             joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
         ).first()
-
 
         if not cart:
             return {'items': [], 'total': 0.0}, 200
 
         marshaled_items = []
         for item in cart.items:
-            product_data = None
-            if item.product:
-                nutrition_data_for_marshal = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
-                for key in ["calories", "carbs", "fat", "proteins"]:
-                    if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
-                        nutrition_data_for_marshal[key] = 0.0
-                    if isinstance(nutrition_data_for_marshal[key], Decimal):
-                        nutrition_data_for_marshal[key] = float(nutrition_data_for_marshal[key])
+            # Initialize fields that might come from product or custom_wok
+            item_id = str(item.id)
+            product_id = str(item.product_id) if item.product_id else None
+            item_name = None
+            item_description = None
+            item_image = None
+            item_is_customizable = False
+            item_category_id = None
+            item_nutrition = {}
+            item_ingredients = []
+            item_base_price = Decimal('0.0') # Base price of the product or custom wok
 
-                processed_ingredients = item.product.ingredients if item.product.ingredients is not None else []
+            # Determine fields based on whether it's a custom wok or a regular product
+            if item.custom_wok_data:
+                # For custom wok, use its custom fields or derive from components
+                item_name = item.custom_name
+                item_description = item.custom_description
+                item_image = item.custom_image
+                item_is_customizable = True # A custom wok is inherently customizable
+                item_base_price = Decimal(str(item.custom_price)) if item.custom_price is not None else Decimal('0.0')
+
+                # You might want to build a more detailed description from wok components here if customDescription is null
+                if not item_description:
+                    base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                    meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                    toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                    sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+                    # Example: generate a description like "Rice with Chicken, Mushrooms, Teriyaki"
+                    desc_parts = []
+                    if base: desc_parts.append(base.name)
+                    if meats: desc_parts.append(", ".join([m.name for m in meats]))
+                    if toppings: desc_parts.append(", ".join([t.name for t in toppings]))
+                    if sauces: desc_parts.append(", ".join([s.name for s in sauces]))
+                    item_description = "Wok: " + " with ".join(filter(None, desc_parts)) if desc_parts else "Custom Wok"
+
+
+            elif item.product:
+                # For regular products, use product details
+                item_name = item.product.name
+                item_description = item.product.description
+                item_image = item.product.image
+                item_is_customizable = item.product.is_customizable
+                item_category_id = str(item.product.main_category_id) if item.product.main_category_id else None
+                item_nutrition = item.product.nutrition if isinstance(item.product.nutrition, dict) else {}
+                item_ingredients = item.product.ingredients if item.product.ingredients is not None else []
+                item_base_price = Decimal(str(item.product.price)) if item.product.price is not None else Decimal('0.0')
+
+                # Ensure nutrition values are floats
+                for key in ["calories", "carbs", "fat", "proteins"]:
+                    if key not in item_nutrition or item_nutrition[key] is None:
+                        item_nutrition[key] = 0.0
+                    if isinstance(item_nutrition[key], Decimal):
+                        item_nutrition[key] = float(item_nutrition[key])
+
+                # Clean ingredients for the model
                 cleaned_ingredients = []
-                for ing in processed_ingredients:
+                for ing in item_ingredients:
                     if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
                         cleaned_ingredients.append({'code': ing.get('code', ''), 'name': ing['name']})
+                item_ingredients = cleaned_ingredients
 
-                # --- FIX STARTS HERE: Use product_summary_model ---
-                product_data = api.marshal({
-                    'id': str(item.product.id),
-                    'name': item.product.name,
-                    'description': item.product.description,
-                    'price': float(item.product.price) if isinstance(item.product.price, Decimal) else item.product.price,
-                    'image': item.product.image,
-                    'categoryId': str(item.product.main_category_id),
-                    'nutrition': nutrition_data_for_marshal,
-                    'ingredients': cleaned_ingredients,
-                    'isCustomizable': item.product.is_customizable # This field is still relevant
-                    # No longer including 'availableAddons' or 'recommendations' here
-                }, product_summary_model) # <--- UPDATED THIS LINE
-                # --- FIX ENDS HERE ---
-            
-            # --- FIX STARTS HERE ---
+            # Calculate priceTotal for the item
+            current_item_total_price = item_base_price
+
             marshaled_selected_addons = []
             for ca in item.selected_addons:
                 if ca.addon:
-                    # Manually construct the dictionary to include quantity from CartAddon (ca)
-                    # and other fields from the actual Addon (ca.addon)
+                    addon_price = Decimal(str(ca.addon.price)) if ca.addon.price is not None else Decimal('0.0')
+                    current_item_total_price += addon_price * ca.quantity
                     marshaled_selected_addons.append({
                         'id': str(ca.addon.id),
                         'group_name': ca.addon.group_name,
                         'name': ca.addon.name,
-                        'price': float(ca.addon.price) if isinstance(ca.addon.price, Decimal) else ca.addon.price,
+                        'price': float(addon_price),
                         'image': ca.addon.image,
-                        'quantity': ca.quantity # <-- Get quantity from the CartAddon relationship
+                        'quantity': ca.quantity
                     })
-            # --- FIX ENDS HERE ---
-            
+
             marshaled_selected_recommendations = []
             for cr in item.selected_recommendations:
                 if cr.recommendation:
+                    rec_price = Decimal(str(cr.recommendation.price)) if cr.recommendation.price is not None else Decimal('0.0')
+                    current_item_total_price += rec_price
                     marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
 
+            # Handle custom Wok details
             custom_wok_details = None
             if item.custom_wok_data:
-                # Reconstruct customWok object with full details
                 base = WokBase.query.get(item.custom_wok_data.get('baseId'))
                 meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
                 toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
                 sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
-                
+
                 custom_wok_details = api.marshal({
                     'base': api.marshal(base, wok_component_model) if base else None,
                     'meats': [api.marshal(m, wok_component_model) for m in meats if m],
@@ -920,26 +965,32 @@ class CartResource(Resource):
                 }, custom_wok_response_model)
 
             marshaled_items.append({
-                'id': str(item.id),
-                'productId': str(item.product_id) if item.product_id else None,
-                'product': product_data,
+                'id': item_id,
+                'productId': product_id,
+                'name': item_name,
+                'description': item_description,
+                'image': item_image,
+                'isCustomizable': item_is_customizable,
+                #'categoryId': item_category_id,
+                #'nutrition': item_nutrition,
+                #'ingredients': item_ingredients,
                 'quantity': item.quantity,
-                'selectedAddons': marshaled_selected_addons, # This now uses the correctly constructed list
+                'priceTotal': float(current_item_total_price), # Use the calculated total price for this item
+                'selectedAddons': marshaled_selected_addons,
                 'selectedRecommendations': marshaled_selected_recommendations,
-                'customWok': custom_wok_details,
-                'customName': item.custom_name,
-                'customDescription': item.custom_description,
-                'customPrice': float(item.custom_price) if item.custom_price is not None else None,
-                'customImage': item.custom_image
+                #'customWok': custom_wok_details,
+                #'customName': item.custom_name, # These are raw custom fields, not what frontend displays directly
+                #'customDescription': item.custom_description,
+                #'customPrice': float(item.custom_price) if item.custom_price is not None else None,
+                #'customImage': item.custom_image
             })
-        
-        # Ensure total is up-to-date before returning
-        update_cart_total(cart)
-        
+
+        update_cart_total(cart) # Ensure cart.total is updated
         return jsonify(api.marshal({
             'items': marshaled_items,
             'total': float(cart.total)
         }, cart_response_model))
+
 
 @api.route('/cart/add')
 class AddToCartResource(Resource):
