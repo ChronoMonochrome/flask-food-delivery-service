@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  Box, 
-  Container, 
-  Typography, 
-  AppBar, 
-  Toolbar, 
+import {
+  Box,
+  Container,
+  Typography,
+  AppBar,
+  Toolbar,
   IconButton,
   Grid,
   Paper
@@ -20,17 +20,19 @@ import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 
 export const HomePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [userTg, setUserTg] = useState<any | null>(null); // Use 'any' or define a specific type for Telegram user
+  const [debug, setDebug] = useState(""); // Initial message
 
-  const { 
-    data: apiCategories, 
-    isLoading: categoriesLoading, 
-    error: categoriesError 
+  const {
+    data: apiCategories,
+    isLoading: categoriesLoading,
+    error: categoriesError
   } = useGetCategoriesQuery();
 
-  const { 
-    data: apiProducts, 
-    isLoading: productsLoading, 
-    error: productsError 
+  const {
+    data: apiProducts,
+    isLoading: productsLoading,
+    error: productsError
   } = useGetProductsQuery(
     { categoryId: selectedCategory },
     { skip: !selectedCategory }
@@ -64,6 +66,60 @@ export const HomePage: React.FC = () => {
     }
   }, [categories, selectedCategory]);
 
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      const tg = (window as any).Telegram?.WebApp; // Use (window as any) for TypeScript if not globally declared
+
+      if (!tg) {
+        //setDebug('❗ Telegram WebApp API не найден. Возможно, вы открыли сайт вне Telegram.');
+        return;
+      }
+
+      //setDebug('Telegram WebApp API найден.'); // Indicate API is found
+      tg.ready();
+
+      if (tg.initDataUnsafe?.user) {
+        setUserTg(tg.initDataUnsafe.user);
+
+        // --- NEW: Send initData to your Flask backend ---
+        fetch('/api/telegram-init', { // This should match your Flask endpoint
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ initData: tg.initData }), // Send the raw initData
+        })
+        .then(response => {
+            if (!response.ok) {
+                // If the response is not OK (e.g., 403 Forbidden), throw an error
+                return response.json().then(errorData => {
+                    throw new Error(errorData.message || 'Ошибка сети при отправке данных Telegram');
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+          console.log('Backend response after initData validation:', data);
+          if (data.status === 'success') {
+            //setDebug('✅ Данные Telegram успешно проверены сервером.');
+            // You might store user data in your local state or context here
+          } else {
+            //setDebug(`❗ Ошибка проверки данных Telegram: ${data.message}`);
+          }
+        })
+        .catch(error => {
+          console.error('Error sending init data to backend:', error);
+          //setDebug(`❌ Ошибка связи с сервером: ${error.message}`);
+        });
+
+      } else {
+        //setDebug('⚠️ Пользователь не передан в initDataUnsafe. Работаем без данных пользователя Telegram.');
+      }
+    }, 300); // Increased timeout slightly for safer loading
+
+    return () => clearTimeout(timeout);
+  }, []);
+
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', pb: 10 }}>
       {/* Header */}
@@ -80,8 +136,8 @@ export const HomePage: React.FC = () => {
               </Typography>
             </Box>
           </Box>
-          <IconButton 
-            sx={{ 
+          <IconButton
+            sx={{
               backgroundColor: 'background.paper',
               border: '1px solid #4B5563',
               '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' }
@@ -112,30 +168,30 @@ export const HomePage: React.FC = () => {
             <Typography variant="h5" component="h2" fontWeight="bold" color="text.primary" mb={3}>
               {categories.find(c => c.id === selectedCategory)?.name}
             </Typography>
-            
+
             {productsLoading ? (
               <LoadingSpinner />
             ) : productsError ? (
               <ErrorMessage message="Ошибка загрузки товаров" />
             ) : (
-              <Grid 
-                container 
-                spacing={3} 
-                sx={{ 
-                  justifyContent: { xs: 'center', sm: 'flex-start' },
-                  alignItems: 'stretch',
+              <Grid
+                container
+                spacing={3}
+                sx={{
+                  justifyContent: 'flex-start',
+                  alignItems: 'stretch'
                 }}
               >
                 {products.map((product) => (
-                  <Grid 
-                    item 
+                  <Grid
+                    item
                     xs={12}
                     sm={6}
                     md={6}
                     lg={4}
                     xl={3}
                     key={product.id}
-                    sx={{ 
+                    sx={{
                       display: 'flex',
                       justifyContent: 'center',
                       alignItems: 'stretch',
