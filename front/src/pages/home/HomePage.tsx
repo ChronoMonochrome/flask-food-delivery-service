@@ -53,12 +53,11 @@ export const HomePage: React.FC = () => {
   }, [categories, selectedCategory]);
 
   useEffect(() => {
-    const tg = (window as any).Telegram?.WebApp
+    const tg = window?.Telegram?.WebApp
+    tg?.ready()
 
-    if (tg?.initDataUnsafe?.user) {
-      const user = tg.initDataUnsafe
-
-      setUserTg(user)
+    if (tg?.initDataUnsafe) {
+      setUserTg(tg.initDataUnsafe)
     }
   }, [])
 
