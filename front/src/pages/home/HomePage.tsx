@@ -53,21 +53,24 @@ export const HomePage: React.FC = () => {
   }, [categories, selectedCategory]);
 
   useEffect(() => {
-    const tg = window?.Telegram?.WebApp
+    const timeout = setTimeout(() => {
+      const tg = window?.Telegram?.WebApp
 
-    if (!tg) {
-      setDebug('Telegram WebApp не найден. Возможно, вы открыли приложение вне Telegram.')
-      return
-    }
+      if (!tg) {
+        setDebug('❗ Telegram WebApp API не найден. Возможно, вы открыли сайт вне Telegram.')
+        return
+      }
 
-    tg.ready()
+      tg.ready()
 
-    // Проверка наличия пользователя
-    if (tg.initDataUnsafe?.user) {
-      setUserTg(tg.initDataUnsafe.user)
-    } else {
-      setDebug('Пользователь не передан через initDataUnsafe')
-    }
+      if (tg.initDataUnsafe?.user) {
+        setUserTg(tg.initDataUnsafe.user)
+      } else {
+        setDebug('⚠️ Пользователь не передан в initDataUnsafe.')
+      }
+    }, 100) // 100–300 мс обычно хватает
+
+    return () => clearTimeout(timeout)
   }, [])
 
   return (
