@@ -51,14 +51,14 @@ export const HomePage: React.FC = () => {
     }
   }, [categories, selectedCategory]);
 
-  useEffect(() => {
-    const tg = window?.Telegram?.WebApp
-    tg?.ready()
-
-    if (tg?.initDataUnsafe?.user) {
-      setUserTg(tg.initDataUnsafe.user)
-    }
-  }, [])
+  // useEffect(() => {
+  //   const tg = window?.Telegram?.WebApp
+  //   tg?.ready()
+  //
+  //   if (tg?.initDataUnsafe?.user) {
+  //     setUserTg(tg.initDataUnsafe.user)
+  //   }
+  // }, [])
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', pb: 10 }}>
