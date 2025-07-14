@@ -1,5 +1,5 @@
 # Dockerfile.scheduler
-FROM python:3.9-slim-buster as build-env
+FROM python:3.9-slim-bullseye as build-env
 
 WORKDIR /app
 
