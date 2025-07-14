@@ -120,8 +120,13 @@ order_model = api.model('Order', {
 
 # --- Cart Models ---
 
-# Mock User ID - In a real app, this would come from an authenticated session
-MOCK_USER_ID = "mock_user_123"
+# Helper function to get user ID from header
+def get_telegram_user_id():
+    user_id = request.headers.get('X-Telegram-User-ID')
+    if not user_id:
+        # Abort with 401 or 403 if user ID is mandatory for this endpoint
+        api.abort(401, "X-Telegram-User-ID header is required.")
+    return user_id
 
 # Wok Customization Models
 wok_component_model = api.model('WokComponent', {
@@ -833,14 +838,15 @@ class RecommendationList(Resource):
 class CartResource(Resource):
     def get(self):
         """Get the current user's cart"""
-        cart = get_or_create_cart(MOCK_USER_ID)
-        
-        # Eager load related data for cart items
-        cart = db.session.query(Cart).filter_by(user_id=MOCK_USER_ID).options(
+        user_id = get_telegram_user_id() # <--- Get real user ID
+        cart = get_or_create_cart(user_id) # <--- Use real user ID
+
+        cart = db.session.query(Cart).filter_by(user_id=user_id).options( # <--- Use real user ID
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
             joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
         ).first()
+
 
         if not cart:
             return {'items': [], 'total': 0.0}, 200
@@ -941,6 +947,7 @@ class AddToCartResource(Resource):
     @api.marshal_with(cart_response_model, code=201)
     def post(self):
         """Add an item to the cart or increment quantity if it exists."""
+        user_id = get_telegram_user_id()
         data = api.payload
         product_id = data.get('productId')
         quantity_to_add = data.get('quantity', 1)
@@ -953,7 +960,7 @@ class AddToCartResource(Resource):
 
         current_app.logger.debug(f"Received add to cart request: {data}")
 
-        cart = get_or_create_cart(MOCK_USER_ID)
+        cart = get_or_create_cart(user_id)
 
         product = None
         if product_id:
@@ -1037,6 +1044,7 @@ class UpdateCartItemResource(Resource):
     @api.marshal_with(cart_response_model)
     def put(self):
         """Update the quantity of a specific item in the cart."""
+        user_id = get_telegram_user_id()
         data = api.payload
         item_id = data.get('itemId')
         new_quantity = data.get('quantity')
@@ -1044,7 +1052,7 @@ class UpdateCartItemResource(Resource):
         if new_quantity is None or new_quantity < 0:
             api.abort(400, "Quantity must be a non-negative integer.")
 
-        cart = get_or_create_cart(MOCK_USER_ID)
+        cart = get_or_create_cart(user_id)
         item_to_update = CartItem.query.filter_by(id=item_id, cart_id=cart.id).first()
         if not item_to_update:
             item_to_update = CartItem.query.filter_by(product_id=item_id, cart_id=cart.id).first()
@@ -1071,10 +1079,11 @@ class RemoveFromCartResource(Resource):
     @api.marshal_with(cart_response_model)
     def delete(self):
         """Remove a specific item from the cart."""
+        user_id = get_telegram_user_id()
         data = api.payload
         item_id = data.get('itemId')
 
-        cart = get_or_create_cart(MOCK_USER_ID)
+        cart = get_or_create_cart(user_id)
         item_to_remove = CartItem.query.filter_by(id=item_id, cart_id=cart.id).first()
 
         if not item_to_remove:
@@ -1093,7 +1102,8 @@ class ClearCartResource(Resource):
     @api.marshal_with(cart_response_model)
     def delete(self):
         """Clear all items from the cart."""
-        cart = get_or_create_cart(MOCK_USER_ID)
+        user_id = get_telegram_user_id()
+        cart = get_or_create_cart(user_id)
         # Delete all cart items associated with this cart
         CartItem.query.filter_by(cart_id=cart.id).delete()
         db.session.commit()
