@@ -7,7 +7,6 @@ import {
   Toolbar, 
   IconButton,
   Grid,
-  Paper
 } from '@mui/material';
 import { Phone } from '@mui/icons-material';
 import { useGetCategoriesQuery, useGetProductsQuery } from '../../shared/api';
@@ -56,8 +55,8 @@ export const HomePage: React.FC = () => {
     const tg = window?.Telegram?.WebApp
     tg?.ready()
 
-    if (tg?.initDataUnsafe) {
-      setUserTg(tg.initDataUnsafe)
+    if (tg?.initDataUnsafe?.user) {
+      setUserTg(tg.initDataUnsafe.user)
     }
   }, [])
 
