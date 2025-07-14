@@ -9,6 +9,8 @@ import os
 from .logger import logger
 from werkzeug.exceptions import HTTPException, NotFound
 import traceback
+import urllib
+import json
 
 # Get the absolute path to the static folder directly from the app configuration.
 # This ensures consistency with how Flask itself is configured to serve static files.
@@ -91,3 +93,107 @@ def handle_exception(e):
 
     current_app.logger.error(f"Internal Server Error: {e}", exc_info=True)
     return jsonify(message="An unexpected error occurred at the application level.", status=500, error_type=type(e).__name__, details=traceback.format_exc()), 500
+
+import os
+import hashlib
+import hmac
+
+TELEGRAM_TOKEN =  os.getenv("TELEGRAM_TOKEN")
+
+def validate_telegram_init_data(init_data: str, bot_token: str) -> bool: # Renamed parameter for clarity
+    """
+    Validates the initData received from the Telegram Web App.
+    Based on Telegram's documentation: https://core.telegram.org/bots/webapps#validating-data-received-via-the-web-app
+    """
+    if not init_data:
+        current_app.logger.info("Validation Debug: init_data is empty.") # Added debug print
+        return False
+
+    # 1. Parse the query string parameters from init_data
+    params = {}
+    received_hash = None # Initialize received_hash as None
+
+    for pair in init_data.split('&'):
+        if '=' in pair:
+            key, value = pair.split('=', 1)
+            if key == 'hash':
+                received_hash = value # Store the raw hash value for comparison
+            else:
+                # !!! CRUCIAL CHANGE HERE: URL-decode the value before storing !!!
+                # Use unquote_plus because Telegram's initData can use '+' for spaces.
+                params[key] = urllib.parse.unquote_plus(value)
+
+    if received_hash is None: # Check if hash was actually found
+        current_app.logger.info("Validation Debug: 'hash' parameter not found in init_data.") # Added debug print
+        return False
+
+    # 2. Sort the parameters by key and concatenate them
+    data_check_string_parts = []
+    sorted_keys = sorted(params.keys())
+    for key in sorted_keys:
+        data_check_string_parts.append(f"{key}={params[key]}")
+    data_check_string = "\n".join(data_check_string_parts)
+
+    current_app.logger.info(f"Validation Debug: data_check_string = '{data_check_string}'") # Added debug print
+
+    # 3. Create a secret key using HMAC-SHA256
+    secret_key = hmac.new(
+        key=b"WebAppData",
+        msg=bot_token.encode('utf-8'),
+        digestmod=hashlib.sha256
+    ).digest()
+
+    current_app.logger.info(f"Validation Debug: secret_key (hex) = {secret_key.hex()}") # Added debug print
+
+    # 4. Hash the data_check_string using the secret key
+    calculated_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode('utf-8'),
+        digestmod=hashlib.sha256
+    ).hexdigest()
+
+    current_app.logger.info(f"Validation Debug: Calculated hash = '{calculated_hash}'") # Added debug print
+    current_app.logger.info(f"Validation Debug: Received hash   = '{received_hash}'")     # Added debug print
+
+    # 5. Compare the calculated hash with the received hash
+    return calculated_hash == received_hash
+
+@app.route('/api/telegram-init', methods=['POST'])
+def handle_telegram_init():
+    data = request.get_json()
+    init_data_raw = data.get('initData')
+
+    if not init_data_raw:
+        return jsonify({"status": "error", "message": "No initData provided"}), 400
+
+    if validate_telegram_init_data(init_data_raw, TELEGRAM_TOKEN):
+        # Extract user data from init_data_raw (it will be URL-encoded)
+        # You'll likely want to parse 'user' from init_data_raw if present
+        # Example of parsing a single parameter (you might need a more robust parser)
+        user_data_str = None
+        for pair in init_data_raw.split('&'):
+            if pair.startswith('user='):
+                user_data_str = pair.split('=', 1)[1]
+                break
+
+        user_info = {}
+        if user_data_str:
+            try:
+                # URL decode and then JSON parse
+                import urllib.parse
+                decoded_user_data_str = urllib.parse.unquote(user_data_str)
+                user_info = json.loads(decoded_user_data_str)
+            except (json.JSONDecodeError) as e:
+                app.logger.error(f"Error decoding or parsing user data: {e}")
+                user_info = {"error": "Could not parse user data"}
+
+        app.logger.info(f"Telegram Web App init data validated successfully. User: {user_info.get('id')}")
+        return jsonify({
+            "status": "success",
+            "message": "Telegram init data validated",
+            "user": user_info
+        })
+    else:
+        app.logger.warning("Invalid Telegram Web App init data received.")
+        return jsonify({"status": "error", "message": "Invalid Telegram init data"}), 403
+
