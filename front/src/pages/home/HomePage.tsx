@@ -21,6 +21,7 @@ import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 export const HomePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [userTg, setUserTg] = useState(null);
+  const [debug, setDebug] = useState("");
 
   const { 
     data: apiCategories, 
@@ -51,14 +52,23 @@ export const HomePage: React.FC = () => {
     }
   }, [categories, selectedCategory]);
 
-  // useEffect(() => {
-  //   const tg = window?.Telegram?.WebApp
-  //   tg?.ready()
-  //
-  //   if (tg?.initDataUnsafe?.user) {
-  //     setUserTg(tg.initDataUnsafe.user)
-  //   }
-  // }, [])
+  useEffect(() => {
+    const tg = window?.Telegram?.WebApp
+
+    if (!tg) {
+      setDebug('Telegram WebApp не найден. Возможно, вы открыли приложение вне Telegram.')
+      return
+    }
+
+    tg.ready()
+
+    // Проверка наличия пользователя
+    if (tg.initDataUnsafe?.user) {
+      setUserTg(tg.initDataUnsafe.user)
+    } else {
+      setDebug('Пользователь не передан через initDataUnsafe')
+    }
+  }, [])
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', pb: 10 }}>
@@ -106,6 +116,7 @@ export const HomePage: React.FC = () => {
         {selectedCategory && (
           <>
             <Typography variant="h5" component="h2" fontWeight="bold" color="text.primary" mb={3}>
+              {debug}
               {userTg ? userTg : "gg"}
               {categories.find(c => c.id === selectedCategory)?.name}
             </Typography>
