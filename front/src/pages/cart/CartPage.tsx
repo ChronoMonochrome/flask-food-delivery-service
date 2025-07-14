@@ -197,7 +197,7 @@ export const CartPage: React.FC = () => {
                     />
                     <Box flexGrow={1}>
                       <Typography variant="h6" fontWeight="bold" color="text.primary">
-                        Товар {item.productId}
+                        Товар {item.product.name}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         Количество: {item.quantity}
@@ -267,7 +267,7 @@ export const CartPage: React.FC = () => {
                         </Typography>
                       </Box>
                       <IconButton
-                        onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity + 1)}
+                        onClick={() => handleUpdateQuantity(item.product.id, item.productId, item.quantity + 1)}
                         sx={{
                           backgroundColor: 'primary.main',
                           '&:hover': { backgroundColor: 'secondary.main' },
