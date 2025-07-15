@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build",
     "build:prod": "vite build",
+    "build:test": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
