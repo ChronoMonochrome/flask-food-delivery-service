@@ -926,7 +926,7 @@ class CartResource(Resource):
                 item_ingredients = cleaned_ingredients
 
             # Calculate priceTotal for the item
-            current_item_total_price = item_base_price
+            current_item_total_price = item_base_price * item.quantity
 
             marshaled_selected_addons = []
             for ca in item.selected_addons:
