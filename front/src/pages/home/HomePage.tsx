@@ -120,7 +120,7 @@ export const HomePage: React.FC = () => {
           <>
             <Typography variant="h5" component="h2" fontWeight="bold" color="text.primary" mb={3}>
               {debug}
-              {userTg ? userTg : "gg"}
+              {userTg ? JSON.stringify(userTg, null, 2) : "gg"}
               {categories.find(c => c.id === selectedCategory)?.name}
             </Typography>
             
