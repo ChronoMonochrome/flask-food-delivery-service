@@ -363,6 +363,8 @@ class CategoryList(Resource):
         return jsonify(marshaled_categories)
 
 ## Product Endpoints
+WOK_CATEGORY_NAME = "Wok"
+WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
 
 @api.route('/products')
 class ProductList(Resource):
@@ -375,11 +377,38 @@ class ProductList(Resource):
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
         )
+
         if category_id:
             query = query.filter_by(main_category_id=category_id)
 
         products = query.all()
+        
+        # --- NEW LOGIC FOR REORDERING WOK PRODUCTS ---
+        wok_category = MainCategory.query.filter_by(name=WOK_CATEGORY_NAME).first()
 
+        # Check if the requested category is the Wok category AND
+        # if the Wok category was actually found in the database
+        if wok_category and category_id == str(wok_category.id): # Ensure ID comparison is string to string
+            wok_constructor_product = None
+            other_products = []
+
+            # Separate the constructor product from others
+            for product in products:
+                if str(product.id) == WOK_PRODUCT_CONSTRUCTOR_ID: # Ensure ID comparison is string to string
+                    wok_constructor_product = product
+                else:
+                    other_products.append(product)
+
+            # Reconstruct the products list with the constructor first
+            if wok_constructor_product:
+                products = [wok_constructor_product] + other_products
+            else:
+                # If constructor product wasn't found, just use the original list (or other_products)
+                # This case might happen if the ID is wrong or product is hidden/deleted
+                current_app.logger.warning(f"Wok constructor product with ID {WOK_PRODUCT_CONSTRUCTOR_ID} not found in Wok category.")
+                products = other_products # Or just `products` if you want to keep original order if constructor is missing
+
+        # --- END NEW LOGIC ---
         marshaled_products = []
         for product in products:
             nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
