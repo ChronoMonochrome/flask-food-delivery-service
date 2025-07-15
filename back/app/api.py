@@ -85,6 +85,7 @@ product_model = api.model('Product', {
     'price': fields.Float(required=True, description='Product price'),
     'image': fields.String(description='Product image URL', allow_null=True),
     'categoryId': fields.String(required=True, description='ID of the main category this product belongs to'),
+    'iikoCategoryId': fields.String(required=True, description='ID of the iiko category this product belongs to'),
     'nutrition': fields.Nested(nutrition_model, description='Nutritional information', allow_null=False, default={
         "calories": 0.0, "carbs": 0.0, "fat": 0.0, "proteins": 0.0
     }),
@@ -376,7 +377,7 @@ class ProductList(Resource):
         query = Product.query.filter_by(is_hidden=False).options(
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        )
+        ).order_by(Product.categoryId) # Order by IIKO category
 
         if category_id:
             query = query.filter_by(main_category_id=category_id)
@@ -443,6 +444,7 @@ class ProductList(Resource):
                 'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
                 'image': product.image,
                 'categoryId': str(product.main_category_id), # This is now the MainCategory ID
+                'iikoCategoryId': str(product.categoryId), # IIKO category id
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
                 'availableAddons': marshaled_available_addons,
@@ -498,6 +500,7 @@ class ProductResource(Resource):
             'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
             'image': product.image,
             'categoryId': str(product.main_category_id),
+            'iikoCategoryId': str(product.categoryId),
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
             'availableAddons': marshaled_available_addons,
@@ -582,6 +585,7 @@ class OrderList(Resource):
                     'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
                     'image': product_obj.image,
                     'categoryId': str(product_obj.main_category_id), # Corrected from product_obj.categoryId
+                    'iikoCategoryId': str(product_obj.categoryId),
                     'nutrition': product_nutrition_data_for_marshal,
                     'ingredients': cleaned_ingredients_in_order_item,
                     'availableAddons': product_marshaled_available_addons, # Use the marshaled list for product in order item
