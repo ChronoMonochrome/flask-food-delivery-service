@@ -19,25 +19,44 @@ export const CategorySlider: React.FC<CategorySliderProps> = ({
   onCategorySelect
 }) => {
   return (
-    <Box py={2} px={2}>
+    <Box py={1.5} px={2}>
       <Stack 
         direction="row" 
-        spacing={1.5} 
+        spacing={1} 
         sx={{ 
           overflowX: 'auto',
           '&::-webkit-scrollbar': { display: 'none' },
           scrollbarWidth: 'none',
+          pb: 0.5, // Небольшой отступ снизу для тени
         }}
       >
         {categories.map((category) => (
           <Chip
             key={category.id}
             label={
-              <Box display="flex" flexDirection="column" alignItems="center" py={1}>
-                <Typography variant="h6" component="div" sx={{ fontSize: '1.5rem', mb: 0.5 }}>
+              <Box display="flex" flexDirection="column" alignItems="center" py={0.5}>
+                <Typography 
+                  variant="h6" 
+                  component="div" 
+                  sx={{ 
+                    fontSize: '1.25rem', 
+                    mb: 0.25,
+                    filter: selectedCategory === category.id ? 'none' : 'grayscale(0.3)',
+                    transition: 'filter 0.2s ease'
+                  }}
+                >
                   {category.icon}
                 </Typography>
-                <Typography variant="caption" sx={{ fontSize: '0.75rem', textAlign: 'center', lineHeight: 1.2 }}>
+                <Typography 
+                  variant="caption" 
+                  sx={{ 
+                    fontSize: '0.7rem', 
+                    textAlign: 'center', 
+                    lineHeight: 1.1,
+                    fontWeight: selectedCategory === category.id ? 600 : 400,
+                    transition: 'font-weight 0.2s ease'
+                  }}
+                >
                   {category.name}
                 </Typography>
               </Box>
@@ -45,18 +64,29 @@ export const CategorySlider: React.FC<CategorySliderProps> = ({
             onClick={() => onCategorySelect(category.id)}
             variant={selectedCategory === category.id ? 'filled' : 'outlined'}
             sx={{
-              minWidth: 80,
-              height: 96,
-              borderRadius: 2,
+              minWidth: 70,
+              height: 80,
+              borderRadius: 1.5, // Уменьшенные скругления
               border: selectedCategory === category.id ? 'none' : '1px solid #4B5563',
               backgroundColor: selectedCategory === category.id 
-                ? 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)'
+                ? 'primary.main'
                 : 'background.paper',
               color: selectedCategory === category.id ? 'white' : 'text.primary',
+              boxShadow: selectedCategory === category.id 
+                ? '0 2px 8px rgba(234, 181, 69, 0.3)' 
+                : '0 1px 3px rgba(0, 0, 0, 0.1)',
+              transition: 'all 0.2s ease',
               '&:hover': {
                 backgroundColor: selectedCategory === category.id 
-                  ? 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)'
-                  : 'rgba(107, 114, 128, 0.1)',
+                  ? 'primary.dark'
+                  : 'rgba(107, 114, 128, 0.05)',
+                transform: 'translateY(-1px)',
+                boxShadow: selectedCategory === category.id 
+                  ? '0 4px 12px rgba(234, 181, 69, 0.4)' 
+                  : '0 2px 6px rgba(0, 0, 0, 0.15)',
+              },
+              '&:active': {
+                transform: 'translateY(0)',
               },
               '& .MuiChip-label': {
                 padding: 0,

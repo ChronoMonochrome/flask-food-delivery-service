@@ -1,12 +1,16 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { ApiCategory, ApiProduct, GetProductsRequest } from './types';
 
-const BASE_URL = 'https://mandarin.dev.routeam.ru/api';
+const BASE_URL = import.meta.env.VITE_APP_API_URL;
 
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
+    prepareHeaders: (headers) => {
+      headers.set('X-Telegram-User-ID', '123');
+      return headers;
+    },
   }),
   tagTypes: ['Category', 'Product'],
   endpoints: (builder) => ({
