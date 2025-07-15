@@ -7,6 +7,7 @@ import {
   Toolbar, 
   IconButton,
   Grid,
+  Paper
 } from '@mui/material';
 import { Phone } from '@mui/icons-material';
 import { useGetCategoriesQuery, useGetProductsQuery } from '../../shared/api';
@@ -20,8 +21,6 @@ import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 
 export const HomePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [userTg, setUserTg] = useState(null);
-  const [debug, setDebug] = useState("");
 
   const { 
     data: apiCategories, 
@@ -51,27 +50,6 @@ export const HomePage: React.FC = () => {
       setSelectedCategory(categories[0].id);
     }
   }, [categories, selectedCategory]);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      const tg = window?.Telegram?.WebApp
-
-      if (!tg) {
-        setDebug('❗ Telegram WebApp API не найден. Возможно, вы открыли сайт вне Telegram.')
-        return
-      }
-
-      tg.ready()
-
-      if (tg.initDataUnsafe?.user) {
-        setUserTg(tg.initDataUnsafe.user)
-      } else {
-        setDebug('⚠️ Пользователь не передан в initDataUnsafe.')
-      }
-    }, 300) // 100–300 мс обычно хватает
-
-    return () => clearTimeout(timeout)
-  }, [])
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', pb: 10 }}>
@@ -119,8 +97,6 @@ export const HomePage: React.FC = () => {
         {selectedCategory && (
           <>
             <Typography variant="h5" component="h2" fontWeight="bold" color="text.primary" mb={3}>
-              {debug}
-              {userTg ? JSON.stringify(userTg, null, 2) : "gg"}
               {categories.find(c => c.id === selectedCategory)?.name}
             </Typography>
             
@@ -133,23 +109,23 @@ export const HomePage: React.FC = () => {
                 container 
                 spacing={3} 
                 sx={{ 
-                  justifyContent: 'flex-start',
-                  alignItems: 'stretch'
+                  justifyContent: { xs: 'center', sm: 'flex-start' },
+                  alignItems: 'stretch',
                 }}
               >
                 {products.map((product) => (
                   <Grid 
                     item 
-                    xs={12} 
-                    sm={6} 
-                    md={6} 
-                    lg={4} 
-                    xl={4} 
+                    xs={12}
+                    sm={6}
+                    md={6}
+                    lg={4}
+                    xl={3}
                     key={product.id}
                     sx={{ 
                       display: 'flex',
                       justifyContent: 'center',
-                      alignItems: 'stretch'
+                      alignItems: 'stretch',
                     }}
                   >
                     <ProductCard product={product} />

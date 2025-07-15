@@ -1,6 +1,6 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { api } from '../shared/api';
-import { cartSlice, backendCartSlice } from '../entities/cart';
+import { backendCartSlice } from '../entities/cart';
 import { cartApi } from '../shared/api/cart-api';
 import { navigationSlice } from '../features/navigation';
 
@@ -8,7 +8,6 @@ export const store = configureStore({
   reducer: {
     [api.reducerPath]: api.reducer,
     [cartApi.reducerPath]: cartApi.reducer,
-    cart: cartSlice.reducer,
     backendCart: backendCartSlice.reducer,
     navigation: navigationSlice.reducer,
   },

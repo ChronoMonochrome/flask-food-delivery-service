@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
-const BASE_URL = 'https://mandarin.dev.routeam.ru/api';
+const BASE_URL = import.meta.env.VITE_APP_API_URL;
 
 export interface BackendCartItem {
   id: string;
@@ -57,11 +57,10 @@ export const cartApi = createApi({
   reducerPath: 'cartApi',
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
-    // Добавьте здесь заголовки авторизации если нужно
-    // prepareHeaders: (headers) => {
-    //   headers.set('authorization', `Bearer ${token}`)
-    //   return headers
-    // },
+    prepareHeaders: (headers) => {
+      headers.set('X-Telegram-User-ID', '123');
+      return headers;
+    },
   }),
   tagTypes: ['Cart'],
   endpoints: (builder) => ({

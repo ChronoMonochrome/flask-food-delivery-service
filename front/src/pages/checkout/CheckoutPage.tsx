@@ -1,31 +1,16 @@
 import React, { useState } from 'react';
 import { useDispatch } from 'react-redux';
-import {
-  Box,
-  Container,
-  Typography,
-  Button,
-  TextField,
-  Card,
-  CardContent,
-  AppBar,
-  Toolbar,
-  IconButton,
-  FormControl,
-  FormLabel,
-  RadioGroup,
-  FormControlLabel,
-  Radio,
-  Stack
-} from '@mui/material';
-import { ArrowBack, LocationOn, Phone, CreditCard, Message } from '@mui/icons-material';
-import { useCartSelector, cartActions } from '../../entities/cart';
+import { ArrowLeft, Locate as LocationOn, Phone, CreditCard, MessageSquare } from 'lucide-react';
+import { useBackendCartSelector } from '../../entities/cart';
+import { useClearCartMutation, useGetCartQuery } from '../../shared/api/cart-api';
 import { navigationActions } from '../../features/navigation';
 import { DeliveryInfo } from '../../shared/types';
 
 export const CheckoutPage: React.FC = () => {
   const dispatch = useDispatch();
-  const { items, total } = useCartSelector();
+  const { totalItems, total } = useBackendCartSelector();
+  const [clearCart] = useClearCartMutation();
+  const { data: cartData } = useGetCartQuery();
   const [deliveryInfo, setDeliveryInfo] = useState<DeliveryInfo>({
     address: '',
     phone: '',
@@ -45,7 +30,7 @@ export const CheckoutPage: React.FC = () => {
     // Simulate order processing
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    dispatch(cartActions.clearCart());
+    await clearCart();
     dispatch(navigationActions.navigateToPage('success'));
     setIsSubmitting(false);
   };
@@ -53,200 +38,143 @@ export const CheckoutPage: React.FC = () => {
   const isFormValid = deliveryInfo.address.length > 0 && deliveryInfo.phone.length > 0;
 
   return (
-    <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
-      <AppBar position="static" sx={{ backgroundColor: 'background.paper', boxShadow: 'none' }}>
-        <Toolbar sx={{ borderBottom: '1px solid #4B5563' }}>
-          <IconButton onClick={handleBack} sx={{ mr: 2 }}>
-            <ArrowBack sx={{ color: 'text.secondary' }} />
-          </IconButton>
-          <Typography variant="h6" fontWeight="bold" color="text.primary">
-            Оформление заказа
-          </Typography>
-        </Toolbar>
-      </AppBar>
+    <div className="min-h-screen bg-mandarin-bg">
+      {/* Header */}
+      <div className="bg-mandarin-card border-b border-gray-600">
+        <div className="flex items-center p-4">
+          <button onClick={handleBack} className="mr-4 p-2 text-gray-400 hover:text-white">
+            <ArrowLeft size={24} />
+          </button>
+          <h1 className="text-xl font-bold text-white">Оформление заказа</h1>
+        </div>
+      </div>
 
-      <Container maxWidth="md" sx={{ py: 3 }}>
-        <form onSubmit={handleSubmit}>
-          <Stack spacing={3}>
-            {/* Address */}
-            <Card sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
-                  <LocationOn sx={{ color: 'primary.main', mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold" color="text.primary">
-                    Адрес доставки
-                  </Typography>
-                </Box>
-                <TextField
-                  fullWidth
-                  value={deliveryInfo.address}
-                  onChange={(e) => setDeliveryInfo({ ...deliveryInfo, address: e.target.value })}
-                  placeholder="Введите адрес доставки"
-                  required
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#374151',
-                      '& fieldset': { borderColor: '#4B5563' },
-                      '&:hover fieldset': { borderColor: '#6B7280' },
-                      '&.Mui-focused fieldset': { borderColor: 'primary.main' },
-                    },
-                  }}
-                />
-              </CardContent>
-            </Card>
+      <div className="max-w-2xl mx-auto p-4 space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Address */}
+          <div className="bg-mandarin-card border border-gray-600 rounded-2xl p-4">
+            <div className="flex items-center mb-4">
+              <LocationOn className="text-mandarin-orange mr-2" size={20} />
+              <h2 className="text-lg font-bold text-white">Адрес доставки</h2>
+            </div>
+            <input
+              type="text"
+              value={deliveryInfo.address}
+              onChange={(e) => setDeliveryInfo({ ...deliveryInfo, address: e.target.value })}
+              placeholder="Введите адрес доставки"
+              required
+              className="w-full p-3 bg-gray-700 border border-gray-600 rounded-xl text-white placeholder-gray-400 focus:border-mandarin-orange focus:outline-none"
+            />
+          </div>
 
-            {/* Phone */}
-            <Card sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
-                  <Phone sx={{ color: 'primary.main', mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold" color="text.primary">
-                    Номер телефона
-                  </Typography>
-                </Box>
-                <TextField
-                  fullWidth
-                  type="tel"
-                  value={deliveryInfo.phone}
-                  onChange={(e) => setDeliveryInfo({ ...deliveryInfo, phone: e.target.value })}
-                  placeholder="+7 (999) 999-99-99"
-                  required
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#374151',
-                      '& fieldset': { borderColor: '#4B5563' },
-                      '&:hover fieldset': { borderColor: '#6B7280' },
-                      '&.Mui-focused fieldset': { borderColor: 'primary.main' },
-                    },
-                  }}
-                />
-              </CardContent>
-            </Card>
+          {/* Phone */}
+          <div className="bg-mandarin-card border border-gray-600 rounded-2xl p-4">
+            <div className="flex items-center mb-4">
+              <Phone className="text-mandarin-orange mr-2" size={20} />
+              <h2 className="text-lg font-bold text-white">Номер телефона</h2>
+            </div>
+            <input
+              type="tel"
+              value={deliveryInfo.phone}
+              onChange={(e) => setDeliveryInfo({ ...deliveryInfo, phone: e.target.value })}
+              placeholder="+7 (999) 999-99-99"
+              required
+              className="w-full p-3 bg-gray-700 border border-gray-600 rounded-xl text-white placeholder-gray-400 focus:border-mandarin-orange focus:outline-none"
+            />
+          </div>
 
-            {/* Payment Method */}
-            <Card sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
-                  <CreditCard sx={{ color: 'primary.main', mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold" color="text.primary">
-                    Способ оплаты
-                  </Typography>
-                </Box>
-                <FormControl>
-                  <RadioGroup
-                    value={deliveryInfo.paymentMethod}
+          {/* Payment Method */}
+          <div className="bg-mandarin-card border border-gray-600 rounded-2xl p-4">
+            <div className="flex items-center mb-4">
+              <CreditCard className="text-mandarin-orange mr-2" size={20} />
+              <h2 className="text-lg font-bold text-white">Способ оплаты</h2>
+            </div>
+            <div className="space-y-2">
+              {[
+                { value: 'cash', label: 'Наличными курьеру' },
+                { value: 'card', label: 'Картой курьеру' },
+                { value: 'online', label: 'Онлайн оплата' }
+              ].map((option) => (
+                <label key={option.value} className="flex items-center p-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value={option.value}
+                    checked={deliveryInfo.paymentMethod === option.value}
                     onChange={(e) => setDeliveryInfo({ ...deliveryInfo, paymentMethod: e.target.value as any })}
-                  >
-                    <FormControlLabel 
-                      value="cash" 
-                      control={<Radio sx={{ color: 'primary.main' }} />} 
-                      label={<Typography color="text.secondary">Наличными курьеру</Typography>}
-                    />
-                    <FormControlLabel 
-                      value="card" 
-                      control={<Radio sx={{ color: 'primary.main' }} />} 
-                      label={<Typography color="text.secondary">Картой курьеру</Typography>}
-                    />
-                    <FormControlLabel 
-                      value="online" 
-                      control={<Radio sx={{ color: 'primary.main' }} />} 
-                      label={<Typography color="text.secondary">Онлайн оплата</Typography>}
-                    />
-                  </RadioGroup>
-                </FormControl>
-              </CardContent>
-            </Card>
+                    className="mr-3 text-mandarin-orange"
+                  />
+                  <span className="text-gray-300">{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
 
-            {/* Comment */}
-            <Card sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-              <CardContent>
-                <Box display="flex" alignItems="center" mb={2}>
-                  <Message sx={{ color: 'primary.main', mr: 1 }} />
-                  <Typography variant="h6" fontWeight="bold" color="text.primary">
-                    Комментарий к заказу
-                  </Typography>
-                </Box>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={3}
-                  value={deliveryInfo.comment}
-                  onChange={(e) => setDeliveryInfo({ ...deliveryInfo, comment: e.target.value })}
-                  placeholder="Дополнительные пожелания..."
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      backgroundColor: '#374151',
-                      '& fieldset': { borderColor: '#4B5563' },
-                      '&:hover fieldset': { borderColor: '#6B7280' },
-                      '&.Mui-focused fieldset': { borderColor: 'primary.main' },
-                    },
-                  }}
-                />
-              </CardContent>
-            </Card>
+          {/* Comment */}
+          <div className="bg-mandarin-card border border-gray-600 rounded-2xl p-4">
+            <div className="flex items-center mb-4">
+              <MessageSquare className="text-mandarin-orange mr-2" size={20} />
+              <h2 className="text-lg font-bold text-white">Комментарий к заказу</h2>
+            </div>
+            <textarea
+              value={deliveryInfo.comment}
+              onChange={(e) => setDeliveryInfo({ ...deliveryInfo, comment: e.target.value })}
+              placeholder="Дополнительные пожелания..."
+              rows={3}
+              className="w-full p-3 bg-gray-700 border border-gray-600 rounded-xl text-white placeholder-gray-400 focus:border-mandarin-orange focus:outline-none resize-none"
+            />
+          </div>
 
-            {/* Order Summary */}
-            <Card sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-              <CardContent>
-                <Typography variant="h6" fontWeight="bold" color="text.primary" mb={2}>
-                  Ваш заказ
-                </Typography>
-                <Stack spacing={1}>
-                  {items.map((item, index) => (
-                    <Box key={index}>
-                      <Box display="flex" justifyContent="space-between">
-                        <Typography variant="body2" color="text.secondary">
-                          {item.product.name} × {item.quantity}
-                        </Typography>
-                        <Typography variant="body2" fontWeight="medium" color="text.primary">
-                          ₽{((item.product.price + 
-                            item.selectedAddons.reduce((sum, addon) => sum + (addon.price * (addon.quantity || 1)), 0) +
-                            (!item.customWok ? item.selectedRecommendations.reduce((sum, rec) => sum + rec.price, 0) : 0)
-                          ) * item.quantity).toLocaleString()}
-                        </Typography>
-                      </Box>
-                      {item.selectedAddons.length > 0 && (
-                        <Typography variant="caption" color="primary.main" sx={{ ml: 1, display: 'block' }}>
-                          + {item.selectedAddons.map(addon => 
-                            `${addon.name}${addon.quantity && addon.quantity > 1 ? ` x${addon.quantity}` : ''}`
-                          ).join(', ')}
-                        </Typography>
-                      )}
-                      {item.selectedRecommendations.length > 0 && (
-                        <Typography variant="caption" color="success.main" sx={{ ml: 1, display: 'block' }}>
-                          + {item.selectedRecommendations.map(rec => rec.name).join(', ')}
-                        </Typography>
-                      )}
-                    </Box>
-                  ))}
-                  <Box sx={{ borderTop: '1px solid #4B5563', pt: 1, mt: 2 }}>
-                    <Box display="flex" justifyContent="space-between">
-                      <Typography variant="h6" fontWeight="bold" color="text.primary">Итого:</Typography>
-                      <Typography variant="h6" fontWeight="bold" color="primary.main">₽{total.toLocaleString()}</Typography>
-                    </Box>
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
+          {/* Order Summary */}
+          <div className="bg-mandarin-card border border-gray-600 rounded-2xl p-4">
+            <h2 className="text-lg font-bold text-white mb-4">Ваш заказ</h2>
+            <div className="space-y-2">
+              {cartData?.items.map((item, index) => (
+                <div key={index}>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">
+                      Товар {item.productId} × {item.quantity}
+                    </span>
+                    <span className="font-medium text-white">
+                      ₽{/* TODO: Рассчитать цену товара */}
+                    </span>
+                  </div>
+                  {item.selectedAddons && item.selectedAddons.length > 0 && (
+                    <div className="text-sm text-mandarin-orange ml-2">
+                      + {item.selectedAddons.length} добавок
+                    </div>
+                  )}
+                  {item.selectedRecommendations && item.selectedRecommendations.length > 0 && (
+                    <div className="text-sm text-green-400 ml-2">
+                      + {item.selectedRecommendations.length} дополнительно
+                    </div>
+                  )}
+                </div>
+              )) || (
+                <div className="text-gray-400">Корзина пуста</div>
+              )}
+              <div className="border-t border-gray-600 pt-2 mt-4">
+                <div className="flex justify-between">
+                  <span className="text-lg font-bold text-white">Итого:</span>
+                  <span className="text-lg font-bold text-mandarin-orange">₽{total.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
 
-            <Button
-              type="submit"
-              disabled={!isFormValid || isSubmitting}
-              variant="contained"
-              size="large"
-              sx={{
-                py: 2,
-                borderRadius: 2,
-                fontSize: '1.125rem',
-                fontWeight: 'bold',
-                opacity: isFormValid && !isSubmitting ? 1 : 0.5,
-              }}
-            >
-              {isSubmitting ? 'Обрабатываем заказ...' : `Заказать на ₽${total.toLocaleString()}`}
-            </Button>
-          </Stack>
+          <button
+            type="submit"
+            disabled={!isFormValid || isSubmitting}
+            className={`w-full py-4 rounded-2xl text-lg font-bold transition-all ${
+              isFormValid && !isSubmitting
+                ? 'bg-gradient-to-r from-mandarin-orange to-yellow-500 text-white hover:from-yellow-500 hover:to-mandarin-orange transform hover:scale-105'
+                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {isSubmitting ? 'Обрабатываем заказ...' : `Заказать на ₽${total.toLocaleString()}`}
+          </button>
         </form>
-      </Container>
-    </Box>
+      </div>
+    </div>
   );
 };

@@ -191,13 +191,13 @@ export const CartPage: React.FC = () => {
                   <Box display="flex" alignItems="center" gap={2}>
                     <Box
                       component="img"
-                      src="https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200"
+                      src={item.image || "https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200"}
                       alt="Товар"
                       sx={{ width: 64, height: 64, borderRadius: 3, objectFit: 'cover' }}
                     />
                     <Box flexGrow={1}>
                       <Typography variant="h6" fontWeight="bold" color="text.primary">
-                        Товар {item.product.name}
+                        {item.name}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         Количество: {item.quantity}
@@ -214,22 +214,27 @@ export const CartPage: React.FC = () => {
                       
                       {/* Допы */}
                       {item.selectedAddons && item.selectedAddons.length > 0 && (
-                        <Box mt={1}>
-                          <Typography variant="caption" color="primary.main" display="block">
-                            Добавки: {item.selectedAddons.length} шт.
+                        <Box mt={1} >
+                          <Typography variant="caption" color="primary.main">
+                            Добавки: {item.selectedAddons.length} шт. {" "}
                           </Typography>
+                          {item.selectedAddons.map((addon) => (
+                            <Typography key={addon.id} variant="caption" color="primary.main">
+                              {addon.group_name} кол-во: {addon.quantity}, {" "}
+                            </Typography>
+                          ))}
                         </Box>
                       )}
                       
-                      {/* Рекомендации */}
-                      {item.selectedRecommendations && item.selectedRecommendations.length > 0 && (
-                        <Typography variant="caption" color="success.main" display="block">
-                          Дополнительно: {item.selectedRecommendations.length} шт.
-                        </Typography>
-                      )}
+                      {/*/!* Рекомендации *!/*/}
+                      {/*{item.selectedRecommendations && item.selectedRecommendations.length > 0 && (*/}
+                      {/*  <Typography variant="caption" color="success.main" display="block">*/}
+                      {/*    Дополнительно: {item.selectedRecommendations.length} шт.*/}
+                      {/*  </Typography>*/}
+                      {/*)}*/}
                       
                       <Typography variant="h6" fontWeight="bold" color="primary.main" mt={1}>
-                        ₽{/* TODO: Рассчитать цену товара */}
+                        {item.priceTotal}₽
                       </Typography>
                     </Box>
                     <IconButton
@@ -267,7 +272,7 @@ export const CartPage: React.FC = () => {
                         </Typography>
                       </Box>
                       <IconButton
-                        onClick={() => handleUpdateQuantity(item.product.id, item.productId, item.quantity + 1)}
+                        onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity + 1)}
                         sx={{
                           backgroundColor: 'primary.main',
                           '&:hover': { backgroundColor: 'secondary.main' },
