@@ -3,7 +3,7 @@
 
 echo "Waiting for web service (and migrations to complete)..."
 # Assuming 'web' is the hostname for the web service.
-until nc -z web 8011; do
+until nc -z bot_mandarin_web 8011; do
   echo "Web service not ready yet, waiting..."
   sleep 2
 done
