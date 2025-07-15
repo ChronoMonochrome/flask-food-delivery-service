@@ -6,9 +6,7 @@ export const useBackendCartSelector = () => {
 };
 
 export const useProductQuantity = (productId: string) => {
-  return useSelector((state: RootState) => {
-    console.log(1,state.backendCart)
-     return state.backendCart.productQuantities[productId] || 0
-      }
+  return useSelector((state: RootState) => 
+    state.backendCart.productQuantities[productId] || 0
   );
 };

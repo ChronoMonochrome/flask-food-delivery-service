@@ -56,31 +56,33 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     <Card
       onClick={handleCardClick}
       sx={{
-        width: 280, // Строго фиксированная ширина
-        height: 420, // Увеличена высота для кнопок количества
+        width: '100%',
+        maxWidth: { xs: 320, sm: 300, md: 280 }, // Адаптивная ширина
+        height: { xs: 440, sm: 420 }, // Адаптивная высота
         display: 'flex',
         flexDirection: 'column',
         cursor: 'pointer',
         transition: 'all 0.3s ease',
         backgroundColor: 'background.paper',
         border: '1px solid #4B5563',
-        borderRadius: 2,
+        borderRadius: 2.5, // Немного увеличенные скругления для карточек
         overflow: 'hidden',
         '&:hover': {
-          transform: 'scale(1.02)',
-          boxShadow: 3,
+          transform: 'translateY(-4px)',
+          boxShadow: '0 8px 25px rgba(0, 0, 0, 0.15)',
+          borderColor: 'primary.main',
         },
       }}
     >
-      {/* Контейнер изображения - строго фиксированный */}
+      {/* Контейнер изображения - адаптивный */}
       <Box 
         sx={{ 
           position: 'relative',
           width: '100%',
-          height: 180, // Фиксированная высота
+          height: { xs: 200, sm: 180 }, // Адаптивная высота изображения
           flexShrink: 0,
           overflow: 'hidden',
-          backgroundColor: '#374151' // Фон на случай отсутствия изображения
+          backgroundColor: '#374151'
         }}
       >
         <CardMedia
@@ -90,7 +92,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           sx={{ 
             width: '100%',
             height: '100%',
-            objectFit: 'cover'
+            objectFit: 'cover',
+            transition: 'transform 0.3s ease',
           }}
           onError={(e) => {
             e.currentTarget.src = 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400';
@@ -103,31 +106,34 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             onClick={handleAddToCart}
             sx={{
               position: 'absolute',
-              bottom: 8,
-              right: 8,
+              bottom: 12,
+              right: 12,
               background: 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)',
               color: 'white',
-              width: 36,
-              height: 36,
+              width: 40,
+              height: 40,
+              boxShadow: '0 4px 12px rgba(234, 181, 69, 0.4)',
               '&:hover': {
                 background: 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)',
                 transform: 'scale(1.1)',
+                boxShadow: '0 6px 16px rgba(234, 181, 69, 0.5)',
               },
             }}
           >
-            <Add fontSize="small" />
+            <Add fontSize="medium" />
           </IconButton>
         ) : (
           <Box
             sx={{
               position: 'absolute',
-              bottom: 8,
-              right: 8,
+              bottom: 12,
+              right: 12,
               display: 'flex',
               alignItems: 'center',
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              backgroundColor: 'rgba(0, 0, 0, 0.85)',
               borderRadius: 2,
-              padding: '4px',
+              padding: '6px',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
             }}
           >
             <IconButton
@@ -135,18 +141,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               size="small"
               sx={{
                 color: 'white',
-                width: 28,
-                height: 28,
-                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' },
+                width: 32,
+                height: 32,
+                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
               }}
             >
               <Remove fontSize="small" />
             </IconButton>
             <Typography
-              variant="body2"
+              variant="body1"
               fontWeight="bold"
               color="white"
-              sx={{ mx: 1, minWidth: 20, textAlign: 'center' }}
+              sx={{ mx: 1.5, minWidth: 24, textAlign: 'center' }}
             >
               {currentQuantity}
             </Typography>
@@ -155,9 +161,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               size="small"
               sx={{
                 color: 'white',
-                width: 28,
-                height: 28,
-                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' },
+                width: 32,
+                height: 32,
+                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
               }}
             >
               <Add fontSize="small" />
@@ -166,24 +172,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         )}
       </Box>
       
-      {/* Контент - строго фиксированная высота */}
+      {/* Контент - адаптивная высота */}
       <CardContent 
         sx={{ 
-          height: 240, // Увеличена высота контента
+          height: { xs: 240, sm: 240 },
           display: 'flex', 
           flexDirection: 'column',
-          p: 2,
-          '&:last-child': { pb: 2 }
+          p: { xs: 2.5, sm: 2 },
+          '&:last-child': { pb: { xs: 2.5, sm: 2 } }
         }}
       >
         {/* Название - фиксированная высота */}
-        <Box sx={{ height: 56, mb: 1 }}>
+        <Box sx={{ height: { xs: 60, sm: 56 }, mb: 1 }}>
           <Typography 
             variant="h6" 
             component="h3" 
             sx={{ 
               fontWeight: 'bold',
-              fontSize: '1rem',
+              fontSize: { xs: '1.1rem', sm: '1rem' },
               lineHeight: 1.4,
               display: '-webkit-box',
               WebkitLineClamp: 2,
@@ -197,16 +203,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           </Typography>
         </Box>
         
-        {/* Описание - фиксированная высота */}
-        <Box sx={{ height: 84, mb: 2 }}>
+        {/* Описание - адаптивная высота */}
+        <Box sx={{ height: { xs: 90, sm: 84 }, mb: 2 }}>
           <Typography 
             variant="body2" 
             color="text.secondary"
             sx={{
-              fontSize: '0.875rem',
+              fontSize: { xs: '0.9rem', sm: '0.875rem' },
               lineHeight: 1.4,
               display: '-webkit-box',
-              WebkitLineClamp: 4,
+              WebkitLineClamp: { xs: 4, sm: 4 },
               WebkitBoxOrient: 'vertical',
               overflow: 'hidden',
               height: '100%'
@@ -230,11 +236,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                 color: 'text.secondary',
                 border: '1px solid #6B7280',
                 fontSize: '0.75rem',
-                height: 24
+                height: 26,
+                borderRadius: 1.5,
               }}
             />
           ) : (
-            <Box sx={{ height: 24 }} /> // Пустое место для выравнивания
+            <Box sx={{ height: 26 }} />
           )}
         </Box>
         
@@ -250,57 +257,57 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             component="span" 
             fontWeight="bold" 
             color="primary.main"
-            sx={{ fontSize: '1.4rem' }}
+            sx={{ fontSize: { xs: '1.5rem', sm: '1.4rem' } }}
           >
             {product.isCustomizable ? `от ₽${product.price || 0}` : `₽${product.price || 0}`}
           </Typography>
           
-          {/* Дополнительные кнопки управления количеством внизу карточки */}
-          {currentQuantity > 0 && !product.isCustomizable && (
-            <ButtonGroup size="small" variant="outlined">
-              <IconButton
-                onClick={(e) => handleQuantityChange(e, currentQuantity - 1)}
-                sx={{
-                  backgroundColor: 'rgba(58, 58, 55, 1)',
-                  border: '1px solid #6B7280',
-                  color: 'text.secondary',
-                  width: 32,
-                  height: 32,
-                  '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },
-                }}
-              >
-                <Remove fontSize="small" />
-              </IconButton>
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                sx={{
-                  minWidth: 40,
-                  backgroundColor: 'background.paper',
-                  border: '1px solid #6B7280',
-                  borderLeft: 'none',
-                  borderRight: 'none',
-                }}
-              >
-                <Typography variant="body2" fontWeight="bold" color="text.primary">
-                  {currentQuantity}
-                </Typography>
-              </Box>
-              <IconButton
-                onClick={(e) => handleQuantityChange(e, currentQuantity + 1)}
-                sx={{
-                  backgroundColor: 'primary.main',
-                  color: 'white',
-                  width: 32,
-                  height: 32,
-                  '&:hover': { backgroundColor: 'secondary.main' },
-                }}
-              >
-                <Add fontSize="small" />
-              </IconButton>
-            </ButtonGroup>
-          )}
+          {/*/!* Дополнительные кнопки управления количеством внизу карточки *!/*/}
+          {/*{currentQuantity > 0 && !product.isCustomizable && (*/}
+          {/*  <ButtonGroup size="small" variant="outlined">*/}
+          {/*    <IconButton*/}
+          {/*      onClick={(e) => handleQuantityChange(e, currentQuantity - 1)}*/}
+          {/*      sx={{*/}
+          {/*        backgroundColor: 'rgba(58, 58, 55, 1)',*/}
+          {/*        border: '1px solid #6B7280',*/}
+          {/*        color: 'text.secondary',*/}
+          {/*        width: 34,*/}
+          {/*        height: 34,*/}
+          {/*        '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },*/}
+          {/*      }}*/}
+          {/*    >*/}
+          {/*      <Remove fontSize="small" />*/}
+          {/*    </IconButton>*/}
+          {/*    <Box*/}
+          {/*      display="flex"*/}
+          {/*      alignItems="center"*/}
+          {/*      justifyContent="center"*/}
+          {/*      sx={{*/}
+          {/*        minWidth: 42,*/}
+          {/*        backgroundColor: 'background.paper',*/}
+          {/*        border: '1px solid #6B7280',*/}
+          {/*        borderLeft: 'none',*/}
+          {/*        borderRight: 'none',*/}
+          {/*      }}*/}
+          {/*    >*/}
+          {/*      <Typography variant="body2" fontWeight="bold" color="text.primary">*/}
+          {/*        {currentQuantity}*/}
+          {/*      </Typography>*/}
+          {/*    </Box>*/}
+          {/*    <IconButton*/}
+          {/*      onClick={(e) => handleQuantityChange(e, currentQuantity + 1)}*/}
+          {/*      sx={{*/}
+          {/*        backgroundColor: 'primary.main',*/}
+          {/*        color: 'white',*/}
+          {/*        width: 34,*/}
+          {/*        height: 34,*/}
+          {/*        '&:hover': { backgroundColor: 'secondary.main' },*/}
+          {/*      }}*/}
+          {/*    >*/}
+          {/*      <Add fontSize="small" />*/}
+          {/*    </IconButton>*/}
+          {/*  </ButtonGroup>*/}
+          {/*)}*/}
         </Box>
       </CardContent>
     </Card>
