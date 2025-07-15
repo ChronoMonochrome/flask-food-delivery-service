@@ -348,7 +348,7 @@ class CategoryList(Resource):
     def get(self):
         """Get all categories"""
         # Define the prefixes to exclude
-        EXCLUDED_PREFIXES = ["Доставка", "Рекомендованные", "Добавки"]
+        EXCLUDED_PREFIXES = ["Доставка", "Рекомендованные", "Добавки", "Соусы"]
 
         # Fetch all categories from the database, ordered by display_order
         all_categories = MainCategory.query.order_by(MainCategory.display_order).all()

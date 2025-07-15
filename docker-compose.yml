@@ -111,8 +111,8 @@ services:
   # NEW: Mock IIKO API Service
   mock_iiko:
     build:
-      context: .
-      dockerfile: back/mock_iiko_api/Dockerfile # Point to the Dockerfile for mock service
+      context: back/mock_iiko_api
+      dockerfile: Dockerfile # Point to the Dockerfile for mock service
     container_name: mock_iiko_service
     ports:
       - "8888:5000" # Map host port 8888 to container port 5000
