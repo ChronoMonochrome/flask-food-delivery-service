@@ -40,6 +40,7 @@ build:
       -t ${CI_REGISTRY_IMAGE}/build:${TAG}-web
       --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web 
       --build-arg ENVIRONMENT=${ENVIRONMENT}
+      --build-arg MODE=${ENVIRONMENT}
       --target build-env
       .
     - docker push ${CI_REGISTRY_IMAGE}/build:${TAG}-web
@@ -52,6 +53,7 @@ build:
       --cache-from ${CI_REGISTRY_IMAGE}:${TAG}-web
       --cache-from ${CI_REGISTRY_IMAGE}/build:${TAG}-web  
       --build-arg ENVIRONMENT=${ENVIRONMENT}
+      --build-arg MODE=${ENVIRONMENT}
       .
     - docker push ${CI_REGISTRY_IMAGE}:${TAG}-web
 

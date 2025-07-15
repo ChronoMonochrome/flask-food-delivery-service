@@ -2,6 +2,8 @@
 # Use a Node.js image to build the frontend assets
 FROM node:20-alpine as build-env
 
+ARG MODE
+
 # Install git
 RUN apk add --no-cache git
 
@@ -17,7 +19,7 @@ COPY ./front/ .
 # This assumes package.json is at the root of the checked-out branch
 # and 'dist' is the output folder.
 RUN npm install --force
-RUN npm run build:dev
+RUN npm run build:$MODE
 
 # Stage 2: Build Flask Application
 # Use a Python runtime as the base for the final application image
