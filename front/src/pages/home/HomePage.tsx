@@ -68,7 +68,7 @@ export const HomePage: React.FC = () => {
       } else {
         setDebug('⚠️ Пользователь не передан в initDataUnsafe.')
       }
-    }, 100) // 100–300 мс обычно хватает
+    }, 300) // 100–300 мс обычно хватает
 
     return () => clearTimeout(timeout)
   }, [])
