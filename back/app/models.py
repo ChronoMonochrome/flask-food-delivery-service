@@ -16,6 +16,10 @@ db = SQLAlchemy()
 def generate_uuid():
     return str(uuid.uuid4())
 
+SAUCES_CATEGORY_NAME = "Соусы"
+WOK_CATEGORY_NAME = "Wok"
+WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
+
 class Category(db.Model):
     __tablename__ = 'category'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
