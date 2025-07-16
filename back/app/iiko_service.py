@@ -440,40 +440,140 @@ def get_payment_types(organization_ids, token):
             logger.error(f"IIKO Payment Types Error Response: {e.response.text}")
         return None
 
-def synchronize_iiko_data():
+
+icon_map = {
+    "Burgers": "🍔",
+    "Drinks": "🥤",
+    "Соусы": "🌶️",
+    "Рекомендации": "✨"
+}
+
+color_map = {
+    "Burgers": "from-red-400 to-red-600",
+    "Drinks": "from-blue-400 to-blue-600",
+    "Соусы": "from-green-400 to-green-600",
+    "Рекомендации": "from-yellow-400 to-yellow-600"
+}
+
+
+# Helper function for safe Decimal conversion
+def _safe_decimal_conversion(raw_price, item_name, item_id, default_value=Decimal('0.00')):
+    """Safely converts a raw price value to a Decimal."""
+    if raw_price is None:
+        logger.info(f"WARNING: Price is None for item '{item_name}' (ID: {item_id}). Defaulting to {default_value}.")
+        return default_value
+    try:
+        if isinstance(raw_price, (int, float)):
+            return Decimal(str(raw_price))
+        elif isinstance(raw_price, str):
+            cleaned_price_str = raw_price.replace(',', '.').strip()
+            return Decimal(cleaned_price_str)
+        else:
+            logger.info(f"WARNING: Unexpected type for price '{type(raw_price)}' for item '{item_name}' (ID: {item_id}). Defaulting to {default_value}.")
+            return default_value
+    except InvalidOperation as e:
+        logger.error(f"Error converting price '{raw_price}' for item '{item_name}' (ID: {item_id}): {e}. Defaulting to {default_value}.")
+        return default_value
+
+def _extract_item_image_url(iiko_item):
+    """Extracts the best available image URL from an iiko item."""
+    item_image_url = None
+    item_sizes = iiko_item.get('itemSizes', [])
+    if item_sizes:
+        item_image_url = item_sizes[0].get('buttonImageUrl')
+
+    if not item_image_url and iiko_item.get('images'):
+        item_image_url = iiko_item['images'][0].get('imageUrl')
+    elif not item_image_url and iiko_item.get('picture'):
+        item_image_url = iiko_item['picture']
+    return item_image_url
+
+def _extract_item_nutrition(iiko_item):
+    """Extracts nutrition data from an iiko item."""
+    nutrition_data = {
+        'calories': 0.0,
+        'carbs': 0.0,
+        'fat': 0.0,
+        'proteins': 0.0
+    }
+    item_sizes = iiko_item.get('itemSizes', [])
+    if item_sizes:
+        first_size_nutrition = item_sizes[0].get('nutritionPerHundredGrams')
+        if first_size_nutrition:
+            nutrition_data['calories'] = float(first_size_nutrition.get('energy', 0.0))
+            nutrition_data['carbs'] = float(first_size_nutrition.get('carbs', 0.0))
+            nutrition_data['fat'] = float(first_size_nutrition.get('fats', 0.0))
+            nutrition_data['proteins'] = float(first_size_nutrition.get('proteins', 0.0))
+    return nutrition_data
+
+def _extract_item_ingredients(iiko_item):
+    """Extracts ingredients/allergens/tags from an iiko item."""
+    ingredients_list = []
+    if iiko_item.get('allergens'):
+        ingredients_list.extend([a['name'] for a in iiko_item['allergens'] if 'name' in a])
+    if iiko_item.get('tags'):
+        ingredients_list.extend(iiko_item['tags'])
+    if iiko_item.get('labels'):
+        ingredients_list.extend(iiko_item['labels'])
+    return ingredients_list if ingredients_list else None
+
+
+def _fetch_and_prepare_iiko_data():
+    """
+    Fetches raw iiko data and preprocesses it by creating a flat map of all items.
+    """
     logger.info("Starting iiko data synchronization...")
     try:
         iiko_data, main_organization_id = get_iiko_menu_data()
     except Exception as e:
         logger.error(f"Failed to fetch data from iiko: {e}. Exiting sync.")
-        return
+        return None, None, None, None
 
     if not iiko_data:
         logger.error("Empty data received from iiko. Exiting sync.")
-        return
+        return None, None, None, None
 
     iiko_categories_raw = iiko_data.get('itemCategories', [])
     iiko_modifier_groups_raw = iiko_data.get('modifierGroups', [])
+    iiko_standalone_items_raw = iiko_data.get('items', [])
 
-    # --- FIX START: Populate all_iiko_items_by_id from both 'itemCategories' and top-level 'items' ---
     all_iiko_items_by_id = {}
-
-    # First, populate from items nested within categories
     for category_data in iiko_categories_raw:
         for item_data in category_data.get('items', []):
             item_id = item_data.get('itemId')
             if item_id:
                 all_iiko_items_by_id[item_id] = item_data
 
-    # Second, populate from top-level 'items' array (for modifiers, sometimes products/recs)
-    for item_data in iiko_data.get('items', []):
+    for item_data in iiko_standalone_items_raw:
         item_id = item_data.get('itemId')
         if item_id:
-            # Overwrite if already exists from categories, or add if new
             all_iiko_items_by_id[item_id] = item_data
-    # --- FIX END ---
 
-    # --- Step 0: Identify the Recommendation Category in iiko ---
+    return iiko_data, iiko_categories_raw, iiko_modifier_groups_raw, all_iiko_items_by_id
+
+def _perform_initial_db_cleanup():
+    """
+    Marks existing categories and products in the database as hidden
+    as a preliminary step for synchronization.
+    """
+    try:
+        db.session.query(Category).update({Category.is_hidden: True})
+        db.session.query(Product).update({Product.is_hidden: True})
+        db.session.commit()
+        logger.info("Marked existing categories and products as hidden for initial cleanup.")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error during initial cleanup (setting is_hidden): {e}")
+
+def _sync_categories(iiko_categories_raw):
+    """
+    Synchronizes iiko categories with the local database.
+    Returns a map from iiko category ID to local database Category object ID.
+    Also identifies the internal DB ID for the recommendation category.
+    """
+    logger.info("Syncing Categories...")
+    existing_categories = {c.iiko_category_id: c for c in Category.query.all()}
+    category_iiko_to_db_id_map = {}
     recommendation_category_internal_db_id = None
     recommendation_iiko_id = None
 
@@ -485,22 +585,6 @@ def synchronize_iiko_data():
         logger.info(f"Identified iiko Recommendation Category ID: {recommendation_iiko_id}")
     else:
         logger.info(f"WARNING: Could not identify iiko Recommendation Category by name '{RECOMMENDATION_CATEGORY_NAME}'. Recommendations won't be synced via category.")
-
-    # --- Initial Cleanup (Soft Delete) ---
-    try:
-        db.session.query(Category).update({Category.is_hidden: True})
-        db.session.query(Product).update({Product.is_hidden: True})
-        # We will clear ProductAddon and ProductRecommendation later, before rebuilding.
-        db.session.commit()
-        logger.info("Marked existing categories and products as hidden for initial cleanup.")
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error during initial cleanup (setting is_hidden): {e}")
-
-    # --- Step 1: Sync Categories ---
-    logger.info("Syncing Categories...")
-    existing_categories = {c.iiko_category_id: c for c in Category.query.all()}
-    category_iiko_to_db_id_map = {}
 
     for iiko_cat in iiko_categories_raw:
         cat_iiko_id = iiko_cat.get('id')
@@ -520,9 +604,8 @@ def synchronize_iiko_data():
             category.image_url = image_url
             category.is_hidden = is_hidden
         else:
-            # Set the id to iiko_category_id for new records
             category = Category(
-                id=cat_iiko_id,
+                id=cat_iiko_id, # Using iiko_category_id as primary key 'id' if unique
                 iiko_category_id=cat_iiko_id,
                 name=name,
                 description=description,
@@ -532,7 +615,7 @@ def synchronize_iiko_data():
                 color=color_map.get(name, "from-gray-400 to-gray-600")
             )
             db.session.add(category)
-        db.session.flush()
+        db.session.flush() # Flush to assign ID if new or make changes available for subsequent checks
         category_iiko_to_db_id_map[cat_iiko_id] = category.id
 
         if cat_iiko_id == recommendation_iiko_id:
@@ -540,27 +623,35 @@ def synchronize_iiko_data():
 
     db.session.commit()
     logger.info("Categories synced.")
-    
-    # NEW: Populate iiko_to_main_category_map after MainCategories are finalized
+    return category_iiko_to_db_id_map, recommendation_category_internal_db_id, recommendation_iiko_id
+
+def _build_main_category_map():
+    """
+    Builds a map from iiko category IDs to their corresponding main category IDs in the database.
+    """
     iiko_to_main_category_map = {}
     for main_cat_obj in MainCategory.query.all():
         if main_cat_obj.iiko_category_ids:
             for iiko_cid_in_main_cat in main_cat_obj.iiko_category_ids:
                 iiko_to_main_category_map[iiko_cid_in_main_cat] = main_cat_obj.id
+    logger.info("iiko_to_main_category_map built.")
+    return iiko_to_main_category_map
 
-    logger.info("Categories synced and iiko_to_main_category_map built.")
-
-    # --- ADDITION START: Add additional addons from "Соусы" category ---
+def _process_wok_sauces(iiko_categories_raw):
+    """
+    Collects additional addons from the 'Sauces' category specifically for the Wok Constructor.
+    Returns a list of dictionaries, each representing a ProductAddon relationship to be built later.
+    """
     logger.info(f"Adding additional addons from '{SAUCES_CATEGORY_NAME}' category for Wok Constructor.")
-    
-    # 1. Find the iiko category ID for "Соусы"
+    wok_sauce_product_addon_rels = []
+
     sauces_iiko_cat_id = None
     for iiko_cat in iiko_categories_raw:
         if iiko_cat.get('name') == SAUCES_CATEGORY_NAME:
             sauces_iiko_cat_id = iiko_cat.get('id')
             logger.info(f"Found sauces category {sauces_iiko_cat_id}")
             break
-    
+
     if sauces_iiko_cat_id:
         sauces_category_data = next((c for c in iiko_categories_raw if c.get('id') == sauces_iiko_cat_id), None)
         if sauces_category_data and sauces_category_data.get('items'):
@@ -571,36 +662,23 @@ def synchronize_iiko_data():
                 if not sauce_product_id or not sauce_product_name:
                     logger.warning(f"Skipping malformed sauce product data: {sauce_product_data}")
                     continue
-                
-                # Check if this addon already exists from other processing
-                addon = Addon.query.filter_by(iiko_addon_id=sauce_product_id).first()
-                
-                if not addon:
-                    # Construct addon data from sauce product data
-                    sauce_price = Decimal('0.00')
-                    if sauce_product_data.get('itemSizes') and sauce_product_data['itemSizes'][0].get('prices'):
-                        raw_price = sauce_product_data['itemSizes'][0]['prices'][0].get('price')
-                        try:
-                            if isinstance(raw_price, (int, float)):
-                                sauce_price = Decimal(str(raw_price))
-                            elif isinstance(raw_price, str):
-                                cleaned_price_str = raw_price.replace(',', '.').strip()
-                                sauce_price = Decimal(cleaned_price_str)
-                        except InvalidOperation as e:
-                            logger.error(f"Error converting price '{raw_price}' for sauce addon '{sauce_product_name}' (ID: {sauce_product_id}): {e}. Defaulting to 0.00.")
 
-                    sauce_image = None
-                    if sauce_product_data.get("itemSizes"):
-                        sauce_image = sauce_product_data["itemSizes"][0].get("buttonImageUrl")
-                    if not sauce_image and sauce_product_data.get("images"):
-                        sauce_image = sauce_product_data["images"][0].get("imageUrl")
-                    elif not sauce_image and sauce_product_data.get("picture"):
-                        sauce_image = sauce_product_data["picture"]
+                # Fetch or create Addon
+                addon = Addon.query.filter_by(iiko_addon_id=sauce_product_id).first()
+
+                if not addon:
+                    sauce_price = _safe_decimal_conversion(
+                        sauce_product_data.get('itemSizes', [{}])[0].get('prices', [{}])[0].get('price')
+                        if sauce_product_data.get('itemSizes') and sauce_product_data['itemSizes'][0].get('prices') else None,
+                        sauce_product_name, sauce_product_id
+                    )
+
+                    sauce_image = _extract_item_image_url(sauce_product_data)
 
                     addon = Addon(
-                        id=sauce_product_id, # Use product ID as addon ID
-                        iiko_addon_id=sauce_product_id, # Use product ID as iiko_addon_id
-                        group_name=SAUCES_CATEGORY_NAME, # Specific group name "Соусы"
+                        id=sauce_product_id,
+                        iiko_addon_id=sauce_product_id,
+                        group_name=SAUCES_CATEGORY_NAME,
                         name=sauce_product_name,
                         price=sauce_price,
                         image=sauce_image
@@ -608,57 +686,54 @@ def synchronize_iiko_data():
                     db.session.add(addon)
                     db.session.flush() # Flush to make the new addon available in the session
                     logger.info(f"Created Addon for sauce: {sauce_product_name} (ID: {addon.id}) with group '{SAUCES_CATEGORY_NAME}'")
-                
+
                 # Link this addon to the Wok Constructor product
-                # Ensure WOK_PRODUCT_CONSTRUCTOR_ID exists in product_iiko_to_db_map
-                # (it should, as it's processed in the main product sync)
+                # Note: WOK_PRODUCT_CONSTRUCTOR_ID might not be in product_iiko_to_db_map yet,
+                # so we query directly or ensure it's handled in the main product sync.
+                # For now, we assume it will exist later when relationships are built.
                 wok_constructor_product_obj = Product.query.filter_by(iiko_product_id=WOK_PRODUCT_CONSTRUCTOR_ID).first()
                 if wok_constructor_product_obj and addon:
-                    # Check if relationship already exists to prevent IntegrityError
-                    existing_pa_rel = db.session.query(ProductAddon).filter_by(
-                        product_id=wok_constructor_product_obj.id,
-                        addon_id=addon.id
-                    ).first()
-                    
-                    if not existing_pa_rel:
-                        product_addon_rel = ProductAddon(
-                            product_id=wok_constructor_product_obj.id,
-                            addon_id=addon.id
-                        )
-                        db.session.add(product_addon_rel)
-                        logger.info(f"Linked sauce addon '{addon.name}' to Wok Constructor product '{wok_constructor_product_obj.name}'.")
-                    else:
-                        logger.debug(f"Relationship already exists between Wok Constructor and sauce addon '{addon.name}'.")
+                    # Store relationship in temporary list instead of adding to session immediately
+                    wok_sauce_product_addon_rels.append({
+                        'product_id': wok_constructor_product_obj.id,
+                        'addon_id': addon.id,
+                        'product_name': wok_constructor_product_obj.name,
+                        'addon_name': addon.name
+                    })
+                    logger.info(f"Queued linking sauce addon '{addon.name}' to Wok Constructor product '{wok_constructor_product_obj.name}'.")
                 else:
                     if not wok_constructor_product_obj:
-                        logger.error(f"Wok constructor product (ID: {WOK_PRODUCT_CONSTRUCTOR_ID}) not found when trying to link sauce addons.")
+                        logger.error(f"Wok constructor product (ID: {WOK_PRODUCT_CONSTRUCTOR_ID}) not found when trying to queue sauce addons. Make sure it's synced before this step or handled gracefully.")
                     if not addon:
-                        logger.error(f"Sauce addon for product '{sauce_product_name}' (ID: {sauce_product_id}) could not be created/found.")
+                        logger.error(f"Sauce addon for product '{sauce_product_name}' (ID: {sauce_product_id}) could not be created/found when queuing.")
         else:
             logger.warning(f"No items found in '{SAUCES_CATEGORY_NAME}' category or category data missing.")
     else:
         logger.warning(f"iiko category '{SAUCES_CATEGORY_NAME}' not found. Cannot add specific sauce addons.")
-    
-    db.session.commit() # Commit the new addons and their relationships
-    logger.info(f"Additional addons from '{SAUCES_CATEGORY_NAME}' processed and relationships established.")
-    # --- ADDITION END ---
 
-    # --- Step 2: Sync Products, Addons, and Recommendations ---
+    logger.info(f"Additional addons from '{SAUCES_CATEGORY_NAME}' processed and relationships queued for later establishment.")
+    return wok_sauce_product_addon_rels
+
+def _sync_products_addons_recommendations(iiko_data, iiko_categories_raw, category_iiko_to_db_id_map,
+                                          recommendation_category_internal_db_id, recommendation_iiko_id,
+                                          iiko_to_main_category_map, all_iiko_items_by_id):
+    """
+    Synchronizes products, addons, and recommendations from iiko data.
+    Populates mappings for later relationship building.
+    """
     logger.info("Syncing Products, Addons, and Recommendations...")
 
     existing_products = {p.iiko_product_id: p for p in Product.query.all()}
     existing_addons = {a.iiko_addon_id: a for a in Addon.query.all()}
     existing_recommendations = {r.iiko_recommendation_id: r for r in Recommendation.query.all()}
 
-    product_iiko_to_db_map = {}
-    addon_iiko_to_db_map = {}
-    recommendation_iiko_to_db_map = {}
+    product_iiko_to_db_map = {} # Maps iiko product ID to DB Product object
+    addon_iiko_to_db_map = {a.iiko_addon_id: a for a in existing_addons.values()} # Maps iiko addon ID to DB Addon object
+    recommendation_iiko_to_db_map = {} # Maps iiko recommendation ID to DB Recommendation object
 
-    # NEW: A temporary map to store product_iiko_id -> list of addon_iiko_ids for relationships
-    product_addon_relationships_to_build = {}
+    product_addon_relationships_to_build = {} # Dict: product_iiko_id -> list of addon_iiko_ids
 
-
-    # Process items found within categories (these will be products and possibly recommendations)
+    # Process items within categories
     for category_data in iiko_categories_raw:
         category_id = category_data.get('id')
         category_db_id = category_iiko_to_db_id_map.get(category_id)
@@ -676,77 +751,31 @@ def synchronize_iiko_data():
             sku = iiko_item.get('sku')
             measure_unit = iiko_item.get('measureUnit')
 
-            price_value = Decimal('0.00')
-            item_image_url = None
-
-            item_sizes = iiko_item.get('itemSizes', [])
-            if item_sizes:
-                first_size = item_sizes[0]
-                if first_size.get('prices'):
-                    price_entry = first_size['prices'][0]
-                    raw_price_value = price_entry.get('price')
-
-                    try:
-                        if isinstance(raw_price_value, (int, float)):
-                            price_value = Decimal(str(raw_price_value))
-                        elif isinstance(raw_price_value, str):
-                            cleaned_price_str = raw_price_value.replace(',', '.').strip()
-                            price_value = Decimal(cleaned_price_str)
-                        else:
-                            price_value = Decimal('0.00')
-                            logger.info(f"WARNING: Unexpected type for price '{type(raw_price_value)}' for item '{item_name}' (ID: {item_iiko_id}). Defaulting to 0.00.")
-
-                    except InvalidOperation as e:
-                        logger.info(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
-                        price_value = Decimal('0.00')
-
-                item_image_url = first_size.get('buttonImageUrl')
-
-            if not item_image_url and iiko_item.get('images'):
-                item_image_url = iiko_item['images'][0].get('imageUrl')
-            elif not item_image_url and iiko_item.get('picture'):
-                item_image_url = iiko_item['picture']
-
-            # --- UPDATED NUTRITION DATA EXTRACTION LOGIC ---
-            nutrition_data = {
-                'calories': 0.0,
-                'carbs': 0.0,
-                'fat': 0.0,
-                'proteins': 0.0
-            }
-            if item_sizes: # Check if item_sizes exist
-                first_size_nutrition = item_sizes[0].get('nutritionPerHundredGrams')
-                if first_size_nutrition:
-                    # Use .get() with default 0.0 to safely extract values
-                    nutrition_data['calories'] = float(first_size_nutrition.get('energy', 0.0))
-                    nutrition_data['carbs'] = float(first_size_nutrition.get('carbs', 0.0))
-                    nutrition_data['fat'] = float(first_size_nutrition.get('fats', 0.0)) # Note: iiko uses 'fats'
-                    nutrition_data['proteins'] = float(first_size_nutrition.get('proteins', 0.0))
-            # --- END UPDATED NUTRITION DATA EXTRACTION ---
-
-            ingredients_list = []
-            if iiko_item.get('allergens'):
-                ingredients_list.extend([a['name'] for a in iiko_item['allergens'] if 'name' in a])
-            if iiko_item.get('tags'):
-                ingredients_list.extend(iiko_item['tags'])
-            if iiko_item.get('labels'):
-                ingredients_list.extend(iiko_item['labels'])
-
             if not item_iiko_id or not item_name:
                 logger.info(f"Skipping malformed item data in category '{category_data.get('name')}': {iiko_item}")
                 continue
+
+            price_value = _safe_decimal_conversion(
+                iiko_item.get('itemSizes', [{}])[0].get('prices', [{}])[0].get('price')
+                if iiko_item.get('itemSizes') and iiko_item['itemSizes'][0].get('prices') else None,
+                item_name, item_iiko_id
+            )
+            item_image_url = _extract_item_image_url(iiko_item)
+            nutrition_data = _extract_item_nutrition(iiko_item)
+            ingredients_list = _extract_item_ingredients(iiko_item)
 
             is_our_product = False
             is_our_recommendation = False
 
             if recommendation_category_internal_db_id and category_id == recommendation_iiko_id:
                 is_our_recommendation = True
-            elif item_type in ['DISH', 'GOODS']: # These are main menu items
+            elif item_type in ['DISH', 'GOODS']: # Assuming 'DISH' and 'GOODS' are product types
                 is_our_product = True
-
 
             if is_our_product:
                 product = product_iiko_to_db_map.get(item_iiko_id) or existing_products.get(item_iiko_id)
+                is_wok_constructor = (item_iiko_id == WOK_PRODUCT_CONSTRUCTOR_ID)
+                corresponding_main_category_id = iiko_to_main_category_map.get(category_id)
 
                 if product:
                     product.name = item_name
@@ -754,38 +783,40 @@ def synchronize_iiko_data():
                     product.price = price_value
                     product.image = item_image_url
                     product.categoryId = category_db_id
-                    product.nutrition = nutrition_data # Updated nutrition data
-                    product.ingredients = ingredients_list if ingredients_list else None
+                    product.main_category_id = corresponding_main_category_id
+                    product.nutrition = nutrition_data
+                    product.ingredients = ingredients_list
                     product.is_hidden = is_hidden
                     product.sku = sku
                     product.measure_unit = measure_unit
                     product.item_type = item_type
+                    product.is_customizable = is_wok_constructor
                 else:
                     logger.info(f"Created product {item_name} with id {item_iiko_id}")
-                    # Set the id to iiko_product_id for new records
                     product = Product(
-                        id=item_iiko_id,
+                        id=item_iiko_id, # Using iiko_product_id as primary key 'id'
                         iiko_product_id=item_iiko_id,
                         name=item_name,
                         description=item_description,
                         price=price_value,
                         image=item_image_url,
                         categoryId=category_db_id,
-                        nutrition=nutrition_data, # Updated nutrition data
-                        ingredients=ingredients_list if ingredients_list else None,
+                        main_category_id=corresponding_main_category_id,
+                        nutrition=nutrition_data,
+                        ingredients=ingredients_list,
                         is_hidden=is_hidden,
                         sku=sku,
                         measure_unit=measure_unit,
-                        item_type=item_type
+                        item_type=item_type,
+                        is_customizable=is_wok_constructor
                     )
                     db.session.add(product)
                 db.session.flush()
                 product_iiko_to_db_map[item_iiko_id] = product
 
-                # MODIFICATION START: Store addon relationships identified by get_addons_from_iiko_item
+                # Extract addons directly associated with the product (e.g., from modifiers in the item JSON)
                 extracted_addons_data = get_addons_from_iiko_item(iiko_item)
-                #logger.info(f"extracted_addons_data = {str(extracted_addons_data)}")
-                current_product_addon_ids = set() # Use a set to avoid duplicates for a single product
+                current_product_addon_ids = set()
 
                 for addon_info in extracted_addons_data:
                     addon_id = addon_info['iiko_addon_id']
@@ -794,7 +825,6 @@ def synchronize_iiko_data():
                     addon_price = addon_info['price']
                     addon_image = addon_info['image']
 
-                    # Update existing addon or create new one in the Addon table
                     addon = addon_iiko_to_db_map.get(addon_id) or existing_addons.get(addon_id)
                     if addon:
                         addon.group_name = addon_group_name
@@ -802,10 +832,9 @@ def synchronize_iiko_data():
                         addon.price = addon_price
                         addon.image = addon_image
                     else:
-                        # Set the id to iiko_addon_id for new records
                         logger.info(f"Created addon {addon_name} with id {addon_id}")
                         addon = Addon(
-                            id=addon_id,
+                            id=addon_id, # Using iiko_addon_id as primary key 'id'
                             iiko_addon_id=addon_id,
                             group_name=addon_group_name,
                             name=addon_name,
@@ -813,16 +842,14 @@ def synchronize_iiko_data():
                             image=addon_image
                         )
                         db.session.add(addon)
-                    db.session.flush() # Flush to get ID if new
+                    db.session.flush()
                     addon_iiko_to_db_map[addon_id] = addon
-                    current_product_addon_ids.add(addon_id) # Add iiko ID to the set
+                    current_product_addon_ids.add(addon_id)
 
-                # Store the iiko addon IDs that belong to this product
                 if current_product_addon_ids:
+                    # Store relationship to be built after all products/addons are guaranteed to exist
                     product_addon_relationships_to_build[item_iiko_id] = list(current_product_addon_ids)
-                # MODIFICATION END
 
-            # Recommendations found within a category
             elif is_our_recommendation:
                 recommendation = recommendation_iiko_to_db_map.get(item_iiko_id) or existing_recommendations.get(item_iiko_id)
                 if recommendation:
@@ -830,9 +857,8 @@ def synchronize_iiko_data():
                     recommendation.price = price_value
                     recommendation.image = item_image_url
                 else:
-                    # Set the id to iiko_recommendation_id for new records
                     recommendation = Recommendation(
-                        id=item_iiko_id,
+                        id=item_iiko_id, # Using iiko_recommendation_id as primary key 'id'
                         iiko_recommendation_id=item_iiko_id,
                         name=item_name,
                         price=price_value,
@@ -842,54 +868,32 @@ def synchronize_iiko_data():
                 db.session.flush()
                 recommendation_iiko_to_db_map[item_iiko_id] = recommendation
 
-    # --- Process top-level 'items' which are often modifiers or other un-categorized items ---
-    # This loop ensures that any MODIFIER type items not nested within categories are also synced as Addons.
-    # It also populates the addon_iiko_to_db_map for later use in relationships.
+    # Process standalone items from iiko_data.items (often modifiers not explicitly linked in categories)
     for iiko_item in iiko_data.get('items', []):
         item_iiko_id = iiko_item.get('itemId')
         item_name = iiko_item.get('name')
         item_type = iiko_item.get('type')
 
-        # Only process as addon if it's explicitly a MODIFIER type
-        # AND it hasn't already been processed and added to addon_iiko_to_db_map
+        # Only process if it's a MODIFIER and not already processed as an addon linked to a product
         if item_type == 'MODIFIER' and item_iiko_id not in addon_iiko_to_db_map:
-            price_value = Decimal('0.00')
-            item_image_url = None
-
-            item_sizes = iiko_item.get('itemSizes', [])
-            if item_sizes:
-                first_size = item_sizes[0]
-                if first_size.get('prices'):
-                    price_entry = first_size['prices'][0]
-                    raw_price_value = price_entry.get('price')
-                    try:
-                        if isinstance(raw_price_value, (int, float)):
-                            price_value = Decimal(str(raw_price_value))
-                        elif isinstance(raw_price_value, str):
-                            cleaned_price_str = raw_price_value.replace(',', '.').strip()
-                            price_value = Decimal(cleaned_price_str)
-                    except InvalidOperation as e:
-                        logger.error(f"ERROR: Could not convert price '{raw_price_value}' to Decimal for item '{item_name}' (ID: {item_iiko_id}). Error: {e}. Defaulting to 0.00.")
-
-                item_image_url = first_size.get('buttonImageUrl')
-
-            if not item_image_url and iiko_item.get('images'):
-                item_image_url = iiko_item['images'][0].get('imageUrl')
-            elif not item_image_url and iiko_item.get('picture'):
-                item_image_url = iiko_item['picture']
+            price_value = _safe_decimal_conversion(
+                iiko_item.get('itemSizes', [{}])[0].get('prices', [{}])[0].get('price')
+                if iiko_item.get('itemSizes') and iiko_item['itemSizes'][0].get('prices') else None,
+                item_name, item_iiko_id
+            )
+            item_image_url = _extract_item_image_url(iiko_item)
 
             addon = existing_addons.get(item_iiko_id)
             if addon:
-                addon.group_name = "Ungrouped"
+                addon.group_name = "Ungrouped" # Default group for standalone modifiers
                 addon.name = item_name
                 addon.price = price_value
                 addon.image = item_image_url
             else:
-                # Set the id to iiko_addon_id for new records
                 addon = Addon(
-                    id=item_iiko_id,
+                    id=item_iiko_id, # Using iiko_addon_id as primary key 'id'
                     iiko_addon_id=item_iiko_id,
-                    group_name="Ungrouped",
+                    group_name="Ungrouped", # Default group for standalone modifiers
                     name=item_name,
                     price=price_value,
                     image=item_image_url
@@ -900,8 +904,10 @@ def synchronize_iiko_data():
 
     db.session.commit()
     logger.info("Products, Addons, and Recommendations synced. Now setting up relationships.")
+    return product_iiko_to_db_map, addon_iiko_to_db_map, recommendation_iiko_to_db_map, product_addon_relationships_to_build
 
-    # --- Step 3: Clean up and Rebuild Relationships ---
+def _clear_existing_relationships():
+    """Clears all existing ProductAddon and ProductRecommendation relationships."""
     try:
         db.session.query(ProductAddon).delete()
         db.session.query(ProductRecommendation).delete()
@@ -911,7 +917,11 @@ def synchronize_iiko_data():
         db.session.rollback()
         logger.error(f"Error clearing old relationships: {e}")
 
-    # MODIFICATION START: Use product_addon_relationships_to_build to create ProductAddon relationships
+def _build_product_addon_relationships(product_addon_relationships_to_build, iiko_modifier_groups_raw,
+                                       product_iiko_to_db_map, addon_iiko_to_db_map, all_iiko_items_by_id):
+    """
+    Builds Product-Addon relationships from extracted data and iiko modifier groups.
+    """
     logger.info("Building Product-Addon relationships from extracted data...")
     for product_iiko_id, addon_iiko_ids in product_addon_relationships_to_build.items():
         parent_product_obj = product_iiko_to_db_map.get(product_iiko_id)
@@ -926,20 +936,24 @@ def synchronize_iiko_data():
                 continue
 
             try:
-                product_addon = ProductAddon(
+                # Check for existence before adding to prevent IntegrityError if it already exists from another path
+                existing_product_addon = db.session.query(ProductAddon).filter_by(
                     product_id=parent_product_obj.id,
                     addon_id=addon_obj.id
-                )
-                db.session.add(product_addon)
-            except IntegrityError:
-                db.session.rollback() # Rollback the last attempted add
+                ).first()
+                if not existing_product_addon:
+                    product_addon = ProductAddon(
+                        product_id=parent_product_obj.id,
+                        addon_id=addon_obj.id
+                    )
+                    db.session.add(product_addon)
+            except IntegrityError: # Catching specific error for duplicates
+                db.session.rollback()
                 logger.warning(f"Duplicate ProductAddon relationship for Product '{parent_product_obj.name}' and Addon '{addon_obj.name}'. Skipping.")
             except Exception as e:
                 db.session.rollback()
                 logger.error(f"Error adding ProductAddon relationship for Product '{parent_product_obj.name}' and Addon '{addon_obj.name}': {e}")
-    
-    # Original logic for modifierGroups still necessary for completeness
-    # (Sometimes, iiko might reference a modifier in a modifierGroup without nesting it in itemSizes)
+
     logger.info("Building Product-Addon relationships from iiko modifierGroups...")
     for iiko_mod_group in iiko_modifier_groups_raw:
         product_iiko_id = iiko_mod_group.get('product')
@@ -959,39 +973,17 @@ def synchronize_iiko_data():
                 full_mod_item_data = all_iiko_items_by_id.get(mod_iiko_id)
 
                 if full_mod_item_data:
-                    mod_group_name = full_mod_item_data.get('group_name')
+                    # Determine group_name from modifierGroup if available, else default
+                    mod_group_name = iiko_mod_group.get('name') or "Ungrouped"
                     mod_name = full_mod_item_data.get('name')
-                    mod_price = Decimal('0.00')
 
-                    mod_item_sizes = full_mod_item_data.get('itemSizes', [])
-                    if mod_item_sizes:
-                        first_mod_size = mod_item_sizes[0]
-                        if first_mod_size.get('prices'):
-                            raw_mod_price_value = first_mod_size['prices'][0].get('price')
+                    mod_price = _safe_decimal_conversion(
+                        full_mod_item_data.get('itemSizes', [{}])[0].get('prices', [{}])[0].get('price')
+                        if full_mod_item_data.get('itemSizes') and full_mod_item_data['itemSizes'][0].get('prices') else None,
+                        mod_name, mod_iiko_id
+                    )
+                    mod_image = _extract_item_image_url(full_mod_item_data)
 
-                            try:
-                                if isinstance(raw_mod_price_value, (int, float)):
-                                    mod_price = Decimal(str(raw_mod_price_value))
-                                elif isinstance(raw_mod_price_value, str):
-                                    cleaned_mod_price_str = raw_mod_price_value.replace(',', '.').strip()
-                                    mod_price = Decimal(cleaned_mod_price_str)
-                                else:
-                                    logger.info(f"WARNING: Unexpected type for modifier price '{type(raw_mod_price_value)}' for addon '{mod_name}' (ID: {mod_iiko_id}). Defaulting to 0.00.")
-                                    mod_price = Decimal('0.00')
-
-                            except InvalidOperation as e:
-                                logger.error(f"ERROR: Could not convert modifier price '{raw_mod_price_value}' to Decimal for addon '{mod_name}' (ID: {mod_iiko_id}). Error: {e}. Defaulting to 0.00.")
-                                mod_price = Decimal('0.00')
-
-                    mod_image = None
-                    if mod_item_sizes:
-                        mod_image = mod_item_sizes[0].get('buttonImageUrl')
-                    elif full_mod_item_data.get('images'):
-                        mod_image = full_mod_item_data['images'][0].get('imageUrl')
-                    elif full_mod_item_data.get('picture'):
-                        mod_image = full_mod_item_data['picture']
-
-                    # Set the id to mod_iiko_id for new records created from modifier groups
                     addon_obj = Addon(
                         id=mod_iiko_id,
                         iiko_addon_id=mod_iiko_id,
@@ -1008,9 +1000,7 @@ def synchronize_iiko_data():
                     logger.error(f"ERROR: Could not find full data for Addon '{mod_iiko_id}' referenced in modifier group. Skipping relationship for product '{parent_product_obj.name}'.")
                     continue
 
-            # Add the relationship only if addon_obj was found or successfully created
             try:
-                # Check for duplicate before adding
                 existing_product_addon = db.session.query(ProductAddon).filter_by(
                     product_id=parent_product_obj.id,
                     addon_id=addon_obj.id
@@ -1024,23 +1014,50 @@ def synchronize_iiko_data():
                 else:
                     logger.debug(f"ProductAddon relationship already exists for Product '{parent_product_obj.name}' and Addon '{addon_obj.name}'. Skipping.")
 
-            except IntegrityError: # This might still catch if another concurrent transaction committed it
+            except IntegrityError:
                 db.session.rollback()
                 logger.warning(f"Duplicate ProductAddon relationship for Product '{parent_product_obj.name}' and Addon '{addon_obj.name}'. Skipping due to IntegrityError.")
             except Exception as e:
                 db.session.rollback()
-                logger.error(f"Error adding ProductAddon relationship for Product '{parent_product_obj.name}' (ID: {parent_product_obj.id}) and Addon '{addon_obj.name}' (ID: {addon_obj.id}): {e}")
+                logger.error(f"Error adding ProductAddon relationship for Product '{parent_product_obj.name}' (ID: {parent_product_obj.id}) and Addon '{addon_obj.id}' (ID: {addon_obj.id}): {e}")
 
-    # MODIFICATION END
+def _add_queued_wok_sauce_relationships(wok_sauce_product_addon_rels):
+    """Adds the previously queued Wok-Sauce relationships to the database."""
+    logger.info("Adding queued Wok-Sauce relationships.")
+    for rel_data in wok_sauce_product_addon_rels:
+        try:
+            # We need to re-check existence here because the delete() operation cleared them
+            existing_product_addon = db.session.query(ProductAddon).filter_by(
+                product_id=rel_data['product_id'],
+                addon_id=rel_data['addon_id']
+            ).first()
+            if not existing_product_addon:
+                product_addon = ProductAddon(
+                    product_id=rel_data['product_id'],
+                    addon_id=rel_data['addon_id']
+                )
+                db.session.add(product_addon)
+                logger.info(f"Re-added Wok-Sauce link: Product '{rel_data['product_name']}' <-> Addon '{rel_data['addon_name']}'.")
+            else:
+                logger.debug(f"Wok-Sauce relationship already exists for Product '{rel_data['product_name']}' and Addon '{rel_data['addon_name']}'. Skipping re-add.")
+        except IntegrityError:
+            db.session.rollback()
+            logger.warning(f"Duplicate Wok-Sauce relationship for Product '{rel_data['product_name']}' and Addon '{rel_data['addon_name']}'. Skipping due to IntegrityError during re-add.")
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error re-adding Wok-Sauce relationship for Product '{rel_data['product_name']}' (ID: {rel_data['product_id']}) and Addon '{rel_data['addon_name']}' (ID: {rel_data['addon_id']}): {e}")
 
-    # --- Sync Recommendations (linking all products to all recommendations) ---
+def _sync_product_recommendation_relationships(product_iiko_to_db_map, recommendation_iiko_to_db_map):
+    """
+    Synchronizes Product-Recommendation relationships by linking all products to all recommendations.
+    """
+    # Sync Recommendations (linking all products to all recommendations)
     all_products_db_objects = list(product_iiko_to_db_map.values())
     all_recommendations_db_objects = list(recommendation_iiko_to_db_map.values())
 
     for product_obj in all_products_db_objects:
         for rec_obj in all_recommendations_db_objects:
             try:
-                # Check for duplicate before adding
                 existing_product_recommendation = db.session.query(ProductRecommendation).filter_by(
                     product_id=product_obj.id,
                     recommendation_id=rec_obj.id
@@ -1060,7 +1077,50 @@ def synchronize_iiko_data():
                 db.session.rollback()
                 logger.error(f"Error adding ProductRecommendation relationship for Product '{product_obj.name}' (ID: {product_obj.id}) and Recommendation '{rec_obj.id}' (ID: {rec_obj.id}): {e}")
 
-    db.session.commit()
+def synchronize_iiko_data():
+    """
+    Main function to synchronize iiko menu data with the local database.
+    This function orchestrates calls to smaller, logical functions.
+    """
+    # Step 1: Fetch and Prepare Data
+    iiko_data, iiko_categories_raw, iiko_modifier_groups_raw, all_iiko_items_by_id = _fetch_and_prepare_iiko_data()
+    if not iiko_data:
+        return # Exit if initial data fetch fails or is empty
+
+    # Step 2: Initial DB Cleanup
+    _perform_initial_db_cleanup()
+
+    # Step 3: Sync Categories
+    category_iiko_to_db_id_map, recommendation_category_internal_db_id, recommendation_iiko_id = _sync_categories(iiko_categories_raw)
+
+    # Step 4: Build Main Category Map (assumes MainCategory data is static or synced elsewhere)
+    iiko_to_main_category_map = _build_main_category_map()
+
+    # Step 5: Process Wok Constructor Sauces (queues relationships)
+    wok_sauce_product_addon_rels = _process_wok_sauces(iiko_categories_raw)
+
+    # Step 6: Sync Products, Addons, and Recommendations
+    # This step also populates product_iiko_to_db_map, addon_iiko_to_db_map,
+    # recommendation_iiko_to_db_map, and product_addon_relationships_to_build (from item modifiers)
+    product_iiko_to_db_map, addon_iiko_to_db_map, recommendation_iiko_to_db_map, product_addon_relationships_to_build = \
+        _sync_products_addons_recommendations(iiko_data, iiko_categories_raw, category_iiko_to_db_id_map,
+                                              recommendation_category_internal_db_id, recommendation_iiko_id,
+                                              iiko_to_main_category_map, all_iiko_items_by_id)
+
+    # Step 7: Clear and Rebuild Relationships
+    _clear_existing_relationships()
+
+    # Step 8: Build Product-Addon relationships (from item modifiers and modifier groups)
+    _build_product_addon_relationships(product_addon_relationships_to_build, iiko_modifier_groups_raw,
+                                       product_iiko_to_db_map, addon_iiko_to_db_map, all_iiko_items_by_id)
+
+    # Step 9: Add Queued Wok-Sauce Relationships
+    _add_queued_wok_sauce_relationships(wok_sauce_product_addon_rels)
+
+    # Step 10: Sync Product-Recommendation relationships
+    _sync_product_recommendation_relationships(product_iiko_to_db_map, recommendation_iiko_to_db_map)
+
+    db.session.commit() # Final commit for all relationship changes
     logger.info("Relationships synced.")
 
     logger.info("Data synchronization complete.")
