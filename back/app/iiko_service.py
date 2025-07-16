@@ -1,6 +1,6 @@
 import requests
 from app.logger import logger
-from app.models import db, Category, Product, Addon, Recommendation, ProductAddon, ProductRecommendation
+from app.models import db, Category, MainCategory, Product, Addon, Recommendation, ProductAddon, ProductRecommendation, SAUCES_CATEGORY_NAME, WOK_PRODUCT_CONSTRUCTOR_ID
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
@@ -540,6 +540,108 @@ def synchronize_iiko_data():
 
     db.session.commit()
     logger.info("Categories synced.")
+    
+    # NEW: Populate iiko_to_main_category_map after MainCategories are finalized
+    iiko_to_main_category_map = {}
+    for main_cat_obj in MainCategory.query.all():
+        if main_cat_obj.iiko_category_ids:
+            for iiko_cid_in_main_cat in main_cat_obj.iiko_category_ids:
+                iiko_to_main_category_map[iiko_cid_in_main_cat] = main_cat_obj.id
+
+    logger.info("Categories synced and iiko_to_main_category_map built.")
+
+    # --- ADDITION START: Add additional addons from "Соусы" category ---
+    logger.info(f"Adding additional addons from '{SAUCES_CATEGORY_NAME}' category for Wok Constructor.")
+    
+    # 1. Find the iiko category ID for "Соусы"
+    sauces_iiko_cat_id = None
+    for iiko_cat in iiko_categories_raw:
+        if iiko_cat.get('name') == SAUCES_CATEGORY_NAME:
+            sauces_iiko_cat_id = iiko_cat.get('id')
+            logger.info(f"Found sauces category {sauces_iiko_cat_id}")
+            break
+    
+    if sauces_iiko_cat_id:
+        sauces_category_data = next((c for c in iiko_categories_raw if c.get('id') == sauces_iiko_cat_id), None)
+        if sauces_category_data and sauces_category_data.get('items'):
+            for sauce_product_data in sauces_category_data['items']:
+                sauce_product_id = sauce_product_data.get('itemId')
+                sauce_product_name = sauce_product_data.get('name')
+
+                if not sauce_product_id or not sauce_product_name:
+                    logger.warning(f"Skipping malformed sauce product data: {sauce_product_data}")
+                    continue
+                
+                # Check if this addon already exists from other processing
+                addon = Addon.query.filter_by(iiko_addon_id=sauce_product_id).first()
+                
+                if not addon:
+                    # Construct addon data from sauce product data
+                    sauce_price = Decimal('0.00')
+                    if sauce_product_data.get('itemSizes') and sauce_product_data['itemSizes'][0].get('prices'):
+                        raw_price = sauce_product_data['itemSizes'][0]['prices'][0].get('price')
+                        try:
+                            if isinstance(raw_price, (int, float)):
+                                sauce_price = Decimal(str(raw_price))
+                            elif isinstance(raw_price, str):
+                                cleaned_price_str = raw_price.replace(',', '.').strip()
+                                sauce_price = Decimal(cleaned_price_str)
+                        except InvalidOperation as e:
+                            logger.error(f"Error converting price '{raw_price}' for sauce addon '{sauce_product_name}' (ID: {sauce_product_id}): {e}. Defaulting to 0.00.")
+
+                    sauce_image = None
+                    if sauce_product_data.get("itemSizes"):
+                        sauce_image = sauce_product_data["itemSizes"][0].get("buttonImageUrl")
+                    if not sauce_image and sauce_product_data.get("images"):
+                        sauce_image = sauce_product_data["images"][0].get("imageUrl")
+                    elif not sauce_image and sauce_product_data.get("picture"):
+                        sauce_image = sauce_product_data["picture"]
+
+                    addon = Addon(
+                        id=sauce_product_id, # Use product ID as addon ID
+                        iiko_addon_id=sauce_product_id, # Use product ID as iiko_addon_id
+                        group_name=SAUCES_CATEGORY_NAME, # Specific group name "Соусы"
+                        name=sauce_product_name,
+                        price=sauce_price,
+                        image=sauce_image
+                    )
+                    db.session.add(addon)
+                    db.session.flush() # Flush to make the new addon available in the session
+                    logger.info(f"Created Addon for sauce: {sauce_product_name} (ID: {addon.id}) with group '{SAUCES_CATEGORY_NAME}'")
+                
+                # Link this addon to the Wok Constructor product
+                # Ensure WOK_PRODUCT_CONSTRUCTOR_ID exists in product_iiko_to_db_map
+                # (it should, as it's processed in the main product sync)
+                wok_constructor_product_obj = Product.query.filter_by(iiko_product_id=WOK_PRODUCT_CONSTRUCTOR_ID).first()
+                if wok_constructor_product_obj and addon:
+                    # Check if relationship already exists to prevent IntegrityError
+                    existing_pa_rel = db.session.query(ProductAddon).filter_by(
+                        product_id=wok_constructor_product_obj.id,
+                        addon_id=addon.id
+                    ).first()
+                    
+                    if not existing_pa_rel:
+                        product_addon_rel = ProductAddon(
+                            product_id=wok_constructor_product_obj.id,
+                            addon_id=addon.id
+                        )
+                        db.session.add(product_addon_rel)
+                        logger.info(f"Linked sauce addon '{addon.name}' to Wok Constructor product '{wok_constructor_product_obj.name}'.")
+                    else:
+                        logger.debug(f"Relationship already exists between Wok Constructor and sauce addon '{addon.name}'.")
+                else:
+                    if not wok_constructor_product_obj:
+                        logger.error(f"Wok constructor product (ID: {WOK_PRODUCT_CONSTRUCTOR_ID}) not found when trying to link sauce addons.")
+                    if not addon:
+                        logger.error(f"Sauce addon for product '{sauce_product_name}' (ID: {sauce_product_id}) could not be created/found.")
+        else:
+            logger.warning(f"No items found in '{SAUCES_CATEGORY_NAME}' category or category data missing.")
+    else:
+        logger.warning(f"iiko category '{SAUCES_CATEGORY_NAME}' not found. Cannot add specific sauce addons.")
+    
+    db.session.commit() # Commit the new addons and their relationships
+    logger.info(f"Additional addons from '{SAUCES_CATEGORY_NAME}' processed and relationships established.")
+    # --- ADDITION END ---
 
     # --- Step 2: Sync Products, Addons, and Recommendations ---
     logger.info("Syncing Products, Addons, and Recommendations...")
@@ -682,7 +784,7 @@ def synchronize_iiko_data():
 
                 # MODIFICATION START: Store addon relationships identified by get_addons_from_iiko_item
                 extracted_addons_data = get_addons_from_iiko_item(iiko_item)
-                logger.info(f"extracted_addons_data = {str(extracted_addons_data)}")
+                #logger.info(f"extracted_addons_data = {str(extracted_addons_data)}")
                 current_product_addon_ids = set() # Use a set to avoid duplicates for a single product
 
                 for addon_info in extracted_addons_data:

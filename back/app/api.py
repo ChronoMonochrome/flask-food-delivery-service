@@ -7,7 +7,7 @@ from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
-    WokBase, WokMeat, WokTopping, WokSauce # Import new Wok models
+    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_CATEGORY_NAME
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from sqlalchemy import distinct # Import distinct for unique values
@@ -364,9 +364,6 @@ class CategoryList(Resource):
         return jsonify(marshaled_categories)
 
 ## Product Endpoints
-WOK_CATEGORY_NAME = "Wok"
-WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
-
 @api.route('/products')
 class ProductList(Resource):
     @api.param('categoryId', 'Filter products by category ID')
