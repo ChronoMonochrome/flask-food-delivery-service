@@ -440,22 +440,6 @@ def get_payment_types(organization_ids, token):
             logger.error(f"IIKO Payment Types Error Response: {e.response.text}")
         return None
 
-
-icon_map = {
-    "Burgers": "🍔",
-    "Drinks": "🥤",
-    "Соусы": "🌶️",
-    "Рекомендации": "✨"
-}
-
-color_map = {
-    "Burgers": "from-red-400 to-red-600",
-    "Drinks": "from-blue-400 to-blue-600",
-    "Соусы": "from-green-400 to-green-600",
-    "Рекомендации": "from-yellow-400 to-yellow-600"
-}
-
-
 # Helper function for safe Decimal conversion
 def _safe_decimal_conversion(raw_price, item_name, item_id, default_value=Decimal('0.00')):
     """Safely converts a raw price value to a Decimal."""
