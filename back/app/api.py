@@ -1323,6 +1323,7 @@ def load_delivery_areas():
         _last_geojson_hash = current_geojson_hash
     else:
         print(f"Error: Expected FeatureCollection from geojson, got {geojson_data.get('type') if geojson_data else 'None/Invalid'}")
+
 @api.route('/map')
 class MapResource(Resource):
     # If you want to document input parameters
