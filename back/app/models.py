@@ -202,19 +202,46 @@ class CartRecommendation(db.Model):
     recommendation_id = db.Column(db.String(36), db.ForeignKey('recommendation.id'), primary_key=True)
     recommendation = db.relationship('Recommendation')
 
-class Order(db.Model):
-    __tablename__ = 'order' # Explicitly define table name
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    total = db.Column(db.Numeric(10, 2), nullable=False) # Use Numeric for currency
-    delivery_address = db.Column(db.String(255), nullable=False)
-    delivery_phone = db.Column(db.String(50), nullable=False)
+# --- New: DeliveryInfo Model ---
+class DeliveryInfo(db.Model):
+    __tablename__ = 'delivery_info'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # One-to-one relationship with Order:
+    order_id = db.Column(db.String(36), db.ForeignKey('order.id'), unique=True, nullable=False)
+
+    address = db.Column(db.String(255), nullable=False)
+    apartment = db.Column(db.String(50), nullable=True)
+    floor = db.Column(db.String(50), nullable=True)
+    phone = db.Column(db.String(50), nullable=False)
     payment_method = db.Column(db.String(50), nullable=False)
-    comment = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), default='pending') # e.g., 'pending', 'preparing', 'delivering', 'delivered', 'cancelled'
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    comment = db.Column(db.String(500), nullable=True)
+    latitude = db.Column(db.Float, nullable=False) # Marked as required in your model, so nullable=False
+    longitude = db.Column(db.Float, nullable=False) # Marked as required in your model, so nullable=False
+
+    def __repr__(self):
+        return f"<DeliveryInfo {self.id} for Order {self.order_id}>"
+
+# --- Updated: Order Model ---
+class Order(db.Model):
+    __tablename__ = 'order'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    total = db.Column(db.Numeric(10, 2), nullable=False)
+    status = db.Column(db.String(50), nullable=False, default='pending')
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     estimated_delivery = db.Column(db.DateTime, nullable=True)
 
-    items = db.relationship('OrderItem', backref='order', lazy=True)
+    # Relationship to OrderItem (one-to-many)
+    items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
+    
+    # Relationship to DeliveryInfo (one-to-one)
+    # `uselist=False` indicates a one-to-one relationship
+    # `cascade="all, delete-orphan"` ensures DeliveryInfo is managed with the Order
+    delivery_info = db.relationship('DeliveryInfo', backref='order', uselist=False, lazy=True, cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Order {self.id}>"
 
 class OrderItem(db.Model):
     __tablename__ = 'order_item' # Explicitly define table name
