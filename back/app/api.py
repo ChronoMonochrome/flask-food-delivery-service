@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, current_app, request
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
-    db, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
+    db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
     WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_CATEGORY_NAME
 )
@@ -18,6 +18,8 @@ import json
 import requests
 from decimal import Decimal
 from uuid import uuid4
+import re
+from datetime import datetime, timedelta, timezone
 
 from .geojson import geojson_data
 
@@ -99,6 +101,30 @@ product_model = api.model('Product', {
     'isCustomizable': fields.Boolean(required=True, description='Indicates if the product is customizable (e.g., Wok)', default=False) # New field
 })
 
+# --- NEW: Request model for incoming POST /api/orders (FLAT) ---
+request_order_payload_model = api.model('RequestOrderPayload', {
+    'address': fields.String(required=True, description='Delivery address'),
+    'apartment': fields.String(description='Apartment number', allow_null=True),
+    'floor': fields.String(description='Floor number', allow_null=True),
+    'phone': fields.String(required=True, description='Contact phone number'),
+    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
+    'comment': fields.String(description='Additional comments for delivery', allow_null=True),
+    'latitude': fields.Float(required=True, description='Latitude for delivery'),
+    'longitude': fields.Float(required=True, description='Longitude for delivery')
+})
+
+# --- Existing: Response models (NESTED) ---
+delivery_info_model_new = api.model('DeliveryInfoNew', {
+    'address': fields.String(required=True, description='Delivery address'),
+    'apartment': fields.String(description='Apartment number', allow_null=True),
+    'floor': fields.String(description='Floor number', allow_null=True),
+    'phone': fields.String(required=True, description='Contact phone number'),
+    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
+    'comment': fields.String(description='Additional comments for delivery', allow_null=True),
+    'latitude': fields.Float(required=True, description='Latitude for delivery'),
+    'longitude': fields.Float(required=True, description='Longitude for delivery')
+})
+
 order_item_model = api.model('OrderItem', {
     'product': fields.Nested(product_model, description='Product details'),
     'quantity': fields.Integer(required=True, description='Quantity of the product'),
@@ -106,22 +132,16 @@ order_item_model = api.model('OrderItem', {
     'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this product item', default=[])
 })
 
-delivery_info_model = api.model('DeliveryInfo', {
-    'address': fields.String(required=True, description='Delivery address'),
-    'phone': fields.String(required=True, description='Contact phone number'),
-    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
-    'comment': fields.String(description='Additional comments for delivery', allow_null=True)
-})
-
 order_model = api.model('Order', {
     'id': fields.String(required=True, description='Order ID'),
     'items': fields.List(fields.Nested(order_item_model), description='List of items in the order'),
     'total': fields.Float(required=True, description='Total price of the order'),
-    'deliveryInfo': fields.Nested(delivery_info_model, required=True, description='Delivery information'),
+    'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information'),
     'status': fields.String(required=True, description='Current status of the order'),
     'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
     'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
 })
+
 
 # --- Cart Models ---
 
@@ -515,10 +535,19 @@ class ProductResource(Resource):
 
 @api.route('/orders')
 class OrderList(Resource):
+    @api.marshal_with(order_model, as_list=True) # Use marshal_list_with for lists of orders
     def get(self):
         """Get all orders"""
         orders = Order.query.options(
-            joinedload(Order.items).joinedload(OrderItem.product),
+            joinedload(Order.items)
+            .joinedload(OrderItem.product)
+            .joinedload(Product.available_addons)
+            .joinedload(ProductAddon.addon), # Assuming ProductAddon.addon is the correct path
+            joinedload(Order.items)
+            .joinedload(OrderItem.product)
+            .joinedload(Product.recommendations)
+            .joinedload(ProductRecommendation.recommendation), # Assuming ProductRecommendation.recommendation is the correct path
+            joinedload(Order.delivery_info) # Eager load delivery info
         ).all()
 
         serialized_orders = []
@@ -530,55 +559,15 @@ class OrderList(Resource):
                 fetched_addons = []
                 if item.selected_addons_ids:
                     addons_from_db = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all()
-                    fetched_addons = [
-                        api.marshal(addon, addon_model)
-                        for addon in addons_from_db
-                        if addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None
-                    ]
-                    for addon in addons_from_db:
-                        if not (addon and addon.id and isinstance(addon.name, str) and addon.name and addon.price is not None):
-                            print(f"WARNING: Skipping malformed selected addon ID: {getattr(addon, 'id', 'N/A')} for order item {item.id}.")
+                    # Ensure addon_model has 'group_name' and 'image' if you want them in response
+                    fetched_addons = [api.marshal(addon, addon_model) for addon in addons_from_db]
 
                 fetched_recommendations = []
                 if item.selected_recommendation_ids:
                     recs_from_db = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all()
-                    fetched_recommendations = [
-                        api.marshal(rec, recommendation_model)
-                        for rec in recs_from_db
-                        if rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)
-                    ]
-                    for rec in recs_from_db:
-                        if not (rec and rec.id and isinstance(rec.name, str) and (rec.name or rec.price is not None)):
-                                print(f"WARNING: Skipping malformed selected recommendation ID: {getattr(rec, 'id', 'N/A')} for order item {item.id}.")
+                    fetched_recommendations = [api.marshal(rec, recommendation_model) for rec in recs_from_db]
 
-                product_nutrition_data_for_marshal = product_obj.nutrition if isinstance(product_obj.nutrition, dict) else {}
-                for key in ["calories", "carbs", "fat", "proteins"]:
-                    if key not in product_nutrition_data_for_marshal or product_nutrition_data_for_marshal[key] is None:
-                        product_nutrition_data_for_marshal[key] = 0.0
-                    if isinstance(product_nutrition_data_for_marshal[key], Decimal):
-                        product_nutrition_data_for_marshal[key] = float(product_nutrition_data_for_marshal[key])
-
-                processed_ingredients_in_order_item = product_obj.ingredients if product_obj.ingredients is not None else []
-                cleaned_ingredients_in_order_item = []
-                for ing in processed_ingredients_in_order_item:
-                    if isinstance(ing, dict) and 'name' in ing and isinstance(ing['name'], str):
-                        cleaned_ingredients_in_order_item.append({'code': ing.get('code', ''), 'name': ing['name']})
-                    else:
-                        print(f"WARNING: Skipping malformed ingredient for product {product_obj.id} within order item: {ing!r}")
-
-                # CHANGED: Ensure product_obj's available_addons are loaded and marshaled for the product nested in order_item
-                # You need to load available_addons relation explicitly if it's not already.
-                # For `get_or_404` or `filter_by` on Product, ensure `joinedload(Product.available_addons).joinedload(ProductAddon.addon)`
-                # is part of the initial product query when fetching orders if you want this
-                # information available. If not, a separate query would be needed, which is less efficient.
-                # Given product_obj comes from `joinedload(Order.items).joinedload(OrderItem.product)`,
-                # you'd need to add `joinedload(OrderItem.product).joinedload(Product.available_addons).joinedload(ProductAddon.addon)`
-                # to the main order query.
-                product_marshaled_available_addons = [
-                    api.marshal(pa.addon, addon_model)
-                    for pa in product_obj.available_addons if pa.addon
-                ]
-
+                # Manually construct product_marshaled to match product_model structure
                 product_marshaled = {
                     'id': str(product_obj.id),
                     'name': product_obj.name,
@@ -586,14 +575,12 @@ class OrderList(Resource):
                     'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
                     'image': product_obj.image,
                     'categoryId': str(product_obj.main_category_id), # Corrected from product_obj.categoryId
-                    'iikoCategoryId': str(product_obj.categoryId),
-                    'nutrition': product_nutrition_data_for_marshal,
-                    'ingredients': cleaned_ingredients_in_order_item,
-                    'availableAddons': product_marshaled_available_addons, # Use the marshaled list for product in order item
-                    'recommendations': [
-                        api.marshal(pr.recommendation, recommendation_model)
-                        for pr in product_obj.recommendations if pr.recommendation
-                    ]
+                    'iikoCategoryId': str(product_obj.categoryId), # Original categoryId from IIKO
+                    'nutrition': product_obj.nutrition, # Assuming JSON directly
+                    'ingredients': product_obj.ingredients, # Assuming JSON directly
+                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in product_obj.available_addons if pa.addon],
+                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in product_obj.recommendations if pr.recommendation],
+                    'isCustomizable': product_obj.is_customizable
                 }
                 marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
 
@@ -604,33 +591,67 @@ class OrderList(Resource):
                     'selectedRecommendations': fetched_recommendations
                 })
 
+            # Reconstruct the nested deliveryInfo for the response
+            delivery_info_obj = order.delivery_info
+            delivery_info_for_response = {}
+            if delivery_info_obj:
+                delivery_info_for_response = api.marshal({
+                    'address': delivery_info_obj.address,
+                    'apartment': delivery_info_obj.apartment,
+                    'floor': delivery_info_obj.floor,
+                    'phone': delivery_info_obj.phone,
+                    'paymentMethod': delivery_info_obj.payment_method,
+                    'comment': delivery_info_obj.comment,
+                    'latitude': delivery_info_obj.latitude,
+                    'longitude': delivery_info_obj.longitude
+                }, delivery_info_model_new)
+
+
             serialized_orders.append({
                 'id': str(order.id),
                 'items': items_data,
                 'total': float(order.total) if isinstance(order.total, Decimal) else order.total,
-                'deliveryInfo': {
-                    'address': order.delivery_address,
-                    'phone': order.delivery_phone,
-                    'paymentMethod': order.payment_method,
-                    'comment': order.comment
-                },
+                'deliveryInfo': delivery_info_for_response, # Nested object for response
                 'status': order.status,
-                'createdAt': order.created_at,
-                'estimatedDelivery': order.estimated_delivery
+                'createdAt': order.created_at.isoformat(),
+                'estimatedDelivery': order.estimated_delivery.isoformat() if order.estimated_delivery else None
             })
-        marshaled_orders = api.marshal(serialized_orders, order_model)
-        return jsonify(marshaled_orders)
+        return serialized_orders
 
-    @api.expect(order_model)
-    @api.marshal_with(order_model, code=201)
+
+    @api.expect(request_order_payload_model) # <-- Use the FLAT request model for input
+    @api.marshal_with(order_model, code=201) # <-- Still marshal output with the NESTED order_model
     def post(self):
-        """Create a new order and send it to IIKO (mock for now)."""
-        data = api.payload
+        """Create a new order and send it to IIKO."""
+        user_id = get_telegram_user_id()
+        data = api.payload # This contains the flat delivery fields from the frontend
+
+        # --- Validate delivery coordinates and get delivery cost ---
+        load_delivery_areas() # Ensure areas are loaded
+        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK
+
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+
+        if not latitude or not longitude:
+            api.abort(400, "Latitude and Longitude are required for delivery.")
+
+        point = Point(longitude, latitude)
+        is_in_delivery_area = False
+        for area_polygon in VALID_DELIVERY_AREAS:
+            if area_polygon.contains(point):
+                is_in_delivery_area = True
+                break
+
+        if not is_in_delivery_area:
+            api.abort(404, "The provided coordinates are outside our valid delivery areas.")
+
+        delivery_cost = DELIVERY_COST_MOCK # Use the mock delivery cost
 
         # --- Dynamic retrieval of Organization ID and Terminal Group ID ---
         iiko_token = iiko_service.get_iiko_token()
         if not iiko_token:
-            api.logger.error("Failed to get IIKO access token for order creation.")
+            current_app.logger.error("Failed to get IIKO access token for order creation.")
             api.abort(500, "Failed to connect to external ordering system (IIKO).")
 
         organization_id = None
@@ -640,33 +661,32 @@ class OrderList(Resource):
             organizations = iiko_service.get_organizations(iiko_token)
             if organizations:
                 organization_id = organizations[0].get("id")
-                api.logger.info(f"Using IIKO Organization ID: {organization_id}")
+                current_app.logger.info(f"Using IIKO Organization ID: {organization_id}")
             else:
-                api.logger.error("No organizations found from IIKO API.")
+                current_app.logger.error("No organizations found from IIKO API.")
                 api.abort(500, "Could not determine organization ID for external order.")
 
             terminal_groups = iiko_service.get_terminal_groups(organization_id, iiko_token)
             if terminal_groups and terminal_groups[0].get("items"):
-                # Assuming the first item in the first terminal group list is the one we want
                 terminal_group_id = terminal_groups[0]["items"][0].get("id")
-                api.logger.info(f"Using IIKO Terminal Group ID: {terminal_group_id}")
+                current_app.logger.info(f"Using IIKO Terminal Group ID: {terminal_group_id}")
             else:
-                api.logger.error(f"No terminal groups found for organization {organization_id} from IIKO API.")
+                current_app.logger.error(f"No terminal groups found for organization {organization_id} from IIKO API.")
                 api.abort(500, "Could not determine terminal group ID for external order.")
 
             # --- Fetch Payment Types ---
             iiko_payment_types = iiko_service.get_payment_types([organization_id], iiko_token)
             if not iiko_payment_types:
-                api.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
+                current_app.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
                 api.abort(500, "Could not determine payment types for external order.")
 
             # --- Select an IIKO Payment Type based on client's paymentMethod ---
             selected_iiko_payment_type = None
-            client_payment_method = data['deliveryInfo']['paymentMethod'].lower()
+            client_payment_method = data['paymentMethod'].lower()
 
             for pt in iiko_payment_types:
                 pt_kind = pt.get('paymentTypeKind', '').lower()
-                pt_code = pt.get('code', '').lower() # Get the code for more precise matching
+                pt_code = pt.get('code', '').lower()
 
                 if client_payment_method == "cash" and pt_kind == "cash":
                     selected_iiko_payment_type = pt
@@ -674,101 +694,151 @@ class OrderList(Resource):
                 elif client_payment_method == "card" and pt_kind == "card":
                     selected_iiko_payment_type = pt
                     break
-                # If 'card' is sent by client, but IIKO's paymentTypeKind is 'External' or 'LoyaltyCard'
-                # and its code indicates a card-like payment (e.g., 'BANK'), consider it.
-                # This makes the mapping more flexible if IIKO uses different kinds for cards.
                 elif client_payment_method == "card" and (pt_kind in ["loyaltycard", "external"] or pt_code == "bank"):
                     selected_iiko_payment_type = pt
                     break
 
             if not selected_iiko_payment_type:
-                api.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type as fallback.")
-                selected_iiko_payment_type = iiko_payment_types[0] # Fallback to the very first type
+                current_app.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type as fallback.")
+                selected_iiko_payment_type = iiko_payment_types[0]
 
-            api.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}', Code='{selected_iiko_payment_type.get('code')}'")
+            current_app.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}', Code='{selected_iiko_payment_type.get('code')}'")
 
         except Exception as e:
-            api.logger.error(f"Error fetching IIKO organization/terminal group/payment type IDs: {e}", exc_info=True)
+            current_app.logger.error(f"Error fetching IIKO organization/terminal group/payment type IDs: {e}", exc_info=True)
             api.abort(500, f"Failed to initialize external ordering system: {str(e)}")
         # --- End Dynamic retrieval ---
-
 
         calculated_total = Decimal('0.00')
         order_items_to_add = []
         iiko_order_items = []
 
-        for item_data in data['items']:
-            product = Product.query.get(item_data['product']['id'])
-            if not product:
-                api.abort(400, f"Product with ID {item_data['product']['id']} not found.")
+        # --- Retrieve items from the user's cart ---
+        cart = get_or_create_cart(user_id)
+        if not cart.items:
+            api.abort(400, "Cart is empty. Please add items before creating an order.")
 
-            item_price = Decimal(str(product.price)) # Ensure Decimal for calculations
-            selected_addon_ids = [a['id'] for a in item_data.get('selectedAddons', [])]
-            selected_recommendation_ids = [r['id'] for r in item_data.get('selectedRecommendations', [])]
+        # Eager load cart items and their related products/addons/recommendations
+        # This ensures all necessary data is available for calculating total and IIKO payload
+        cart_with_items = db.session.query(Cart).filter_by(user_id=user_id).options(
+            joinedload(Cart.items).joinedload(CartItem.product),
+            joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
+            joinedload(Cart.items).joinedload(CartItem.selected_recommendations).joinedload(CartRecommendation.recommendation)
+        ).first()
 
-            iiko_modifiers = [] # Initialize modifiers for each item
+        if not cart_with_items or not cart_with_items.items:
+            api.abort(400, "Cart is empty or could not load cart items.")
 
-            for addon_id in selected_addon_ids:
-                addon = Addon.query.get(addon_id)
+
+        for cart_item in cart_with_items.items:
+            item_price = Decimal('0.00')
+            product = None
+            product_name = None # For custom wok
+            product_id_for_iiko = None # For custom wok
+
+            if cart_item.product_id:
+                product = Product.query.get(cart_item.product_id) # Product should already be loaded via joinedload
+                if not product:
+                    current_app.logger.warning(f"Product with ID {cart_item.product_id} not found for cart item {cart_item.id}. Skipping.")
+                    continue # Skip this item if product is missing
+                item_price += Decimal(str(product.price))
+            elif cart_item.custom_wok_data:
+                item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
+                product_name = cart_item.custom_name if cart_item.custom_name else "Custom Wok"
+                product_id_for_iiko = "GENERIC_WOK_PRODUCT_ID_IIKO" # Placeholder, replace with actual IIKO ID
+            else:
+                current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
+                continue # Skip malformed cart items
+
+
+            iiko_modifiers = []
+
+            for cart_addon in cart_item.selected_addons:
+                addon = cart_addon.addon # Already loaded via joinedload
                 if addon:
-                    item_price += Decimal(str(addon.price))
+                    item_price += Decimal(str(addon.price)) * cart_addon.quantity
                     iiko_modifiers.append({
-                        "id": addon.iiko_addon_id, # Assuming Addon model has iiko_addon_id
-                        "type": "Product",
-                        "amount": 1
+                        "id": addon.iiko_addon_id,
+                        "type": "Product", # Assuming IIKO treats addons as 'Product' modifiers
+                        "amount": cart_addon.quantity
                     })
                 else:
-                    api.logger.warning(f"Selected addon with ID {addon_id} not found. Skipping price calculation and IIKO modifier for it.")
+                    current_app.logger.warning(f"Selected addon with ID {cart_addon.addon_id} not found for cart item {cart_item.id}.")
 
-            for rec_id in selected_recommendation_ids:
-                recommendation = Recommendation.query.get(rec_id)
+            for cart_rec in cart_item.selected_recommendations:
+                recommendation = cart_rec.recommendation # Already loaded via joinedload
                 if recommendation:
                     item_price += Decimal(str(recommendation.price))
                     iiko_modifiers.append({
-                        "id": recommendation.iiko_recommendation_id, # Assuming Recommendation model has iiko_recommendation_id
-                        "type": "Product",
+                        "id": recommendation.iiko_recommendation_id,
+                        "type": "Product", # Assuming IIKO treats recommendations as 'Product' modifiers
                         "amount": 1
                     })
                 else:
-                    api.logger.warning(f"Selected recommendation with ID {rec_id} not found. Skipping price calculation and IIKO modifier for it.")
+                    current_app.logger.warning(f"Selected recommendation with ID {cart_rec.recommendation_id} not found for cart item {cart_item.id}.")
 
-            calculated_total += item_price * Decimal(str(item_data['quantity']))
+            calculated_total += item_price * Decimal(str(cart_item.quantity))
 
+            # Prepare for database persistence
             order_items_to_add.append(OrderItem(
-                product_id=product.id,
-                quantity=item_data['quantity'],
-                selected_addons_ids=selected_addon_ids,
-                selected_recommendation_ids=selected_recommendation_ids
+                product_id=product.id if product else None,
+                quantity=cart_item.quantity,
+                selected_addons_ids=[ca.addon_id for ca in cart_item.selected_addons],
+                selected_recommendation_ids=[cr.recommendation_id for cr in cart_item.selected_recommendations]
             ))
 
+            # Prepare for IIKO payload
             iiko_order_items.append({
-                "productId": product.iiko_product_id, # Assuming your Product model has iiko_product_id
-                "productCode": product.iiko_product_id, # iiko sometimes uses productCode as well
-                "name": product.name,
-                "amount": item_data['quantity'],
-                "price": float(item_price), # Use the item_price which includes addons/recommendations, convert to float
+                "productId": product.iiko_product_id if product else product_id_for_iiko,
+                "productCode": product.iiko_product_id if product else product_id_for_iiko,
+                "name": product.name if product else product_name,
+                "amount": cart_item.quantity,
+                "price": float(item_price),
                 "modifiers": iiko_modifiers,
                 "comboId": None,
                 "positionId": str(uuid4())
             })
 
+        # Add delivery cost to the total
+        final_total = calculated_total + delivery_cost
+        current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, with delivery: {final_total}")
 
-        final_total = Decimal(str(data.get('total', calculated_total)))
-        if abs(final_total - calculated_total) > Decimal('0.01'):
-            api.logger.warning(f"Client provided total {data.get('total')} differs from calculated total {calculated_total}. Using calculated total.")
-            final_total = calculated_total
+        # Parse city from address. This is a simple regex, might need refinement.
+        full_address = data['address']
+        city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
+        city = "Default City" # Fallback
+        if city_match:
+            city = city_match.group(1).strip()
+        elif full_address:
+            parts = full_address.split(',')
+            if len(parts) > 1:
+                city = parts[-1].strip()
+            else:
+                city = full_address.split()[-1] if full_address.split() else "Default City"
 
-        new_order = Order(
-            id=str(uuid4()), # Use UUID4 for internal order ID consistency
-            total=final_total,
-            delivery_address=data['deliveryInfo']['address'],
-            delivery_phone=data['deliveryInfo']['phone'],
-            payment_method=data['deliveryInfo']['paymentMethod'],
-            comment=data['deliveryInfo'].get('comment'),
-            status='pending',
-            created_at=datetime.utcnow()
+        # Create DeliveryInfo object from the flat incoming data
+        delivery_info_obj = DeliveryInfo(
+            address=data['address'],
+            apartment=data.get('apartment'),
+            floor=data.get('floor'),
+            phone=data['phone'],
+            payment_method=data['paymentMethod'],
+            comment=data.get('comment'),
+            latitude=data['latitude'],
+            longitude=data['longitude']
         )
-        db.session.add(new_order)
+        # db.session.add(delivery_info_obj) # Will be added via cascade from Order
+
+        # Store new order in DB
+        new_order = Order(
+            id=str(uuid4()),
+            total=final_total,
+            status='pending',
+            created_at=datetime.utcnow(),
+            # Link DeliveryInfo to Order
+            delivery_info=delivery_info_obj # Assign the object directly
+        )
+        db.session.add(new_order) # Add the order (which will cascade add delivery_info)
         db.session.flush() # Flush to get new_order.id if it's auto-generated
 
         for item in order_items_to_add:
@@ -776,76 +846,71 @@ class OrderList(Resource):
             db.session.add(item)
 
         try:
-            # THIS IS THE CORRECTED PART:
-            # The 'order' object for the IIKO API call should contain all the order details.
-            # The top-level payload sent to IIKO's /deliveries/create endpoint
-            # then wraps this 'order' object along with 'organizationId', 'terminalGroupId',
-            # and 'createOrderSettings'.
-
-            # Construct the inner 'order' object first
+            # Construct the inner 'order' object for IIKO with simplified address structure
             iiko_order_data_for_payload = {
-                "id": new_order.id, # External system's order ID (your internal UUID)
-                "externalNumber": f"WEB-{new_order.id.split('-')[0]}", # A human-readable external number
-                "phone": new_order.delivery_phone,
+                "id": new_order.id,
+                "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
+                "phone": new_order.delivery_info.phone, # Use phone from delivery_info
                 "items": iiko_order_items,
                 "deliveryPoint": {
                     "address": {
-                        "street": new_order.delivery_address,
-                        "city": "Default City" # IIKO may require a city
+                        "street": new_order.delivery_info.address, # Use address from delivery_info
+                        "city": city, # Use parsed city
                     },
                     "coordinates": {
-                        "latitude": 0.0, # Placeholder, replace with actual coordinates if available
-                        "longitude": 0.0
+                        "latitude": new_order.delivery_info.latitude,
+                        "longitude": new_order.delivery_info.longitude,
                     }
                 },
                 "payments": [
                     {
                         "sum": float(final_total),
                         "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
-                        "paymentTypeId": selected_iiko_payment_type.get('id'), # Use the dynamically retrieved IIKO payment type ID
+                        "paymentTypeId": selected_iiko_payment_type.get('id'),
                         "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
-                        "isFiscalizedExternally": False, # Assuming not fiscalized externally for now
+                        "isFiscalizedExternally": False,
                         "isPrepay": False
                     }
                 ],
-                "comment": new_order.comment,
-                "completeBefore": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], # Current time + buffer typically
-                # Fields like organizationId and terminalGroupId should NOT be nested inside this 'order' object
-                # for the /api/1/deliveries/create endpoint payload. They are top-level.
-                # If iiko's *internal* `order` object schema for other endpoints
-                # *also* includes these, that's different. But for `create_delivery`, they are top-level.
+                "comment": new_order.delivery_info.comment, # Use comment from delivery_info
+                "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], # Current time + 1 hour buffer, ensure UTC
             }
-
-            # Construct the top-level payload that iiko_service.create_delivery_order expects to *build*
-            # the full request body for /api/1/deliveries/create.
-            # Your iiko_service.py's create_delivery_order function should handle creating the final JSON.
-            # So, you pass it the components it needs.
 
             iiko_response = iiko_service.create_delivery_order(
                 organization_id=organization_id,
                 terminal_group_id=terminal_group_id,
-                order=iiko_order_data_for_payload, # Pass the correctly structured inner order object
-                create_order_settings={"transportToFrontTimeout": 0} # This object goes at the top-level too
+                order=iiko_order_data_for_payload,
+                create_order_settings={"transportToFrontTimeout": 0}
             )
 
             if iiko_response and iiko_response.get('orderId'):
                 new_order.status = 'sent_to_iiko'
-                api.logger.info(f"Order {new_order.id} successfully sent to IIKO. IIKO Order ID: {iiko_response['orderId']}")
+                current_app.logger.info(f"Order {new_order.id} successfully sent to IIKO. IIKO Order ID: {iiko_response['orderId']}")
+                # Clear the cart after successful order creation
+                db.session.delete(cart_with_items) # Delete the eager-loaded cart object
             else:
                 new_order.status = 'iiko_send_failed'
-                api.logger.error(f"Failed to send order {new_order.id} to IIKO. Response: {iiko_response}")
+                current_app.logger.error(f"Failed to send order {new_order.id} to IIKO. Response: {iiko_response}")
                 api.abort(500, f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}")
 
         except Exception as e:
             db.session.rollback()
-            api.logger.error(f"Error sending order to IIKO: {e}", exc_info=True)
+            current_app.logger.error(f"Error sending order to IIKO: {e}", exc_info=True)
             api.abort(500, f"Order created internally but failed to send to external system: {str(e)}")
 
         db.session.commit()
 
+        # --- Reverted Eager Load for the Response Model ---
         created_order = Order.query.options(
-            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.available_addons).joinedload(ProductAddon.addon),
-            joinedload(Order.items).joinedload(OrderItem.product).joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
+            joinedload(Order.items)
+            .joinedload(OrderItem.product)
+            .joinedload(Product.available_addons)
+            .joinedload(ProductAddon.addon), # Assuming ProductAddon.addon is the correct path
+            joinedload(Order.items)
+            .joinedload(OrderItem.product)
+            .joinedload(Product.recommendations)
+            .joinedload(ProductRecommendation.recommendation), # Assuming ProductRecommendation.recommendation is the correct path
+            joinedload(Order.delivery_info) # Ensure delivery info is loaded
         ).get(new_order.id)
 
         return created_order, 201
@@ -1197,34 +1262,6 @@ class ClearCartResource(Resource):
         # Corrected line: Instantiate CartResource and call its get method
         updated_cart_data = CartResource().get() 
         return api.marshal(updated_cart_data, cart_response_model)
-
-## Order Endpoints (Existing - no changes requested)
-
-order_item_model = api.model('OrderItem', {
-    'product': fields.Nested(product_model, description='Product details'),
-    'quantity': fields.Integer(required=True, description='Quantity of the product'),
-    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this product item', default=[]),
-    'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this product item', default=[]),
-    # Note: frontend CartItem also has customWok. If orders need to store this, OrderItem model needs update.
-})
-
-delivery_info_model = api.model('DeliveryInfo', {
-    'address': fields.String(required=True, description='Delivery address'),
-    'phone': fields.String(required=True, description='Contact phone number'),
-    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
-    'comment': fields.String(description='Additional comments for delivery', allow_null=True)
-})
-
-order_model = api.model('Order', {
-    'id': fields.String(required=True, description='Order ID'),
-    'items': fields.List(fields.Nested(order_item_model), description='List of items in the order'),
-    'total': fields.Float(required=True, description='Total price of the order'),
-    'deliveryInfo': fields.Nested(delivery_info_model, required=True, description='Delivery information'),
-    'status': fields.String(required=True, description='Current status of the order'),
-    'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
-    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
-})
-
 
 # --- Configuration ---
 DELIVERY_COST_MOCK = 100 # Mock value for delivery cost
