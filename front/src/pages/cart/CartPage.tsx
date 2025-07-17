@@ -183,110 +183,110 @@ export const CartPage: React.FC = () => {
 
       <Container maxWidth="md" sx={{ py: 2 }}>
         <Stack spacing={2}>
-          {items.map((item) => {            
+          {items.map((item) => {
             return (
-              <Card key={item.id} sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
-                <CardContent>
-                  {/* TODO: Здесь нужно будет получить данные продукта по productId */}
-                  <Box display="flex" alignItems="center" gap={2}>
-                    <Box
-                      component="img"
-                      src={item.image || "https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200"}
-                      alt="Товар"
-                      sx={{ width: 64, height: 64, borderRadius: 3, objectFit: 'cover' }}
-                    />
-                    <Box flexGrow={1}>
-                      <Typography variant="h6" fontWeight="bold" color="text.primary">
-                        {item.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Количество: {item.quantity}
-                      </Typography>
-                      
-                      {/* Кастомный WOK */}
-                      {item.customWok && (
-                        <Box mt={1}>
-                          <Typography variant="caption" color="primary.main">
-                            Кастомный WOK
-                          </Typography>
-                        </Box>
-                      )}
-                      
-                      {/* Допы */}
-                      {item.selectedAddons && item.selectedAddons.length > 0 && (
-                        <Box mt={1} >
-                          <Typography variant="caption" color="primary.main">
-                            Добавки: {item.selectedAddons.length} шт. {" "}
-                          </Typography>
-                          {item.selectedAddons.map((addon) => (
-                            <Typography key={addon.id} variant="caption" color="primary.main">
-                              {addon.group_name} кол-во: {addon.quantity}, {" "}
-                            </Typography>
-                          ))}
-                        </Box>
-                      )}
-                      
-                      {/*/!* Рекомендации *!/*/}
-                      {/*{item.selectedRecommendations && item.selectedRecommendations.length > 0 && (*/}
-                      {/*  <Typography variant="caption" color="success.main" display="block">*/}
-                      {/*    Дополнительно: {item.selectedRecommendations.length} шт.*/}
-                      {/*  </Typography>*/}
-                      {/*)}*/}
-                      
-                      <Typography variant="h6" fontWeight="bold" color="primary.main" mt={1}>
-                        {item.priceTotal}₽
-                      </Typography>
-                    </Box>
-                    <IconButton
-                      onClick={() => handleRemoveItem(item.id, item.productId)}
-                      sx={{ color: 'error.main', '&:hover': { backgroundColor: 'rgba(239, 68, 68, 0.1)' } }}
-                    >
-                      <Delete />
-                    </IconButton>
-                  </Box>
-                  
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
-                    <ButtonGroup variant="outlined">
-                      <IconButton
-                        onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity - 1)}
-                        sx={{
-                          backgroundColor: 'rgba(58, 58, 55, 1)',
-                          border: '1px solid #6B7280',
-                          '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },
-                        }}
-                      >
-                        <Remove sx={{ color: 'text.secondary' }} />
-                      </IconButton>
+                <Card key={item.id} sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
+                  <CardContent>
+                    {/* TODO: Здесь нужно будет получить данные продукта по productId */}
+                    <Box display="flex" alignItems="center" gap={2}>
                       <Box
-                        display="flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        sx={{
-                          minWidth: 60,
-                          backgroundColor: 'background.paper',
-                          border: '1px solid #6B7280',
-                        }}
-                      >
+                          component="img"
+                          src={item.image || "https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200"}
+                          alt="Товар"
+                          sx={{ width: 64, height: 64, borderRadius: 3, objectFit: 'cover' }}
+                      />
+                      <Box flexGrow={1}>
                         <Typography variant="h6" fontWeight="bold" color="text.primary">
-                          {item.quantity}
+                          {item.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Количество: {item.quantity}
+                        </Typography>
+
+                        {/* Кастомный WOK */}
+                        {item.customWok && (
+                            <Box mt={1}>
+                              <Typography variant="caption" color="primary.main">
+                                Кастомный WOK
+                              </Typography>
+                            </Box>
+                        )}
+
+                        {/* Допы */}
+                        {item.selectedAddons && item.selectedAddons.length > 0 && (
+                            <Box mt={1} >
+                              <Typography variant="caption" color="primary.main">
+                                Добавки: {item.selectedAddons.length} шт. {" "}
+                              </Typography>
+                              {item.selectedAddons.map((addon) => (
+                                  <Typography key={addon.id} variant="caption" color="primary.main">
+                                    {addon.group_name} кол-во: {addon.quantity}, {" "}
+                                  </Typography>
+                              ))}
+                            </Box>
+                        )}
+
+                        {/*/!* Рекомендации *!/*/}
+                        {/*{item.selectedRecommendations && item.selectedRecommendations.length > 0 && (*/}
+                        {/*  <Typography variant="caption" color="success.main" display="block">*/}
+                        {/*    Дополнительно: {item.selectedRecommendations.length} шт.*/}
+                        {/*  </Typography>*/}
+                        {/*)}*/}
+
+                        <Typography variant="h6" fontWeight="bold" color="primary.main" mt={1}>
+                          {item.priceTotal}₽
                         </Typography>
                       </Box>
                       <IconButton
-                        onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity + 1)}
-                        sx={{
-                          backgroundColor: 'primary.main',
-                          '&:hover': { backgroundColor: 'secondary.main' },
-                        }}
+                          onClick={() => handleRemoveItem(item.id, item.productId)}
+                          sx={{ color: 'error.main', '&:hover': { backgroundColor: 'rgba(239, 68, 68, 0.1)' } }}
                       >
-                        <Add sx={{ color: 'white' }} />
+                        <Delete />
                       </IconButton>
-                    </ButtonGroup>
-                    <Typography variant="h6" fontWeight="bold" color="text.primary">
-                      ₽{/* TODO: Рассчитать общую стоимость */}
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
+                    </Box>
+
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mt={2}>
+                      <ButtonGroup variant="outlined">
+                        <IconButton
+                            onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity - 1)}
+                            sx={{
+                              backgroundColor: 'rgba(58, 58, 55, 1)',
+                              border: '1px solid #6B7280',
+                              '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },
+                            }}
+                        >
+                          <Remove sx={{ color: 'text.secondary' }} />
+                        </IconButton>
+                        <Box
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            sx={{
+                              minWidth: 60,
+                              backgroundColor: 'background.paper',
+                              border: '1px solid #6B7280',
+                            }}
+                        >
+                          <Typography variant="h6" fontWeight="bold" color="text.primary">
+                            {item.quantity}
+                          </Typography>
+                        </Box>
+                        <IconButton
+                            onClick={() => handleUpdateQuantity(item.id, item.productId, item.quantity + 1)}
+                            sx={{
+                              backgroundColor: 'primary.main',
+                              '&:hover': { backgroundColor: 'secondary.main' },
+                            }}
+                        >
+                          <Add sx={{ color: 'white' }} />
+                        </IconButton>
+                      </ButtonGroup>
+                      <Typography variant="h6" fontWeight="bold" color="text.primary">
+                        ₽{/* TODO: Рассчитать общую стоимость */}
+                      </Typography>
+                    </Box>
+                  </CardContent>
+                </Card>
             );
           })}
 
