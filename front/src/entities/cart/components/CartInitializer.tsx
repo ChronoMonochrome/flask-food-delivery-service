@@ -14,6 +14,8 @@ export const CartInitializer: React.FC = () => {
     refetchOnFocus: true,
     // Перезагружаем при восстановлении соединения
     refetchOnReconnect: true,
+    // Не показываем старые данные при обновлении
+    refetchOnMountOrArgChange: false,
   });
 
   useEffect(() => {
@@ -30,6 +32,7 @@ export const CartInitializer: React.FC = () => {
         totalItems += item.quantity;
       });
 
+      // Используем умное обновление вместо полной перезаписи
       dispatch(backendCartActions.updateProductQuantities({
         productQuantities,
         totalItems,
@@ -38,9 +41,10 @@ export const CartInitializer: React.FC = () => {
     }
   }, [cartData, dispatch]);
 
-  useEffect(() => {
-    dispatch(backendCartActions.setLoading(isLoading));
-  }, [isLoading, dispatch]);
+  // Не устанавливаем глобальный loading для фонового обновления
+  // useEffect(() => {
+  //   dispatch(backendCartActions.setLoading(isLoading));
+  // }, [isLoading, dispatch]);
 
   // Этот компонент не рендерит ничего видимого
   return null;

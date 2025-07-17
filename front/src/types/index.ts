@@ -32,10 +32,12 @@ export interface Product {
   price: number;
   image: string;
   categoryId: string;
+  weight: number;
   nutrition: Nutrition;
   ingredients?: string[];
   availableAddons?: Addon[];
   recommendations?: Recommendation[];
+  isCustomizable?: boolean; // Для конструктора WOK
 }
 
 export interface CartItem {
@@ -43,6 +45,7 @@ export interface CartItem {
   quantity: number;
   selectedAddons: Addon[];
   selectedRecommendations: Recommendation[];
+  customWok?: WokCustomization; // Для кастомного WOK
 }
 
 export interface DeliveryInfo {
@@ -60,4 +63,40 @@ export interface Order {
   status: 'pending' | 'preparing' | 'delivering' | 'delivered' | 'cancelled';
   createdAt: Date;
   estimatedDelivery?: Date;
+}
+
+// Типы для конструктора WOK
+export interface WokBase {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+}
+
+export interface WokMeat {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+}
+
+export interface WokTopping {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+}
+
+export interface WokSauce {
+  id: string;
+  name: string;
+  price: number;
+  image: string;
+}
+
+export interface WokCustomization {
+  base: WokBase;
+  meats: WokMeat[];
+  toppings: WokTopping[];
+  sauces: WokSauce[];
 }

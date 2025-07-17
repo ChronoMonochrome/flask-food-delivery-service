@@ -15,14 +15,15 @@ import {
   AppBar,
   Toolbar,
   Stack,
-  Chip
 } from '@mui/material';
 import { ArrowBack, Check } from '@mui/icons-material';
 import { useNavigationSelector } from '../../features/navigation';
 import { useCartOperations } from '../../entities/cart';
 import { navigationActions } from '../../features/navigation';
-import { WokBase, WokMeat, WokTopping, WokSauce, WokCustomization } from '../../shared/types';
-import { wokBases, wokMeats, wokToppings, wokSauces } from '../../shared/constants/wok-data';
+import { WokCustomization } from '../../shared/types';
+import { useGetWokAddonsByGroupQuery, WokAddon } from '../../shared/api';
+import { LoadingSpinner } from '../../shared/ui/LoadingSpinner';
+import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 
 type Step = 'base' | 'meat' | 'toppings' | 'sauces' | 'summary';
 
@@ -33,17 +34,23 @@ export const WokBuilderPage: React.FC = () => {
   const { selectedProduct } = useNavigationSelector();
   const { addToCart } = useCartOperations();
   const [currentStep, setCurrentStep] = useState<Step>('base');
-  const [selectedBase, setSelectedBase] = useState<WokBase | null>(null);
-  const [selectedMeats, setSelectedMeats] = useState<WokMeat[]>([]);
-  const [selectedToppings, setSelectedToppings] = useState<WokTopping[]>([]);
-  const [selectedSauces, setSelectedSauces] = useState<WokSauce[]>([]);
+  const [selectedBase, setSelectedBase] = useState<WokAddon | null>(null);
+  const [selectedMeats, setSelectedMeats] = useState<WokAddon[]>([]);
+  const [selectedToppings, setSelectedToppings] = useState<WokAddon[]>([]);
+  const [selectedSauces, setSelectedSauces] = useState<WokAddon[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Загружаем данные с бэкенда
+  const { data: bases, isLoading: basesLoading, error: basesError } = useGetWokAddonsByGroupQuery('Лапша');
+  const { data: meats, isLoading: meatsLoading, error: meatsError } = useGetWokAddonsByGroupQuery('Мясо');
+  const { data: toppings, isLoading: toppingsLoading, error: toppingsError } = useGetWokAddonsByGroupQuery('Начинка');
+  const { data: sauces, isLoading: saucesLoading, error: saucesError } = useGetWokAddonsByGroupQuery('Соусы');
 
   if (!selectedProduct) {
     return null;
   }
 
-  const handleMeatToggle = (meat: WokMeat) => {
+  const handleMeatToggle = (meat: WokAddon) => {
     setSelectedMeats(prev => 
       prev.find(m => m.id === meat.id)
         ? prev.filter(m => m.id !== meat.id)
@@ -51,7 +58,7 @@ export const WokBuilderPage: React.FC = () => {
     );
   };
 
-  const handleToppingToggle = (topping: WokTopping) => {
+  const handleToppingToggle = (topping: WokAddon) => {
     setSelectedToppings(prev => 
       prev.find(t => t.id === topping.id)
         ? prev.filter(t => t.id !== topping.id)
@@ -59,7 +66,7 @@ export const WokBuilderPage: React.FC = () => {
     );
   };
 
-  const handleSauceToggle = (sauce: WokSauce) => {
+  const handleSauceToggle = (sauce: WokAddon) => {
     setSelectedSauces(prev => 
       prev.find(s => s.id === sauce.id)
         ? prev.filter(s => s.id !== sauce.id)
@@ -68,7 +75,7 @@ export const WokBuilderPage: React.FC = () => {
   };
 
   const getTotalPrice = () => {
-    const basePrice = selectedProduct.price;
+    const basePrice = selectedBase?.price || 0;
     const meatsPrice = selectedMeats.reduce((sum, meat) => sum + meat.price, 0);
     const toppingsPrice = selectedToppings.reduce((sum, topping) => sum + topping.price, 0);
     const saucesPrice = selectedSauces.reduce((sum, sauce) => sum + sauce.price, 0);
@@ -81,10 +88,30 @@ export const WokBuilderPage: React.FC = () => {
     setIsLoading(true);
     try {
       const customWok: WokCustomization = {
-        base: selectedBase,
-        meats: selectedMeats,
-        toppings: selectedToppings,
-        sauces: selectedSauces
+        base: {
+          id: selectedBase.id,
+          name: selectedBase.name,
+          price: selectedBase.price,
+          image: selectedBase.image || 'https://images.pexels.com/photos/723198/pexels-photo-723198.jpeg?auto=compress&cs=tinysrgb&w=200'
+        },
+        meats: selectedMeats.map(meat => ({
+          id: meat.id,
+          name: meat.name,
+          price: meat.price,
+          image: meat.image || 'https://images.pexels.com/photos/616354/pexels-photo-616354.jpeg?auto=compress&cs=tinysrgb&w=200'
+        })),
+        toppings: selectedToppings.map(topping => ({
+          id: topping.id,
+          name: topping.name,
+          price: topping.price,
+          image: topping.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'
+        })),
+        sauces: selectedSauces.map(sauce => ({
+          id: sauce.id,
+          name: sauce.name,
+          price: sauce.price,
+          image: sauce.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'
+        }))
       };
 
       const customProduct = {
@@ -130,9 +157,9 @@ export const WokBuilderPage: React.FC = () => {
       case 'meat':
         return 'Шаг 2. Добавь мясо';
       case 'toppings':
-        return 'Добавь начинку';
+        return 'Шаг 3. Добавь начинку';
       case 'sauces':
-        return 'Добавь дополнительный соус';
+        return 'Шаг 4. Добавь соус';
       case 'summary':
         return 'Твой WOK готов!';
       default:
@@ -174,13 +201,17 @@ export const WokBuilderPage: React.FC = () => {
   const renderStepContent = () => {
     switch (currentStep) {
       case 'base':
+        if (basesLoading) return <LoadingSpinner />;
+        if (basesError) return <ErrorMessage message="Ошибка загрузки основ" />;
+        if (!bases || bases.length === 0) return <ErrorMessage message="Основы не найдены" />;
+        
         return (
           <Box>
             <Typography variant="body1" color="text.secondary" mb={3}>
-              В комплекте овощи и соус. Все вместе — 330 г
+              Выбери основу для своего WOK
             </Typography>
             <Grid container spacing={2}>
-              {wokBases.map((base) => (
+              {bases.map((base) => (
                 <Grid item xs={6} key={base.id}>
                   <Card
                     onClick={() => setSelectedBase(base)}
@@ -197,12 +228,12 @@ export const WokBuilderPage: React.FC = () => {
                     <CardContent sx={{ textAlign: 'center', p: 2 }}>
                       <Box
                         component="img"
-                        src={base.image}
+                        src={base.image || 'https://images.pexels.com/photos/723198/pexels-photo-723198.jpeg?auto=compress&cs=tinysrgb&w=200'}
                         alt={base.name}
                         sx={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 2, mb: 1 }}
                       />
                       <Typography variant="body1" fontWeight="medium">{base.name}</Typography>
-                      <Typography variant="h6" fontWeight="bold" color="primary.main">210 ₽</Typography>
+                      <Typography variant="h6" fontWeight="bold" color="primary.main">₽{base.price}</Typography>
                       {selectedBase?.id === base.id && (
                         <Check sx={{ mt: 1 }} />
                       )}
@@ -215,13 +246,17 @@ export const WokBuilderPage: React.FC = () => {
         );
 
       case 'meat':
+        if (meatsLoading) return <LoadingSpinner />;
+        if (meatsError) return <ErrorMessage message="Ошибка загрузки мяса" />;
+        if (!meats || meats.length === 0) return <ErrorMessage message="Мясо не найдено" />;
+        
         return (
           <Box>
             <Typography variant="body1" color="text.secondary" mb={3}>
               Выбери мясо по своему вкусу (можно несколько видов)
             </Typography>
             <Stack spacing={2}>
-              {wokMeats.map((meat) => (
+              {meats.map((meat) => (
                 <Button
                   key={meat.id}
                   onClick={() => handleMeatToggle(meat)}
@@ -243,13 +278,13 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={meat.image}
+                      src={meat.image || 'https://images.pexels.com/photos/616354/pexels-photo-616354.jpeg?auto=compress&cs=tinysrgb&w=200'}
                       alt={meat.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
                     <Box flexGrow={1} textAlign="left">
                       <Typography fontWeight="medium">{meat.name}</Typography>
-                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+{meat.price} ₽</Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+₽{meat.price}</Typography>
                     </Box>
                     {selectedMeats.find(m => m.id === meat.id) && <Check />}
                   </Box>
@@ -260,13 +295,17 @@ export const WokBuilderPage: React.FC = () => {
         );
 
       case 'toppings':
+        if (toppingsLoading) return <LoadingSpinner />;
+        if (toppingsError) return <ErrorMessage message="Ошибка загрузки начинок" />;
+        if (!toppings || toppings.length === 0) return <ErrorMessage message="Начинки не найдены" />;
+        
         return (
           <Box>
             <Typography variant="body1" color="text.secondary" mb={3}>
               Добавь начинку по вкусу
             </Typography>
             <Stack spacing={2}>
-              {wokToppings.map((topping) => (
+              {toppings.map((topping) => (
                 <Button
                   key={topping.id}
                   onClick={() => handleToppingToggle(topping)}
@@ -288,13 +327,13 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={topping.image}
+                      src={topping.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'}
                       alt={topping.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
                     <Box flexGrow={1} textAlign="left">
                       <Typography fontWeight="medium">{topping.name}</Typography>
-                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+{topping.price} ₽</Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+₽{topping.price}</Typography>
                     </Box>
                     {selectedToppings.find(t => t.id === topping.id) && <Check />}
                   </Box>
@@ -305,13 +344,17 @@ export const WokBuilderPage: React.FC = () => {
         );
 
       case 'sauces':
+        if (saucesLoading) return <LoadingSpinner />;
+        if (saucesError) return <ErrorMessage message="Ошибка загрузки соусов" />;
+        if (!sauces || sauces.length === 0) return <ErrorMessage message="Соусы не найдены" />;
+        
         return (
           <Box>
             <Typography variant="body1" color="text.secondary" mb={3}>
-              Выбери дополнительный соус (за 60 ₽)
+              Выбери дополнительный соус
             </Typography>
             <Stack spacing={2}>
-              {wokSauces.map((sauce) => (
+              {sauces.map((sauce) => (
                 <Button
                   key={sauce.id}
                   onClick={() => handleSauceToggle(sauce)}
@@ -333,13 +376,13 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={sauce.image}
+                      src={sauce.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'}
                       alt={sauce.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
                     <Box flexGrow={1} textAlign="left">
                       <Typography fontWeight="medium">{sauce.name}</Typography>
-                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+{sauce.price} ₽</Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.75 }}>+₽{sauce.price}</Typography>
                     </Box>
                     {selectedSauces.find(s => s.id === sauce.id) && <Check />}
                   </Box>
@@ -360,28 +403,34 @@ export const WokBuilderPage: React.FC = () => {
               {selectedBase && (
                 <Box mb={1}>
                   <Typography component="span" color="primary.main" fontWeight="medium">Основа: </Typography>
-                  <Typography component="span" color="text.secondary">{selectedBase.name}</Typography>
+                  <Typography component="span" color="text.secondary">{selectedBase.name} (₽{selectedBase.price})</Typography>
                 </Box>
               )}
               
               {selectedMeats.length > 0 && (
                 <Box mb={1}>
                   <Typography component="span" color="primary.main" fontWeight="medium">Мясо: </Typography>
-                  <Typography component="span" color="text.secondary">{selectedMeats.map(m => m.name).join(', ')}</Typography>
+                  <Typography component="span" color="text.secondary">
+                    {selectedMeats.map(m => `${m.name} (+₽${m.price})`).join(', ')}
+                  </Typography>
                 </Box>
               )}
               
               {selectedToppings.length > 0 && (
                 <Box mb={1}>
                   <Typography component="span" color="primary.main" fontWeight="medium">Начинки: </Typography>
-                  <Typography component="span" color="text.secondary">{selectedToppings.map(t => t.name).join(', ')}</Typography>
+                  <Typography component="span" color="text.secondary">
+                    {selectedToppings.map(t => `${t.name} (+₽${t.price})`).join(', ')}
+                  </Typography>
                 </Box>
               )}
               
               {selectedSauces.length > 0 && (
                 <Box mb={1}>
                   <Typography component="span" color="primary.main" fontWeight="medium">Соусы: </Typography>
-                  <Typography component="span" color="text.secondary">{selectedSauces.map(s => s.name).join(', ')}</Typography>
+                  <Typography component="span" color="text.secondary">
+                    {selectedSauces.map(s => `${s.name} (+₽${s.price})`).join(', ')}
+                  </Typography>
                 </Box>
               )}
             </CardContent>
@@ -392,6 +441,27 @@ export const WokBuilderPage: React.FC = () => {
         return null;
     }
   };
+
+  // Показываем загрузку если загружается хотя бы одна группа
+  const isAnyLoading = basesLoading || meatsLoading || toppingsLoading || saucesLoading;
+  
+  if (isAnyLoading) {
+    return (
+      <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', display: 'flex', flexDirection: 'column' }}>
+        <AppBar position="static" sx={{ backgroundColor: 'background.paper', boxShadow: 'none' }}>
+          <Toolbar sx={{ borderBottom: '1px solid #4B5563' }}>
+            <IconButton onClick={handleBack} sx={{ mr: 2 }}>
+              <ArrowBack sx={{ color: 'text.secondary' }} />
+            </IconButton>
+            <Typography variant="h6" fontWeight="bold" color="text.primary">
+              Собери свою коробочку
+            </Typography>
+          </Toolbar>
+        </AppBar>
+        <LoadingSpinner />
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>

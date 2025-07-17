@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
 import {
   Box,
@@ -26,15 +27,31 @@ import { Addon, Recommendation } from '../../shared/types';
 export const ProductDetailPage: React.FC = () => {
   const dispatch = useDispatch();
   const { selectedProduct } = useNavigationSelector();
-  const { addToCart, updateQuantity } = useCartOperations();
+  const cartOperations = useCartOperations();
+  const { addToCart, updateQuantity } = cartOperations;
   
   const [selectedAddons, setSelectedAddons] = useState<Addon[]>([]);
   const [selectedRecommendations, setSelectedRecommendations] = useState<Recommendation[]>([]);
   const [addonQuantities, setAddonQuantities] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(false);
 
-  // Получаем количество базового товара без добавок из кэша
-  const baseProductQuantity = useProductQuantity(selectedProduct?.id || '');
+  // Получаем количество базового товара из кэша
+  const currentQuantity = useProductQuantity(selectedProduct?.id || '');
+  
+  // Локальное состояние для отображения с защитой от мерцания
+  const [displayQuantity, setDisplayQuantity] = useState(currentQuantity);
+  const [isLocalUpdating, setIsLocalUpdating] = useState(false);
+
+  // Синхронизируем только при реальных изменениях
+  useEffect(() => {
+    const shouldUpdate = !isLocalUpdating && 
+      currentQuantity !== displayQuantity &&
+      (currentQuantity > displayQuantity || displayQuantity === 0);
+    
+    if (shouldUpdate) {
+      setDisplayQuantity(currentQuantity);
+    }
+  }, [currentQuantity, isLocalUpdating, displayQuantity]);
 
   if (!selectedProduct) {
     return null;
@@ -86,6 +103,7 @@ export const ProductDetailPage: React.FC = () => {
     if (isLoading) return;
     
     setIsLoading(true);
+    setIsLocalUpdating(true);
     try {
       // Создаем добавки с количеством
       const addonsWithQuantity = selectedAddons.map(addon => ({
@@ -103,22 +121,29 @@ export const ProductDetailPage: React.FC = () => {
       console.error('Ошибка добавления товара в корзину:', error);
     } finally {
       setIsLoading(false);
+      setIsLocalUpdating(false);
     }
   };
 
-  const handleBaseProductQuantityChange = async (newQuantity: number) => {
+  const handleBaseProductQuantityChange = useCallback(async (newQuantity: number) => {
     if (isLoading) return;
     
     setIsLoading(true);
+    setIsLocalUpdating(true);
+    setDisplayQuantity(newQuantity); // Оптимистично обновляем
+    
     try {
       // Для базового товара без добавок используем productId как itemId
       await updateQuantity(selectedProduct.id, selectedProduct.id, newQuantity);
     } catch (error) {
       console.error('Ошибка обновления количества:', error);
+      // При ошибке возвращаем к исходному состоянию
+      setDisplayQuantity(currentQuantity);
     } finally {
       setIsLoading(false);
+      setIsLocalUpdating(false);
     }
-  };
+  }, [selectedProduct.id, updateQuantity, isLoading, currentQuantity]);
 
   const handleBack = () => {
     dispatch(navigationActions.navigateToPage('home'));
@@ -127,8 +152,12 @@ export const ProductDetailPage: React.FC = () => {
   const totalPrice = selectedProduct.price + 
     selectedAddons.reduce((sum, addon) => sum + (addon.price * getAddonQuantity(addon.id)), 0);
 
-  const hasSelectedAddonsOrRecommendations = selectedAddons.length > 0 || selectedRecommendations.length > 0;
-
+  // Мемоизируем состояние кнопок
+  const buttonState = useMemo(() => ({
+    showQuantityControls: displayQuantity > 0,
+    isDisabled: isLoading || isLocalUpdating,
+    canDecrease: displayQuantity > 0
+  }), [displayQuantity, isLoading, isLocalUpdating]);
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
       {/* Image */}
@@ -381,77 +410,27 @@ export const ProductDetailPage: React.FC = () => {
             </Box>
           )}
 
-          {/* Рекомендации */}
-          {selectedProduct.recommendations && selectedProduct.recommendations.length > 0 && (
-            <Box mb={6}>
-              <Typography variant="h6" fontWeight="bold" color="text.primary" mb={2}>
-                Отлично дополнит:
-              </Typography>
-              <Stack spacing={1}>
-                {selectedProduct.recommendations.map((recommendation) => (
-                  <FormControlLabel
-                    key={recommendation.id}
-                    control={
-                      <Checkbox
-                        checked={selectedRecommendations.some(r => r.id === recommendation.id)}
-                        onChange={() => handleRecommendationToggle(recommendation)}
-                        sx={{ color: 'primary.main' }}
-                      />
-                    }
-                    label={
-                      <Box display="flex" alignItems="center" gap={2}>
-                        <Box
-                          component="img"
-                          src={recommendation.image}
-                          alt={recommendation.name}
-                          sx={{ width: 48, height: 48, borderRadius: 2, objectFit: 'cover' }}
-                        />
-                        <Box>
-                          <Typography fontWeight="medium" color="text.primary">
-                            {recommendation.name}
-                          </Typography>
-                          <Typography variant="body2" color="primary.main">
-                            +₽{recommendation.price}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    }
-                    sx={{
-                      backgroundColor: selectedRecommendations.some(r => r.id === recommendation.id) 
-                        ? 'rgba(234, 181, 69, 0.1)' 
-                        : 'rgba(58, 58, 55, 1)',
-                      border: '1px solid #6B7280',
-                      borderRadius: 2,
-                      p: 1,
-                      m: 0,
-                      width: '100%',
-                      '&:hover': {
-                        backgroundColor: 'rgba(107, 114, 128, 0.1)',
-                      },
-                    }}
-                  />
-                ))}
-              </Stack>
-            </Box>
-          )}
 
           {/* Bottom Actions */}
           <Box
             sx={{
               position: 'sticky',
               bottom: 0,
-              backgroundColor: 'background.paper',
               pt: 2,
               borderTop: '1px solid #4B5563',
+              minHeight: 80, // Фиксированная высота для предотвращения мерцания
             }}
           >
-            {/* Если есть базовый товар в корзине и нет выбранных добавок/рекомендаций */}
-            {baseProductQuantity > 0 && !hasSelectedAddonsOrRecommendations ? (
-              <Box display="flex" justifyContent="space-between" alignItems="center">
+            {/* Если есть базовый товар в корзине и нет выбранных добавок */}
+            {buttonState.showQuantityControls && selectedAddons.length === 0 ? ( 
+              <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ py: 1 }}>
                 <ButtonGroup variant="outlined">
                   <IconButton
-                    onClick={() => handleBaseProductQuantityChange(baseProductQuantity - 1)}
-                    disabled={isLoading}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleBaseProductQuantityChange(displayQuantity - 1);
+                    }}
+                    disabled={buttonState.isDisabled || !buttonState.canDecrease}
                     sx={{
                       backgroundColor: 'rgba(58, 58, 55, 1)',
                       border: '1px solid #6B7280',
@@ -471,12 +450,15 @@ export const ProductDetailPage: React.FC = () => {
                     }}
                   >
                     <Typography variant="h6" fontWeight="bold" color="text.primary">
-                      {baseProductQuantity}
+                      {displayQuantity}
                     </Typography>
                   </Box>
                   <IconButton
-                    onClick={() => handleBaseProductQuantityChange(baseProductQuantity + 1)}
-                    disabled={isLoading}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleBaseProductQuantityChange(displayQuantity + 1);
+                    }}
+                    disabled={buttonState.isDisabled}
                     sx={{
                       backgroundColor: 'primary.main',
                       '&:hover': { backgroundColor: 'secondary.main' },
@@ -486,24 +468,26 @@ export const ProductDetailPage: React.FC = () => {
                   </IconButton>
                 </ButtonGroup>
                 <Typography variant="h5" fontWeight="bold" color="text.primary">
-                  ₽{(selectedProduct.price * baseProductQuantity).toLocaleString()}
+                  ₽{(selectedProduct.price * displayQuantity).toLocaleString()}
                 </Typography>
               </Box>
             ) : (
               /* Кнопка добавления в корзину */
-              <Button
-                onClick={handleAddToCart}
-                disabled={isLoading}
-                variant="contained"
-                fullWidth
-                size="large"
-                sx={{ py: 2, borderRadius: 2, fontSize: '1.125rem', fontWeight: 'bold' }}
-              >
-                {isLoading 
-                  ? 'Добавляем...' 
-                  : `Добавить в корзину - ₽${totalPrice.toLocaleString()}`
-                }
-              </Button>
+              <Box sx={{ py: 1 }}>
+                <Button
+                  onClick={handleAddToCart}
+                  disabled={buttonState.isDisabled}
+                  variant="contained"
+                  fullWidth
+                  size="large"
+                  sx={{ py: 2, borderRadius: 2, fontSize: '1.125rem', fontWeight: 'bold' }}
+                >
+                  {buttonState.isDisabled 
+                    ? 'Добавляем...' 
+                    : `Добавить в корзину - ₽${totalPrice.toLocaleString()}`
+                  }
+                </Button>
+              </Box>
             )}
           </Box>
         </CardContent>
