@@ -1,4 +1,5 @@
 import React from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
 import {
   Card,
@@ -13,7 +14,7 @@ import {
 } from '@mui/material';
 import { Add, Remove } from '@mui/icons-material';
 import { Product } from '../../shared/types';
-import { useProductQuantity, useCartOperations } from '../../entities/cart';
+import { useProductQuantity, useCartOperations, useBackendCartSelector } from '../../entities/cart';
 import { navigationActions } from '../../features/navigation';
 
 interface ProductCardProps {
@@ -23,9 +24,60 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const dispatch = useDispatch();
   const currentQuantity = useProductQuantity(product.id);
+  const { isLoading: globalLoading } = useBackendCartSelector();
   const { addToCart, updateQuantity } = useCartOperations();
+  
+  // Стабильное локальное состояние с защитой от сброса
+  const [displayQuantity, setDisplayQuantity] = useState(currentQuantity);
+  const [isLocalUpdating, setIsLocalUpdating] = useState(false);
+  const [hasUserInteraction, setHasUserInteraction] = useState(false);
+  
+  // Синхронизируем только при реальных изменениях и без активных операций
+  useEffect(() => {
+    // Обновляем displayQuantity только если:
+    // 1. Не идет локальное обновление
+    // 2. Значение действительно изменилось
+    // 3. Новое значение больше текущего ИЛИ текущее отображаемое значение равно 0
+    const shouldUpdate = !isLocalUpdating && 
+      currentQuantity !== displayQuantity &&
+      (currentQuantity > displayQuantity || displayQuantity === 0);
+    
+    if (shouldUpdate) {
+      setDisplayQuantity(currentQuantity);
+      setHasUserInteraction(false);
+    }
+  }, [currentQuantity, isLocalUpdating, displayQuantity]);
 
-  const handleAddToCart = (e: React.MouseEvent) => {
+  const handleAddToCart = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    if (product.isCustomizable) {
+      dispatch(navigationActions.navigateToProduct(product));
+      return;
+    }
+    
+    setHasUserInteraction(true);
+    setIsLocalUpdating(true);
+    setDisplayQuantity(1); // Оптимистично показываем 1
+    
+    const addPromise = addToCart(product, [], [], undefined, currentQuantity);
+    
+    addPromise
+      .then(() => {
+        // Успешно добавлено, локальное состояние синхронизируется через useEffect
+      })
+      .catch(() => {
+        // При ошибке возвращаем к исходному состоянию
+        setDisplayQuantity(currentQuantity);
+        setHasUserInteraction(false);
+      })
+      .finally(() => {
+        setIsLocalUpdating(false);
+      });
+  }, [product, addToCart, currentQuantity, displayQuantity]);
+
+  const handleQuantityChange = useCallback(async (e: React.MouseEvent, newQuantity: number) => {
     e.stopPropagation();
     
     if (product.isCustomizable) {
@@ -33,25 +85,32 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       return;
     }
     
-    addToCart(product, [], []);
-  };
-
-  const handleQuantityChange = async (e: React.MouseEvent, newQuantity: number) => {
-    e.stopPropagation();
+    setHasUserInteraction(true);
+    setIsLocalUpdating(true);
+    setDisplayQuantity(newQuantity); // Оптимистично обновляем
     
-    if (product.isCustomizable) {
-      dispatch(navigationActions.navigateToProduct(product));
-      return;
+    try {
+      // Для простых товаров без добавок используем базовый itemId = productId
+      await updateQuantity(product.id, product.id, newQuantity);
+    } catch (error) {
+      // При ошибке возвращаем к исходному состоянию
+      setDisplayQuantity(currentQuantity);
+    } finally {
+      setIsLocalUpdating(false);
     }
-    
-    // Для простых товаров без добавок используем базовый itemId = productId
-    await updateQuantity(product.id, product.id, newQuantity);
-  };
+  }, [product, updateQuantity, currentQuantity]);
 
-  const handleCardClick = () => {
+  const handleCardClick = useCallback(() => {
     dispatch(navigationActions.navigateToProduct(product));
-  };
+  }, [dispatch, product]);
 
+  // Мемоизируем состояние кнопок для предотвращения ререндеров
+  const buttonState = useMemo(() => ({
+    showQuantityControls: displayQuantity > 0,
+    isDisabled: globalLoading || isLocalUpdating,
+    canDecrease: displayQuantity > 0
+  }), [displayQuantity, globalLoading, isLocalUpdating]);
+  
   return (
     <Card
       onClick={handleCardClick}
@@ -100,76 +159,94 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           }}
         />
         
-        {/* Кнопка добавления или управления количеством */}
-        {currentQuantity === 0 ? (
-          <IconButton
-            onClick={handleAddToCart}
-            sx={{
-              position: 'absolute',
-              bottom: 12,
-              right: 12,
-              background: 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)',
-              color: 'white',
-              width: 40,
-              height: 40,
-              boxShadow: '0 4px 12px rgba(234, 181, 69, 0.4)',
-              '&:hover': {
-                background: 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)',
-                transform: 'scale(1.1)',
-                boxShadow: '0 6px 16px rgba(234, 181, 69, 0.5)',
-              },
-            }}
-          >
-            <Add fontSize="medium" />
-          </IconButton>
-        ) : (
-          <Box
-            sx={{
-              position: 'absolute',
-              bottom: 12,
-              right: 12,
-              display: 'flex',
-              alignItems: 'center',
-              backgroundColor: 'rgba(0, 0, 0, 0.85)',
-              borderRadius: 2,
-              padding: '6px',
-              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-            }}
-          >
+        {/* Кнопка добавления или управления количеством - фиксированный контейнер */}
+        <Box
+          sx={{
+            position: 'absolute',
+            bottom: 12,
+            right: 12,
+            minWidth: 40,
+            minHeight: 40,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {!buttonState.showQuantityControls ? (
             <IconButton
-              onClick={(e) => handleQuantityChange(e, currentQuantity - 1)}
-              size="small"
+              onClick={handleAddToCart}
+              disabled={buttonState.isDisabled}
               sx={{
+                background: 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)',
                 color: 'white',
-                width: 32,
-                height: 32,
-                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
+                width: 40,
+                height: 40,
+                pointerEvents: 'auto',
+                zIndex: 10,
+                boxShadow: '0 4px 12px rgba(234, 181, 69, 0.4)',
+                '&:hover': {
+                  background: 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)',
+                  transform: 'scale(1.1)',
+                  boxShadow: '0 6px 16px rgba(234, 181, 69, 0.5)',
+                },
+                '&:disabled': {
+                  background: 'rgba(234, 181, 69, 0.5)',
+                  color: 'rgba(255, 255, 255, 0.5)',
+                },
               }}
             >
-              <Remove fontSize="small" />
+              <Add fontSize="medium" />
             </IconButton>
-            <Typography
-              variant="body1"
-              fontWeight="bold"
-              color="white"
-              sx={{ mx: 1.5, minWidth: 24, textAlign: 'center' }}
-            >
-              {currentQuantity}
-            </Typography>
-            <IconButton
-              onClick={(e) => handleQuantityChange(e, currentQuantity + 1)}
-              size="small"
+          ) : (
+            <Box
               sx={{
-                color: 'white',
-                width: 32,
-                height: 32,
-                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                borderRadius: 2,
+                padding: '6px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
               }}
             >
-              <Add fontSize="small" />
-            </IconButton>
-          </Box>
-        )}
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity - 1)}
+                disabled={buttonState.isDisabled || !buttonState.canDecrease}
+                size="small"
+                sx={{
+                  color: 'white',
+                  width: 32,
+                  height: 32,
+                  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
+                  '&:disabled': { color: 'rgba(255, 255, 255, 0.5)' },
+                }}
+              >
+                <Remove fontSize="small" />
+              </IconButton>
+              <Typography
+                variant="body1"
+                fontWeight="bold"
+                color="white"
+                sx={{ mx: 1.5, minWidth: 24, textAlign: 'center' }}
+              >
+                {displayQuantity}
+              </Typography>
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity + 1)}
+                disabled={buttonState.isDisabled}
+                size="small"
+                sx={{
+                  color: 'white',
+                  width: 32,
+                  height: 32,
+                  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.15)' },
+                  '&:disabled': { color: 'rgba(255, 255, 255, 0.5)' },
+                }}
+              >
+                <Add fontSize="small" />
+              </IconButton>
+            </Box>
+          )}
+        </Box>
       </Box>
       
       {/* Контент - адаптивная высота */}
@@ -262,52 +339,56 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             {product.isCustomizable ? `от ₽${product.price || 0}` : `₽${product.price || 0}`}
           </Typography>
           
-          {/*/!* Дополнительные кнопки управления количеством внизу карточки *!/*/}
-          {/*{currentQuantity > 0 && !product.isCustomizable && (*/}
-          {/*  <ButtonGroup size="small" variant="outlined">*/}
-          {/*    <IconButton*/}
-          {/*      onClick={(e) => handleQuantityChange(e, currentQuantity - 1)}*/}
-          {/*      sx={{*/}
-          {/*        backgroundColor: 'rgba(58, 58, 55, 1)',*/}
-          {/*        border: '1px solid #6B7280',*/}
-          {/*        color: 'text.secondary',*/}
-          {/*        width: 34,*/}
-          {/*        height: 34,*/}
-          {/*        '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Remove fontSize="small" />*/}
-          {/*    </IconButton>*/}
-          {/*    <Box*/}
-          {/*      display="flex"*/}
-          {/*      alignItems="center"*/}
-          {/*      justifyContent="center"*/}
-          {/*      sx={{*/}
-          {/*        minWidth: 42,*/}
-          {/*        backgroundColor: 'background.paper',*/}
-          {/*        border: '1px solid #6B7280',*/}
-          {/*        borderLeft: 'none',*/}
-          {/*        borderRight: 'none',*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Typography variant="body2" fontWeight="bold" color="text.primary">*/}
-          {/*        {currentQuantity}*/}
-          {/*      </Typography>*/}
-          {/*    </Box>*/}
-          {/*    <IconButton*/}
-          {/*      onClick={(e) => handleQuantityChange(e, currentQuantity + 1)}*/}
-          {/*      sx={{*/}
-          {/*        backgroundColor: 'primary.main',*/}
-          {/*        color: 'white',*/}
-          {/*        width: 34,*/}
-          {/*        height: 34,*/}
-          {/*        '&:hover': { backgroundColor: 'secondary.main' },*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Add fontSize="small" />*/}
-          {/*    </IconButton>*/}
-          {/*  </ButtonGroup>*/}
-          {/*)}*/}
+          {/* Дополнительные кнопки управления количеством внизу карточки */}
+          {buttonState.showQuantityControls && !product.isCustomizable && !buttonState.isDisabled && (
+            <ButtonGroup size="small" variant="outlined">
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity - 1)}
+                disabled={buttonState.isDisabled || !buttonState.canDecrease}
+                sx={{
+                  backgroundColor: 'rgba(58, 58, 55, 1)',
+                  border: '1px solid #6B7280',
+                  color: 'text.secondary',
+                  width: 34,
+                  height: 34,
+                  '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },
+                  '&:disabled': { color: 'rgba(255, 255, 255, 0.3)' },
+                }}
+              >
+                <Remove fontSize="small" />
+              </IconButton>
+              <Box
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                sx={{
+                  minWidth: 42,
+                  backgroundColor: 'background.paper',
+                  border: '1px solid #6B7280',
+                  borderLeft: 'none',
+                  borderRight: 'none',
+                }}
+              >
+                <Typography variant="body2" fontWeight="bold" color="text.primary">
+                  {displayQuantity}
+                </Typography>
+              </Box>
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity + 1)}
+                disabled={buttonState.isDisabled}
+                sx={{
+                  backgroundColor: 'primary.main',
+                  color: 'white',
+                  width: 34,
+                  height: 34,
+                  '&:hover': { backgroundColor: 'secondary.main' },
+                  '&:disabled': { backgroundColor: 'rgba(234, 181, 69, 0.5)' },
+                }}
+              >
+                <Add fontSize="small" />
+              </IconButton>
+            </ButtonGroup>
+          )}
         </Box>
       </CardContent>
     </Card>

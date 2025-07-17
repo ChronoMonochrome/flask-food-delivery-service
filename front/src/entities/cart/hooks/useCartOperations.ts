@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { 
   useAddToCartMutation, 
   useUpdateCartItemMutation, 
@@ -8,9 +8,11 @@ import {
 } from '../../../shared/api/cart-api';
 import { backendCartActions } from '../model/backend-slice';
 import { Product, Addon, Recommendation, WokCustomization } from '../../../shared/types';
+import { RootState } from '../../../app/store';
 
 export const useCartOperations = () => {
   const dispatch = useDispatch();
+  const productQuantities = useSelector((state: RootState) => state.backendCart.productQuantities);
   const [addToCartMutation] = useAddToCartMutation();
   const [updateCartItemMutation] = useUpdateCartItemMutation();
   const [removeFromCartMutation] = useRemoveFromCartMutation();
@@ -21,10 +23,12 @@ export const useCartOperations = () => {
     recommendations: Recommendation[] = [],
     customWok?: WokCustomization
   ) => {
+    const currentQuantity = productQuantities[product.id] || 0;
+    
     // Оптимистичное обновление
     dispatch(backendCartActions.optimisticUpdateQuantity({
       productId: product.id,
-      quantity: 1 // Предполагаем добавление 1 товара
+      quantity: currentQuantity + 1
     }));
 
     try {
@@ -56,11 +60,11 @@ export const useCartOperations = () => {
       // Откатываем оптимистичное обновление при ошибке
       dispatch(backendCartActions.optimisticUpdateQuantity({
         productId: product.id,
-        quantity: 0
+        quantity: currentQuantity
       }));
       console.error('Ошибка добавления в корзину:', error);
     }
-  }, [addToCartMutation, dispatch]);
+  }, [addToCartMutation, dispatch, productQuantities]);
 
   const updateQuantity = useCallback(async (itemId: string, productId: string, newQuantity: number) => {
     // Оптимистичное обновление
@@ -112,6 +116,7 @@ export const useCartOperations = () => {
       });
     }
 
+    // Обновляем кэш только если данные действительно изменились
     dispatch(backendCartActions.updateProductQuantities({
       productQuantities,
       totalItems,

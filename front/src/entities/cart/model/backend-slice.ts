@@ -24,16 +24,44 @@ export const backendCartSlice = createSlice({
   name: 'backendCart',
   initialState,
   reducers: {
-    // Обновляем кэш количества товаров из ответа бэкенда
+    // Умное обновление - мержим данные вместо полной перезаписи
     updateProductQuantities: (state, action: PayloadAction<{ productQuantities: Record<string, number>; totalItems: number; total: number }>) => {
-      state.productQuantities = action.payload.productQuantities;
-      state.totalItems = action.payload.totalItems;
-      state.total = action.payload.total;
+      const { productQuantities, totalItems, total } = action.payload;
+      
+      // Обновляем только изменившиеся товары
+      Object.keys(productQuantities).forEach(productId => {
+        const newQuantity = productQuantities[productId];
+        const currentQuantity = state.productQuantities[productId] || 0;
+        
+        // Обновляем только если количество действительно изменилось
+        if (newQuantity !== currentQuantity) {
+          if (newQuantity > 0) {
+            state.productQuantities[productId] = newQuantity;
+          } else {
+            delete state.productQuantities[productId];
+          }
+        }
+      });
+      
+      // Удаляем товары, которых больше нет в ответе бэкенда
+      Object.keys(state.productQuantities).forEach(productId => {
+        if (!(productId in productQuantities)) {
+          delete state.productQuantities[productId];
+        }
+      });
+      
+      // Обновляем общие данные только при изменении
+      if (state.totalItems !== totalItems) {
+        state.totalItems = totalItems;
+      }
+      if (state.total !== total) {
+        state.total = total;
+      }
     },
     
-    // Оптимистичное обновление для быстрого отклика UI
-    optimisticUpdateQuantity: (state, action: PayloadAction<{ productId: string; quantity: number }>) => {
-      const { productId, quantity } = action.payload;
+    // Оптимистичное обновление с защитой от перезаписи
+    optimisticUpdateQuantity: (state, action: PayloadAction<{ productId: string; quantity: number; isTemporary?: boolean }>) => {
+      const { productId, quantity, isTemporary = false } = action.payload;
       const oldQuantity = state.productQuantities[productId] || 0;
       
       if (quantity <= 0) {
@@ -44,6 +72,12 @@ export const backendCartSlice = createSlice({
       
       // Обновляем общее количество
       state.totalItems = state.totalItems - oldQuantity + Math.max(0, quantity);
+    },
+    
+    // Новый экшен для временного сброса при загрузке
+    setTemporaryLoading: (state, action: PayloadAction<boolean>) => {
+      // Не сбрасываем данные, только устанавливаем флаг
+      state.isLoading = action.payload;
     },
     
     setLoading: (state, action: PayloadAction<boolean>) => {

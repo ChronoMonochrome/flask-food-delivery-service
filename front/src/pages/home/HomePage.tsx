@@ -12,7 +12,6 @@ import {
 import { Phone } from '@mui/icons-material';
 import { useGetCategoriesQuery, useGetProductsQuery } from '../../shared/api';
 import { mapApiCategoryToCategory, mapApiProductToProduct } from '../../shared/utils/mappers';
-import { wokBuilderProduct } from '../../shared/constants/wok-data';
 import { CategorySlider } from '../../widgets/category-slider/CategorySlider';
 import { ProductCard } from '../../widgets/product-card/ProductCard';
 import { BottomNav } from '../../widgets/bottom-nav/BottomNav';
@@ -40,8 +39,22 @@ export const HomePage: React.FC = () => {
   const categories = apiCategories ? apiCategories.map(mapApiCategoryToCategory) : [];
   let products = apiProducts ? apiProducts.map(mapApiProductToProduct) : [];
 
-  // Добавляем конструктор WOK для категории '9'
-  if (selectedCategory === '9') {
+  // Добавляем конструктор WOK для категории WOK
+  if (selectedCategory === 'f7ec3fe3-4cea-4ee1-9b9b-cb98463355c7') {
+    // Создаем товар-конструктор на основе данных с бэкенда
+    const wokBuilderProduct = {
+      id: 'wok-builder',
+      name: 'Собери свою коробочку',
+      description: 'Создай свой уникальный WOK! Выбери основу, добавь мясо и начинки по вкусу',
+      price: 210, // Базовая цена, будет пересчитана в конструкторе
+      image: 'https://images.pexels.com/photos/1640774/pexels-photo-1640774.jpeg?auto=compress&cs=tinysrgb&w=400',
+      categoryId: selectedCategory,
+      weight: 330,
+      nutrition: { calories: 250, protein: 8, fat: 5, carbs: 45 },
+      ingredients: ['основа', 'овощи', 'соус'],
+      isCustomizable: true,
+      recommendations: []
+    };
     products = [wokBuilderProduct, ...products];
   }
 

@@ -51,9 +51,12 @@ export interface CartItem {
 
 export interface DeliveryInfo {
   address: string;
+  coordinates?: [number, number];
   phone: string;
   paymentMethod: 'cash' | 'card' | 'online';
   comment: string;
+  apartment?: string;
+  floor?: string;
 }
 
 export interface Order {
