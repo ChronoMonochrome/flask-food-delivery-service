@@ -1358,19 +1358,19 @@ class MapResource(Resource):
                 break
 
         if not is_in_delivery_area:
-            return jsonify({
+            return {
                 "address": None,
                 "delivery_cost": None,
                 "message": "Coordinates are outside our valid delivery areas."
-            }), 404
+            }, 404
 
         address = get_address_from_coordinates(latitude, longitude)
 
         if address:
-            return jsonify({
+            return {
                 "address": address,
                 "delivery_cost": DELIVERY_COST_MOCK
-            })
+            }, 200
         else:
             api.abort(500, "Coordinates are within a valid delivery area, but address lookup failed.")
 
