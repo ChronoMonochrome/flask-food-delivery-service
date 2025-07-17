@@ -13,9 +13,13 @@ from app import iiko_service # Assuming this is your IIKO integration service
 from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
 from datetime import datetime
+from shapely.geometry import Point, Polygon, LineString
 import json
+import requests
 from decimal import Decimal
 from uuid import uuid4
+
+from .geojson import geojson_data
 
 api_bp = Blueprint('api', __name__)
 
@@ -1221,6 +1225,154 @@ order_model = api.model('Order', {
     'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
 })
 
+
+# --- Configuration ---
+DELIVERY_COST_MOCK = 100 # Mock value for delivery cost
+
+# IMPORTANT: User-Agent for Nominatim API
+# Replace 'YourDeliveryApp/1.0 (your.email@example.com)' with your actual app name and email.
+NOMINATIM_USER_AGENT = "MyDeliveryApp/1.0 (my.email@example.com)"
+
+# Store loaded polygons globally
+VALID_DELIVERY_AREAS = []
+
+# --- Helper Function for Reverse Geocoding ---
+def get_address_from_coordinates(latitude, longitude):
+    """
+    Retrieves the address for given latitude and longitude coordinates
+    using OpenStreetMap's Nominatim reverse geocoding service.
+
+    Args:
+        latitude (float): The latitude of the location.
+        longitude (float): The longitude of the location.
+
+    Returns:
+        str or None: The full address string if found, otherwise None.
+    """
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {
+        "format": "json",
+        "lat": latitude,
+        "lon": longitude,
+        "zoom": 18,
+        "addressdetails": 1
+    }
+    headers = {
+        "User-Agent": NOMINATIM_USER_AGENT
+    }
+
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        if data and "display_name" in data:
+            return data["display_name"]
+        else:
+            print(f"Nominatim: No address found for {latitude}, {longitude}. Response: {data}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Nominatim Error: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Nominatim JSON Decode Error: {e}. Raw response: {response.text}")
+        return None
+
+# Cache for memoization
+_delivery_areas_cache = {}
+_last_geojson_hash = None
+
+def load_delivery_areas():
+    global VALID_DELIVERY_AREAS
+    global _delivery_areas_cache
+    global _last_geojson_hash
+
+    # Calculate a hash of the current geojson_data to use as a cache key
+    # Use json.dumps with sort_keys to ensure consistent hashing
+    current_geojson_hash = hash(json.dumps(geojson_data, sort_keys=True))
+
+    if current_geojson_hash == _last_geojson_hash:
+        print("Using memoized delivery areas.")
+        VALID_DELIVERY_AREAS = _delivery_areas_cache[current_geojson_hash]
+        return
+
+    # If the geojson_data has changed or it's the first run, reload
+    print("Loading delivery areas...")
+    VALID_DELIVERY_AREAS = [] # Clear previous loads
+
+    if geojson_data and geojson_data.get("type") == "FeatureCollection":
+        for feature in geojson_data.get("features", []):
+            geometry_type = feature.get("geometry", {}).get("type")
+            geometry_coords = feature.get("geometry", {}).get("coordinates")
+
+            if geometry_type == "Polygon":
+                # Polygon coordinates are usually [exterior_ring, interior_ring1, ...]
+                # We assume only one exterior ring for simplicity here.
+                polygon_coords_shapely = [tuple(coord) for coord in geometry_coords[0]]
+                VALID_DELIVERY_AREAS.append(Polygon(polygon_coords_shapely))
+            elif geometry_type == "LineString":
+                linestring_points_shapely = [tuple(coord) for coord in geometry_coords]
+                # Note: For LineString as a boundary, Shapely's Polygon will close it.
+                # Be careful if your LineString isn't intended to form a closed polygon.
+                VALID_DELIVERY_AREAS.append(Polygon(linestring_points_shapely))
+            else:
+                print(f"Warning: Skipping unsupported geometry type: {geometry_type}")
+        print(f"Loaded {len(VALID_DELIVERY_AREAS)} delivery areas from geojson")
+        
+        # Store the newly loaded areas in the cache
+        _delivery_areas_cache[current_geojson_hash] = VALID_DELIVERY_AREAS
+        _last_geojson_hash = current_geojson_hash
+    else:
+        print(f"Error: Expected FeatureCollection from geojson, got {geojson_data.get('type') if geojson_data else 'None/Invalid'}")
+@api.route('/map')
+class MapResource(Resource):
+    # If you want to document input parameters
+    # @api.expect(map_query_parser) # Define a parser if needed
+    # @api.marshal_with(map_output_model) # Define an output model if needed
+    def get(self):
+        load_delivery_areas()
+        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK 
+
+        lat_str = request.args.get('latitude')
+        lon_str = request.args.get('longitude')
+
+        if not lat_str or not lon_str:
+            # Use api.abort which integrates with Flask-RESTx's error handling
+            # api.abort will automatically return a JSON response with the error message
+            api.abort(400, "Latitude (lat) and Longitude (lon) are required query parameters.")
+
+        try:
+            latitude = float(lat_str)
+            longitude = float(lon_str)
+        except ValueError:
+            api.abort(400, "Invalid latitude or longitude format. Must be numbers.")
+
+        point = Point(longitude, latitude)
+
+        if not VALID_DELIVERY_AREAS:
+            api.abort(503, "Delivery areas not loaded. Please try again later.")
+
+        is_in_delivery_area = False
+        for area_polygon in VALID_DELIVERY_AREAS:
+            if area_polygon.contains(point):
+                is_in_delivery_area = True
+                break
+
+        if not is_in_delivery_area:
+            return jsonify({
+                "address": None,
+                "delivery_cost": None,
+                "message": "Coordinates are outside our valid delivery areas."
+            }), 404
+
+        address = get_address_from_coordinates(latitude, longitude)
+
+        if address:
+            return jsonify({
+                "address": address,
+                "delivery_cost": DELIVERY_COST_MOCK
+            })
+        else:
+            api.abort(500, "Coordinates are within a valid delivery area, but address lookup failed.")
 
 # Error handling for the API blueprint
 @api_bp.errorhandler(Exception)
