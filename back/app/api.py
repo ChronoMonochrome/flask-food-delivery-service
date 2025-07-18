@@ -913,10 +913,10 @@ class OrderList(Resource):
             )
 
             if iiko_response and iiko_response.get('orderId'):
-                new_order.status = 'sent_to_iiko'
+                #new_order.status = 'sent_to_iiko'
                 current_app.logger.info(f"Заказ {new_order.id} успешно отправлен в IIKO. IIKO Order ID: {iiko_response['orderId']}")
             else:
-                new_order.status = 'iiko_send_failed'
+                #new_order.status = 'iiko_send_failed'
                 current_app.logger.error(f"Не удалось отправить заказ {new_order.id} в IIKO. Ответ: {iiko_response}")
                 api.abort(500, f"Не удалось отправить заказ в IIKO: {iiko_response.get('error', 'Неизвестная ошибка')}")
 
