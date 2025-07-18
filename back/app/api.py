@@ -139,9 +139,10 @@ order_model = api.model('Order', {
     'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information'),
     'status': fields.String(required=True, description='Current status of the order'),
     'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
-    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
+    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True),
+    'paymentUrl': fields.String(description='URL for online payment confirmation', attribute='confirmation_url', allow_null=True), # <--- ADDED THIS LINE
+    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True), # <--- ADDED THIS LINE (if needed on frontend)
 })
-
 
 # --- Cart Models ---
 
