@@ -1515,7 +1515,7 @@ payment_webhook_ns = Namespace('payment', description='Payment webhooks')
 # So, /payment/callback will be the full URL for the webhook.
 api.add_namespace(payment_webhook_ns, path='/payment')
 
-@api.route('/callback')
+@payment_webhook_ns.route('/callback')
 class PaymentCallback(Resource):
     @api.doc(responses={200: 'Success', 400: 'Invalid Request', 403: 'Forbidden'})
     def post(self):
