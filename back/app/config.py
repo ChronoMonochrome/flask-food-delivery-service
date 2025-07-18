@@ -44,3 +44,6 @@ class Config:
     # Flask JSON configuration
     JSON_AS_ASCII = False
     JSON_CHARSET = "utf-8"
+
+    # No IP check fails for dev server
+    DEV_NO_IP_ADDRESS_CHECK_FAIL = (WEB_APP_URL == "https://mytestapp001.ru")

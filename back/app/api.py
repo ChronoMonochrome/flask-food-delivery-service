@@ -1530,17 +1530,64 @@ def _parse_city_from_address(full_address):
             city = full_address.split()[-1] if full_address.split() else "Default City"
     return city
 
+import ipaddress # For IP address checking
+
+# --- Configuration for Yookassa IP Whitelist ---
+# These are the IP ranges provided by Yookassa
+YOOKASSA_IP_WHITELIST = [
+    ipaddress.ip_network('185.71.76.0/27'),
+    ipaddress.ip_network('185.71.77.0/27'),
+    ipaddress.ip_network('77.75.153.0/25'),
+    ipaddress.ip_network('77.75.156.11'), # Single IP, represented as a /32 network
+    ipaddress.ip_network('77.75.156.35'), # Single IP, represented as a /32 network
+    ipaddress.ip_network('77.75.154.128/25'),
+    ipaddress.ip_network('2a02:5180::/32')
+]
+
 @payment_webhook_ns.route('/callback')
 class PaymentCallback(Resource):
     @api.doc(responses={200: 'Success', 400: 'Invalid Request', 403: 'Forbidden'})
     def post(self):
-        """Обработка вебхуков платежей ЮKassa."""
+        """Обработка вебхуков платежей ЮKassa с проверкой подлинности."""
         current_app.logger.info("Получен вебхук ЮKassa.")
+
+        # Логируем все полученные заголовки для отладки
+        current_app.logger.info("Полученные заголовки:")
+        for header, value in request.headers.items():
+            current_app.logger.info(f"  {header}: {value}")
+
+        # --- 1. Проверка IP-адреса (Второй уровень безопасности) ---
+        # Получаем IP-адрес клиента, отправившего запрос.
+        client_ip = request.remote_addr
+        if not client_ip:
+            current_app.logger.warning("Не удалось получить IP-адрес клиента для вебхука ЮKassa.")
+            return {"message": "Forbidden: Unable to determine client IP"}, 403
+
+        is_trusted_ip = False
+        try:
+            client_ip_obj = ipaddress.ip_address(client_ip)
+            for trusted_network in YOOKASSA_IP_WHITELIST:
+                if client_ip_obj in trusted_network:
+                    is_trusted_ip = True
+                    break
+        except ValueError:
+            current_app.logger.error(f"Некорректный формат IP-адреса: {client_ip}")
+            return {"message": "Forbidden: Invalid IP address format"}, 403
+
+        if (not is_trusted_ip) and (not current_app.config.get('DEV_NO_IP_ADDRESS_CHECK_FAIL', False)):
+            current_app.logger.warning(f"Вебхук ЮKassa получен с неизвестного IP-адреса: {client_ip}")
+            return {"message": "Forbidden: Untrusted IP address"}, 403
+        
+        current_app.logger.info(f"Вебхук ЮKassa получен с доверенного IP-адреса: {client_ip}")
+
+        # --- Продолжаем обработку payload ---
         try:
             payload = request.json
             if not payload:
                 current_app.logger.error("Вебхук ЮKassa: JSON-payload не получен.")
                 return {'message': 'No JSON payload'}, 400
+            
+            current_app.logger.info(f"Содержимое вебхука ЮKassa: {payload}")
 
             event = payload.get('event')
             payment_object = payload.get('object')
@@ -1550,14 +1597,47 @@ class PaymentCallback(Resource):
                 return {'message': 'Invalid webhook payload structure'}, 400
 
             payment_id = payment_object.get('id')
-            payment_status = payment_object.get('status')
-            order_id = payment_object.get('metadata', {}).get('order_id') # Наш внутренний ID заказа
+            webhook_status = payment_object.get('status') # Статус из вебхука
+            order_id = payment_object.get('metadata', {}).get('order_id')
 
-            if not payment_id or not payment_status or not order_id:
+            if not payment_id or not webhook_status or not order_id:
                 current_app.logger.error(f"Вебхук ЮKassa: Отсутствуют важные поля (id, status, или metadata.order_id): {payload}")
                 return {'message': 'Missing vital payment details'}, 400
 
-            current_app.logger.info(f"Получен вебхук ЮKassa для платежа {payment_id} (Заказ {order_id}), событие: {event}, статус: {payment_status}")
+            current_app.logger.info(f"Получен вебхук ЮKassa для платежа {payment_id} (Заказ {order_id}), событие: {event}, статус (из вебхука): {webhook_status}")
+
+            # --- 2. Проверка статуса объекта (Основной уровень безопасности) ---
+            if yookassa_service is None:
+                current_app.logger.error("Yookassa Service не инициализирован. Невозможно проверить статус платежа.")
+                return {'message': 'Yookassa service not configured'}, 500
+
+            try:
+                # Используем существующий метод get_payment_status из yookassa_service
+                actual_payment_details = yookassa_service.get_payment_status(payment_id)
+                
+                if not actual_payment_details:
+                    current_app.logger.error(f"Не удалось получить актуальные детали платежа {payment_id} от ЮKassa API.")
+                    return {'message': 'Failed to retrieve payment details from Yookassa'}, 500
+
+                actual_status = actual_payment_details.get('status')
+                current_app.logger.info(f"Актуальный статус платежа {payment_id} по API ЮKassa: {actual_status}")
+
+                # Сравниваем статус из вебхука с актуальным статусом из API
+                if actual_status != webhook_status:
+                    current_app.logger.warning(f"Несоответствие статусов для платежа {payment_id}. Вебхук: {webhook_status}, API: {actual_status}.")
+                    # В зависимости от вашей бизнес-логики, вы можете:
+                    # 1. Продолжить обработку, но с учетом актуального статуса (как сейчас).
+                    # 2. Отклонить запрос, если статусы не совпадают, так как это может быть подозрительно.
+                    # Для строгой безопасности рекомендуется отклонять.
+                    return {'message': 'Forbidden: Status mismatch with Yookassa API'}, 403 # Строгий подход
+                else:
+                    current_app.logger.info(f"Статус платежа {payment_id} подтвержден по API ЮKassa.")
+
+            except Exception as e:
+                current_app.logger.error(f"Ошибка при проверке статуса платежа {payment_id} через API ЮKassa: {e}", exc_info=True)
+                # Если проверка статуса не удалась, это серьезная проблема безопасности.
+                return {'message': 'Payment status verification failed'}, 500
+
 
             # Загружаем заказ со всеми необходимыми связями
             order = Order.query.filter_by(id=order_id).options(
@@ -1734,6 +1814,9 @@ class PaymentCallback(Resource):
             db.session.commit() # Сохраняем изменения статуса заказа
             return {'message': 'Webhook processed successfully'}, 200
 
+        except json.JSONDecodeError:
+            current_app.logger.error("Некорректное JSON-тело запроса.")
+            return {"message": "Invalid JSON payload"}, 400
         except Exception as e:
             db.session.rollback() # Откатываем транзакцию в случае любой неожиданной ошибки
             current_app.logger.error(f"Ошибка при обработке вебхука ЮKassa: {e}", exc_info=True)
