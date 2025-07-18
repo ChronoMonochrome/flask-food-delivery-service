@@ -19,7 +19,8 @@ from werkzeug.exceptions import HTTPException, NotFound
 from .factory import create_app
 from .models import db # Import db from models
 from .iiko_service import synchronize_iiko_data
-
+from .yookassa_service import YookassaService
+  
 # Determine the absolute path to your React build's *actual static content root*
 # This is where Create React App places its JS/CSS/image bundles.
 # Inside the container, this is /app/app/static
@@ -58,3 +59,17 @@ app.json.charset = "utf-8" # Ensure charset is explicitly set (though usually de
 
 # No more route definitions or error handlers here in __init__.py
 # They should all be in app/routes.py
+
+# Yookassa
+yookassa_shop_id = os.environ.get('YOOKASSA_SHOP_ID')
+yookassa_secret_key = os.environ.get('YOOKASSA_SECRET_KEY')
+webhook_base_url = os.environ.get('APP_PUBLIC_URL')
+app.yookassa_service = None
+
+if yookassa_shop_id and yookassa_secret_key and webhook_base_url:
+    app.yookassa_service = YookassaService(yookassa_shop_id, yookassa_secret_key, webhook_base_url)
+    logger.info("Yookassa Service инициализирован.")
+else:
+    logger.warning("Yookassa Service не полностью настроен. Проверьте переменные окружения YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, APP_PUBLIC_URL.")
+
+          
