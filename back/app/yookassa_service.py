@@ -5,6 +5,7 @@ import base64
 import json
 from flask import current_app
 import uuid # Для ключа идемпотентности
+from .logger import logger
 
 class YookassaService:
     def __init__(self, shop_id, secret_key, webhook_base_url):
@@ -52,6 +53,15 @@ class YookassaService:
         # ЮKassa ожидает сумму в виде строки с двумя знаками после запятой
         amount_str = f"{amount:.2f}"
 
+        # FIX: Truncate the description to Yookassa's maximum allowed length (e.g., 128 characters)
+        # This is the most critical part of the fix.
+        max_description_length = 128
+        truncated_description = description[:max_description_length]
+        if len(description) > max_description_length:
+            current_app.logger.warning(
+                f"Yookassa payment description truncated from {len(description)} to {max_description_length} characters."
+            )
+
         payload = {
             "amount": {
                 "value": amount_str,
@@ -62,24 +72,24 @@ class YookassaService:
                 "return_url": return_url # Куда пользователь будет перенаправлен после оплаты
             },
             "capture": True, # Автоматически захватывать средства после успешной оплаты
-            "description": description,
+            "description": truncated_description, # Use the truncated description
             "metadata": {
                 "order_id": str(order_id), # Храним наш внутренний ID заказа для обработки вебхуков
                 "source": "MandarinWebApp"
             },
             "receipt": { # Пример данных для чека (может потребоваться более детальная настройка)
                 "customer": {
-                    "email": "customer@example.com" # Замените на реальный email пользователя
+                    "email": "customer@example.com" # Замените на реальный email пользователя (TODO)
                 },
                 "items": [
                     {
-                        "description": description,
+                        "description": truncated_description, # Use the truncated description here too
                         "quantity": "1.00",
                         "amount": {
                             "value": amount_str,
                             "currency": "RUB"
                         },
-                        "vat_code": "1" # Код НДС, уточните в вашей бухгалтерии
+                        "vat_code": "1" # Код НДС, уточните в вашей бухгалтерии (TODO)
                     }
                 ]
             }
@@ -93,7 +103,8 @@ class YookassaService:
             return response_data
         except Exception as e:
             current_app.logger.error(f"Не удалось создать платеж ЮKassa: {e}")
-            return None
+            # Re-raise the exception here as well, so the /api/orders endpoint can catch it
+            raise
 
     def get_payment_status(self, payment_id):
         current_app.logger.info(f"Проверка статуса платежа ЮKassa для ID: {payment_id}")
@@ -104,3 +115,17 @@ class YookassaService:
         except Exception as e:
             current_app.logger.error(f"Не удалось получить статус платежа ЮKassa для {payment_id}: {e}")
             return None
+            
+# Yookassa
+yookassa_shop_id = os.environ.get('YOOKASSA_SHOP_ID')
+yookassa_secret_key = os.environ.get('YOOKASSA_SECRET_KEY')
+webhook_base_url = os.environ.get('APP_PUBLIC_URL')
+yookassa_service = None
+
+if yookassa_shop_id and yookassa_secret_key and webhook_base_url:
+    yookassa_service = YookassaService(yookassa_shop_id, yookassa_secret_key, webhook_base_url)
+    logger.info("Yookassa Service инициализирован.")
+else:
+    logger.warning("Yookassa Service не полностью настроен. Проверьте переменные окружения YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, APP_PUBLIC_URL.")
+
+          

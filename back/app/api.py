@@ -21,6 +21,7 @@ from uuid import uuid4
 import re
 
 from .geojson import geojson_data
+from .yookassa_service import yookassa_service
 
 api_bp = Blueprint('api', __name__)
 
@@ -695,6 +696,9 @@ class OrderList(Resource):
                 elif client_payment_method == "card" and (pt_kind in ["loyaltycard", "external"] or pt_code == "bank"):
                     selected_iiko_payment_type = pt
                     break
+                elif client_payment_method == "online":
+                    selected_iiko_payment_type = pt
+                    break
 
             if not selected_iiko_payment_type:
                 current_app.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method}'. Using the first available payment type as fallback.")
@@ -844,16 +848,16 @@ class OrderList(Resource):
             db.session.add(item)
 
         try:
-            if client_payment_method == "card" and selected_iiko_payment_type.get('paymentTypeKind', '').lower() == 'card':
+            if client_payment_method == 'online':
                 # --- Интеграция с ЮKassa ---
-                if not app.yookassa_service:
+                if not yookassa_service:
                     api.abort(500, "Сервис ЮKassa не настроен.")
 
                 # FRONTEND_ORDER_RETURN_URL должен быть URL на вашем фронтенде, куда ЮKassa перенаправит пользователя после оплаты
                 frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
 
                 payment_description = f"Заказ #{new_order.id} из {new_order.delivery_info.address}"
-                yookassa_response = app.yookassa_service.create_payment(
+                yookassa_response = yookassa_service.create_payment(
                     amount=new_order.total,
                     description=payment_description,
                     order_id=new_order.id, # Используем наш внутренний ID заказа как метаданные и ключ идемпотентности

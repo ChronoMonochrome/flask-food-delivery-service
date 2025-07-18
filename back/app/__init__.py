@@ -59,17 +59,3 @@ app.json.charset = "utf-8" # Ensure charset is explicitly set (though usually de
 
 # No more route definitions or error handlers here in __init__.py
 # They should all be in app/routes.py
-
-# Yookassa
-yookassa_shop_id = os.environ.get('YOOKASSA_SHOP_ID')
-yookassa_secret_key = os.environ.get('YOOKASSA_SECRET_KEY')
-webhook_base_url = os.environ.get('APP_PUBLIC_URL')
-app.yookassa_service = None
-
-if yookassa_shop_id and yookassa_secret_key and webhook_base_url:
-    app.yookassa_service = YookassaService(yookassa_shop_id, yookassa_secret_key, webhook_base_url)
-    logger.info("Yookassa Service инициализирован.")
-else:
-    logger.warning("Yookassa Service не полностью настроен. Проверьте переменные окружения YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY, APP_PUBLIC_URL.")
-
-          
