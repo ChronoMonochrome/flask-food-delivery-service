@@ -875,51 +875,50 @@ class OrderList(Resource):
                     current_app.logger.error(f"Не удалось получить confirmation_url от ЮKassa для заказа {new_order.id}. Ответ: {yookassa_response}")
                     api.abort(500, "Не удалось инициировать платеж по карте.")
 
-            else: # Оплата наличными или другие не-карточные типы платежей IIKO
-                # --- Оригинальная интеграция с IIKO для не-карточных платежей ---
-                iiko_order_data_for_payload = {
-                    "id": new_order.id,
-                    "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
-                    "phone": new_order.delivery_info.phone,
-                    "items": iiko_order_items,
-                    "deliveryPoint": {
-                        "address": {
-                            "street": new_order.delivery_info.address,
-                            "city": city,
-                        },
-                        "coordinates": {
-                            "latitude": new_order.delivery_info.latitude,
-                            "longitude": new_order.delivery_info.longitude,
-                        }
+            # --- Интеграция с IIKO для всех типов платежей ---
+            iiko_order_data_for_payload = {
+                "id": new_order.id,
+                "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
+                "phone": new_order.delivery_info.phone,
+                "items": iiko_order_items,
+                "deliveryPoint": {
+                    "address": {
+                        "street": new_order.delivery_info.address,
+                        "city": city,
                     },
-                    "payments": [
-                        {
-                            "sum": float(final_total),
-                            "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
-                            "paymentTypeId": selected_iiko_payment_type.get('id'),
-                            "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
-                            "isFiscalizedExternally": False,
-                            "isPrepay": False
-                        }
-                    ],
-                    "comment": new_order.delivery_info.comment,
-                    "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-                }
+                    "coordinates": {
+                        "latitude": new_order.delivery_info.latitude,
+                        "longitude": new_order.delivery_info.longitude,
+                    }
+                },
+                "payments": [
+                    {
+                        "sum": float(final_total),
+                        "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
+                        "paymentTypeId": selected_iiko_payment_type.get('id'),
+                        "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
+                        "isFiscalizedExternally": False,
+                        "isPrepay": False
+                    }
+                ],
+                "comment": new_order.delivery_info.comment,
+                "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            }
 
-                iiko_response = iiko_service.create_delivery_order(
-                    organization_id=organization_id,
-                    terminal_group_id=terminal_group_id,
-                    order=iiko_order_data_for_payload,
-                    create_order_settings={"transportToFrontTimeout": 0}
-                )
+            iiko_response = iiko_service.create_delivery_order(
+                organization_id=organization_id,
+                terminal_group_id=terminal_group_id,
+                order=iiko_order_data_for_payload,
+                create_order_settings={"transportToFrontTimeout": 0}
+            )
 
-                if iiko_response and iiko_response.get('orderId'):
-                    new_order.status = 'sent_to_iiko'
-                    current_app.logger.info(f"Заказ {new_order.id} успешно отправлен в IIKO. IIKO Order ID: {iiko_response['orderId']}")
-                else:
-                    new_order.status = 'iiko_send_failed'
-                    current_app.logger.error(f"Не удалось отправить заказ {new_order.id} в IIKO. Ответ: {iiko_response}")
-                    api.abort(500, f"Не удалось отправить заказ в IIKO: {iiko_response.get('error', 'Неизвестная ошибка')}")
+            if iiko_response and iiko_response.get('orderId'):
+                new_order.status = 'sent_to_iiko'
+                current_app.logger.info(f"Заказ {new_order.id} успешно отправлен в IIKO. IIKO Order ID: {iiko_response['orderId']}")
+            else:
+                new_order.status = 'iiko_send_failed'
+                current_app.logger.error(f"Не удалось отправить заказ {new_order.id} в IIKO. Ответ: {iiko_response}")
+                api.abort(500, f"Не удалось отправить заказ в IIKO: {iiko_response.get('error', 'Неизвестная ошибка')}")
 
             # Очищаем корзину после успешной обработки заказа (будь то инициирование платежа или отправка в IIKO)
             db.session.delete(cart_with_items)
