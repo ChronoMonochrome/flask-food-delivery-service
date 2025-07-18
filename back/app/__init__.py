@@ -11,16 +11,17 @@ from flask_cors import CORS
 # Import Migrate
 from flask_migrate import Migrate
 from flask_session import Session
-from datetime import timedelta
+from datetime import timedelta # Keep timedelta for session lifetime calculation if needed elsewhere
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv # Keep load_dotenv for clarity, though it's in factory.py
 from werkzeug.exceptions import HTTPException, NotFound
 
 from .factory import create_app
 from .models import db # Import db from models
 from .iiko_service import synchronize_iiko_data
 from .yookassa_service import YookassaService
-  
+from .config import Config # Import the Config class
+
 # Determine the absolute path to your React build's *actual static content root*
 # This is where Create React App places its JS/CSS/image bundles.
 # Inside the container, this is /app/app/static
@@ -30,11 +31,17 @@ FRONTEND_BUILD_ROOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__
 # as it contains both index.html and the 'assets' folder directly.
 app = create_app(static_folder=FRONTEND_BUILD_ROOT_PATH, static_url_path='/static')
 
+# Load configuration from Config class
+app.config.from_object(Config)
+
 # Initialize SQLAlchemy with the app
 db.init_app(app)
 
 # Initialize Flask-Migrate AFTER db.init_app(app)
 migrate = Migrate(app, db)
+
+# Initialize Flask-Session AFTER app.config has been loaded from Config
+app.session = Session(app) # Pass the app instance to Session
 
 # Initialize CORS
 cors = CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"], "allow_headers": "*"}})
@@ -53,9 +60,9 @@ app.register_blueprint(api_bp, url_prefix='/api')
 from app import routes # This import will execute the route decorators on the 'app' instance
 
 # UTF-8 encoding in API
-# Set this configuration BEFORE your Blueprints are registered or initialized (api_bp is registered above, this is fine)
-app.json.ensure_ascii = False
-app.json.charset = "utf-8" # Ensure charset is explicitly set (though usually default for jsonify)
+# These are now set via app.config.from_object(Config)
+# app.json.ensure_ascii = False
+# app.json.charset = "utf-8"
 
 # No more route definitions or error handlers here in __init__.py
 # They should all be in app/routes.py
