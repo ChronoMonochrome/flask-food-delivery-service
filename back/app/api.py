@@ -2,7 +2,7 @@
 
 import traceback
 from flask import Blueprint, jsonify, current_app, request
-from flask_restx import Api, Resource, fields
+from flask_restx import Api, Namespace, Resource, fields
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
@@ -12,16 +12,16 @@ from app.models import (
 from app import iiko_service # Assuming this is your IIKO integration service
 from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
-from datetime import datetime
+from datetime import datetime,  timedelta, timezone
 from shapely.geometry import Point, Polygon, LineString
 import json
 import requests
 from decimal import Decimal
 from uuid import uuid4
 import re
-from datetime import datetime, timedelta, timezone
 
 from .geojson import geojson_data
+from .yookassa_service import yookassa_service
 
 api_bp = Blueprint('api', __name__)
 
@@ -139,9 +139,10 @@ order_model = api.model('Order', {
     'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information'),
     'status': fields.String(required=True, description='Current status of the order'),
     'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
-    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True)
+    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True),
+    'paymentUrl': fields.String(description='URL for online payment confirmation', attribute='confirmation_url', allow_null=True), # <--- ADDED THIS LINE
+    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True), # <--- ADDED THIS LINE (if needed on frontend)
 })
-
 
 # --- Cart Models ---
 
@@ -656,6 +657,7 @@ class OrderList(Resource):
 
         organization_id = None
         terminal_group_id = None
+        selected_iiko_payment_type = None
 
         try:
             organizations = iiko_service.get_organizations(iiko_token)
@@ -680,8 +682,6 @@ class OrderList(Resource):
                 current_app.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
                 api.abort(500, "Could not determine payment types for external order.")
 
-            # --- Select an IIKO Payment Type based on client's paymentMethod ---
-            selected_iiko_payment_type = None
             client_payment_method = data['paymentMethod'].lower()
 
             for pt in iiko_payment_types:
@@ -695,6 +695,9 @@ class OrderList(Resource):
                     selected_iiko_payment_type = pt
                     break
                 elif client_payment_method == "card" and (pt_kind in ["loyaltycard", "external"] or pt_code == "bank"):
+                    selected_iiko_payment_type = pt
+                    break
+                elif client_payment_method == "online":
                     selected_iiko_payment_type = pt
                     break
 
@@ -846,71 +849,99 @@ class OrderList(Resource):
             db.session.add(item)
 
         try:
-            # Construct the inner 'order' object for IIKO with simplified address structure
-            iiko_order_data_for_payload = {
-                "id": new_order.id,
-                "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
-                "phone": new_order.delivery_info.phone, # Use phone from delivery_info
-                "items": iiko_order_items,
-                "deliveryPoint": {
-                    "address": {
-                        "street": new_order.delivery_info.address, # Use address from delivery_info
-                        "city": city, # Use parsed city
-                    },
-                    "coordinates": {
-                        "latitude": new_order.delivery_info.latitude,
-                        "longitude": new_order.delivery_info.longitude,
-                    }
-                },
-                "payments": [
-                    {
-                        "sum": float(final_total),
-                        "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
-                        "paymentTypeId": selected_iiko_payment_type.get('id'),
-                        "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
-                        "isFiscalizedExternally": False,
-                        "isPrepay": False
-                    }
-                ],
-                "comment": new_order.delivery_info.comment, # Use comment from delivery_info
-                "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], # Current time + 1 hour buffer, ensure UTC
-            }
+            if client_payment_method == 'online':
+                # --- Интеграция с ЮKassa ---
+                if not yookassa_service:
+                    api.abort(500, "Сервис ЮKassa не настроен.")
 
-            iiko_response = iiko_service.create_delivery_order(
-                organization_id=organization_id,
-                terminal_group_id=terminal_group_id,
-                order=iiko_order_data_for_payload,
-                create_order_settings={"transportToFrontTimeout": 0}
-            )
+                # FRONTEND_ORDER_RETURN_URL должен быть URL на вашем фронтенде, куда ЮKassa перенаправит пользователя после оплаты
+                frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
 
-            if iiko_response and iiko_response.get('orderId'):
-                new_order.status = 'sent_to_iiko'
-                current_app.logger.info(f"Order {new_order.id} successfully sent to IIKO. IIKO Order ID: {iiko_response['orderId']}")
-                # Clear the cart after successful order creation
-                db.session.delete(cart_with_items) # Delete the eager-loaded cart object
+                payment_description = f"Заказ #{new_order.id} из {new_order.delivery_info.address}"
+                yookassa_response = yookassa_service.create_payment(
+                    amount=new_order.total,
+                    description=payment_description,
+                    order_id=new_order.id, # Используем наш внутренний ID заказа как метаданные и ключ идемпотентности
+                    return_url=frontend_return_url
+                )
+
+                if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
+                    new_order.yookassa_payment_id = yookassa_response['id']
+                    new_order.confirmation_url = yookassa_response['confirmation']['confirmation_url']
+                    new_order.status = 'pending_payment' # Устанавливаем статус в ожидание оплаты
+                    current_app.logger.info(f"Платеж ЮKassa инициирован для заказа {new_order.id}. URL подтверждения: {new_order.confirmation_url}")
+                else:
+                    new_order.status = 'payment_initiation_failed'
+                    current_app.logger.error(f"Не удалось получить confirmation_url от ЮKassa для заказа {new_order.id}. Ответ: {yookassa_response}")
+                    api.abort(500, "Не удалось инициировать платеж по карте.")
+                    
             else:
-                new_order.status = 'iiko_send_failed'
-                current_app.logger.error(f"Failed to send order {new_order.id} to IIKO. Response: {iiko_response}")
-                api.abort(500, f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}")
+                # --- Интеграция с IIKO для других типов платежей ---
+                iiko_order_data_for_payload = {
+                    "id": new_order.id,
+                    "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
+                    "phone": new_order.delivery_info.phone,
+                    "items": iiko_order_items,
+                    "deliveryPoint": {
+                        "address": {
+                            "street": new_order.delivery_info.address,
+                            "city": city,
+                        },
+                        "coordinates": {
+                            "latitude": new_order.delivery_info.latitude,
+                            "longitude": new_order.delivery_info.longitude,
+                        }
+                    },
+                    "payments": [
+                        {
+                            "sum": float(final_total),
+                            "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
+                            "paymentTypeId": selected_iiko_payment_type.get('id'),
+                            "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
+                            "isFiscalizedExternally": False,
+                            "isPrepay": False
+                        }
+                    ],
+                    "comment": new_order.delivery_info.comment,
+                    "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                }
+
+                iiko_response = iiko_service.create_delivery_order(
+                    organization_id=organization_id,
+                    terminal_group_id=terminal_group_id,
+                    order=iiko_order_data_for_payload,
+                    create_order_settings={"transportToFrontTimeout": 0}
+                )
+
+                if iiko_response and iiko_response.get('orderId'):
+                    #new_order.status = 'sent_to_iiko'
+                    current_app.logger.info(f"Заказ {new_order.id} успешно отправлен в IIKO. IIKO Order ID: {iiko_response['orderId']}")
+                else:
+                    #new_order.status = 'iiko_send_failed'
+                    current_app.logger.error(f"Не удалось отправить заказ {new_order.id} в IIKO. Ответ: {iiko_response}")
+                    api.abort(500, f"Не удалось отправить заказ в IIKO: {iiko_response.get('error', 'Неизвестная ошибка')}")
+
+            # Очищаем корзину после успешной обработки заказа (будь то инициирование платежа или отправка в IIKO)
+            db.session.delete(cart_with_items)
 
         except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error sending order to IIKO: {e}", exc_info=True)
-            api.abort(500, f"Order created internally but failed to send to external system: {str(e)}")
+            db.session.rollback() # Откатываем транзакцию в случае ошибки
+            current_app.logger.error(f"Ошибка при обработке платежа/интеграции с IIKO для заказа: {e}", exc_info=True)
+            api.abort(500, f"Заказ создан внутренне, но произошел сбой платежа или интеграции с внешней системой: {str(e)}")
 
-        db.session.commit()
+        db.session.commit() # Коммитим все изменения в базу данных
 
-        # --- Reverted Eager Load for the Response Model ---
+        # Загружаем созданный заказ со всеми связями для маршалинга
         created_order = Order.query.options(
             joinedload(Order.items)
             .joinedload(OrderItem.product)
             .joinedload(Product.available_addons)
-            .joinedload(ProductAddon.addon), # Assuming ProductAddon.addon is the correct path
+            .joinedload(ProductAddon.addon),
             joinedload(Order.items)
             .joinedload(OrderItem.product)
             .joinedload(Product.recommendations)
-            .joinedload(ProductRecommendation.recommendation), # Assuming ProductRecommendation.recommendation is the correct path
-            joinedload(Order.delivery_info) # Ensure delivery info is loaded
+            .joinedload(ProductRecommendation.recommendation),
+            joinedload(Order.delivery_info)
         ).get(new_order.id)
 
         return created_order, 201
@@ -1477,3 +1508,233 @@ class AlembicVersionResource(Resource):
         # Flask-RESTx will automatically jsonify and set headers with UTF-8
         # because ensure_ascii=False is already configured.
         return {'version': version}
+
+payment_webhook_ns = Namespace('payment', description='Payment webhooks')
+
+# Add the new namespace to your existing 'api' instance
+# The 'path' argument here defines the URL prefix for this namespace.
+# So, /payment/callback will be the full URL for the webhook.
+api.add_namespace(payment_webhook_ns, path='/payment')
+
+# Вспомогательная функция для парсинга города (скопирована для согласованности)
+def _parse_city_from_address(full_address):
+    city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
+    city = "Default City" # Запасной вариант
+    if city_match:
+        city = city_match.group(1).strip()
+    elif full_address:
+        parts = full_address.split(',')
+        if len(parts) > 1:
+            city = parts[-1].strip()
+        else:
+            city = full_address.split()[-1] if full_address.split() else "Default City"
+    return city
+
+@payment_webhook_ns.route('/callback')
+class PaymentCallback(Resource):
+    @api.doc(responses={200: 'Success', 400: 'Invalid Request', 403: 'Forbidden'})
+    def post(self):
+        """Обработка вебхуков платежей ЮKassa."""
+        current_app.logger.info("Получен вебхук ЮKassa.")
+        try:
+            payload = request.json
+            if not payload:
+                current_app.logger.error("Вебхук ЮKassa: JSON-payload не получен.")
+                return {'message': 'No JSON payload'}, 400
+
+            event = payload.get('event')
+            payment_object = payload.get('object')
+
+            if not event or not payment_object:
+                current_app.logger.error(f"Вебхук ЮKassa: Отсутствуют 'event' или 'object' в payload: {payload}")
+                return {'message': 'Invalid webhook payload structure'}, 400
+
+            payment_id = payment_object.get('id')
+            payment_status = payment_object.get('status')
+            order_id = payment_object.get('metadata', {}).get('order_id') # Наш внутренний ID заказа
+
+            if not payment_id or not payment_status or not order_id:
+                current_app.logger.error(f"Вебхук ЮKassa: Отсутствуют важные поля (id, status, или metadata.order_id): {payload}")
+                return {'message': 'Missing vital payment details'}, 400
+
+            current_app.logger.info(f"Получен вебхук ЮKassa для платежа {payment_id} (Заказ {order_id}), событие: {event}, статус: {payment_status}")
+
+            # Загружаем заказ со всеми необходимыми связями
+            order = Order.query.filter_by(id=order_id).options(
+                joinedload(Order.delivery_info),
+                joinedload(Order.items).joinedload(OrderItem.product)
+            ).first()
+
+            if not order:
+                current_app.logger.error(f"Вебхук ЮKassa: Заказ {order_id} не найден в БД для платежа {payment_id}.")
+                return {'message': 'Order not found'}, 404
+
+            # Обновляем payment_id заказа, если он еще не установлен
+            if not order.yookassa_payment_id:
+                order.yookassa_payment_id = payment_id
+                db.session.add(order) # Помечаем для сохранения
+
+            if event == 'payment.succeeded':
+                if order.status == 'pending_payment' or order.status == 'payment_initiation_failed': # Только если ожидаем оплату
+                    current_app.logger.info(f"Платеж успешно завершен для заказа {order_id}. Попытка отправить в IIKO.")
+
+                    # --- Теперь отправляем заказ в IIKO ---
+                    try:
+                        # Получаем актуальный токен IIKO
+                        iiko_token = iiko_service.get_iiko_token()
+                        if not iiko_token:
+                            current_app.logger.error(f"Вебхук: Не удалось получить токен IIKO для заказа {order.id}.")
+                            order.status = 'iiko_send_failed_no_token'
+                            db.session.commit()
+                            return {'message': 'IIKO token unavailable'}, 500
+
+                        # Получаем данные организации и группы терминалов (желательно кешировать)
+                        organizations = iiko_service.get_organizations(iiko_token)
+                        organization_id = organizations[0].get("id") if organizations else None
+                        if not organization_id:
+                            current_app.logger.error(f"Вебхук: Не удалось получить ID организации IIKO для заказа {order.id}.")
+                            order.status = 'iiko_send_failed_no_org'
+                            db.session.commit()
+                            return {'message': 'IIKO organization ID unavailable'}, 500
+
+                        terminal_groups = iiko_service.get_terminal_groups(organization_id, iiko_token)
+                        terminal_group_id = terminal_groups[0]["items"][0].get("id") if terminal_groups and terminal_groups[0].get("items") else None
+                        if not terminal_group_id:
+                            current_app.logger.error(f"Вебхук: Не удалось получить ID группы терминалов IIKO для заказа {order.id}.")
+                            order.status = 'iiko_send_failed_no_terminal'
+                            db.session.commit()
+                            return {'message': 'IIKO terminal group ID unavailable'}, 500
+
+                        iiko_payment_types = iiko_service.get_payment_types([organization_id], iiko_token)
+                        selected_iiko_payment_type = None
+                        for pt in iiko_payment_types:
+                            if pt.get('paymentTypeKind', '').lower() == 'card':
+                                selected_iiko_payment_type = pt
+                                break
+                        if not selected_iiko_payment_type:
+                            current_app.logger.error(f"Не удалось найти тип платежа 'Card' в IIKO для заказа {order.id}.")
+                            order.status = 'iiko_send_failed_no_card_pt'
+                            db.session.commit()
+                            return {'message': 'IIKO card payment type not found'}, 500
+
+                        iiko_order_items = []
+                        for item in order.items:
+                            product_obj = item.product
+                            if not product_obj:
+                                current_app.logger.error(f"Продукт отсутствует для элемента заказа {item.id} заказа {order.id}. Пропускаем.")
+                                continue
+
+                            item_price = Decimal(str(product_obj.price))
+
+                            iiko_modifiers = []
+                            if item.selected_addons_ids:
+                                for addon_id in item.selected_addons_ids:
+                                    addon = Addon.query.get(addon_id)
+                                    if addon:
+                                        item_price += Decimal(str(addon.price)) * item.quantity # Предполагаем, что количество относится и к аддону
+                                        iiko_modifiers.append({
+                                            "id": addon.iiko_addon_id,
+                                            "type": "Product",
+                                            "amount": item.quantity # Количество модификатора связано с количеством элемента
+                                        })
+                            if item.selected_recommendation_ids:
+                                for rec_id in item.selected_recommendation_ids:
+                                    rec = Recommendation.query.get(rec_id)
+                                    if rec and rec.price:
+                                        item_price += Decimal(str(rec.price))
+                                        iiko_modifiers.append({
+                                            "id": rec.iiko_recommendation_id,
+                                            "type": "Product",
+                                            "amount": 1
+                                        })
+
+                            iiko_order_items.append({
+                                "productId": product_obj.iiko_product_id,
+                                "productCode": product_obj.iiko_product_id,
+                                "name": product_obj.name,
+                                "amount": item.quantity,
+                                "price": float(item_price),
+                                "modifiers": iiko_modifiers,
+                                "comboId": None,
+                                "positionId": str(uuid4())
+                            })
+
+                        # Используем DeliveryInfo из объекта заказа
+                        delivery_info = order.delivery_info
+                        city = _parse_city_from_address(delivery_info.address)
+
+                        iiko_order_data_for_payload = {
+                            "id": order.id,
+                            "externalNumber": f"WEB-{order.id.split('-')[0]}",
+                            "phone": delivery_info.phone,
+                            "items": iiko_order_items,
+                            "deliveryPoint": {
+                                "address": {
+                                    "street": delivery_info.address,
+                                    "city": city,
+                                },
+                                "coordinates": {
+                                    "latitude": delivery_info.latitude,
+                                    "longitude": delivery_info.longitude,
+                                }
+                            },
+                            "payments": [
+                                {
+                                    "sum": float(order.total),
+                                    "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
+                                    "paymentTypeId": selected_iiko_payment_type.get('id'),
+                                    "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
+                                    "isFiscalizedExternally": False, # Уточните, фискализируется ли ЮKassa
+                                    "isPrepay": True # Это предоплата через ЮKassa
+                                }
+                            ],
+                            "comment": delivery_info.comment,
+                            "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                        }
+
+                        iiko_response = iiko_service.create_delivery_order(
+                            organization_id=organization_id,
+                            terminal_group_id=terminal_group_id,
+                            order=iiko_order_data_for_payload,
+                            create_order_settings={"transportToFrontTimeout": 0}
+                        )
+
+                        if iiko_response and iiko_response.get('orderId'):
+                            order.status = 'sent_to_iiko'
+                            current_app.logger.info(f"Заказ {order.id} успешно отправлен в IIKO через вебхук. IIKO Order ID: {iiko_response['orderId']}")
+                        else:
+                            order.status = 'iiko_send_failed'
+                            current_app.logger.error(f"Не удалось отправить заказ {order.id} в IIKO через вебхук. Ответ: {iiko_response}")
+                            # Здесь можно реализовать механизм повторных попыток
+                            db.session.rollback() # Откатываем, если IIKO не удалось, даже если ЮKassa успешно
+                            return {'message': 'IIKO integration failed after payment success'}, 500
+
+                    except Exception as e:
+                        current_app.logger.error(f"Ошибка отправки заказа {order.id} в IIKO после успеха ЮKassa: {e}", exc_info=True)
+                        order.status = 'iiko_send_failed_exception'
+                        db.session.rollback()
+                        return {'message': f'Internal server error during IIKO integration: {str(e)}'}, 500
+
+
+                else:
+                    current_app.logger.info(f"Вебхук ЮKassa: Платеж {payment_id} успешно завершен для заказа {order_id}, но статус заказа уже был '{order.status}'. Никаких действий не требуется.")
+
+            elif event == 'payment.canceled':
+                order.status = 'payment_canceled'
+                current_app.logger.warning(f"Вебхук ЮKassa: Платеж {payment_id} отменен для заказа {order_id}.")
+            elif event == 'payment.waiting_for_capture':
+                # Этот статус может возникнуть, если 'capture' был установлен в false.
+                # Наш сервис устанавливает capture=True, поэтому этот случай может указывать на проблему или другой флоу.
+                order.status = 'waiting_for_capture'
+                current_app.logger.info(f"Вебхук ЮKassa: Платеж {payment_id} ожидает захвата для заказа {order_id}.")
+            else:
+                current_app.logger.warning(f"Вебхук ЮKassa: Необработанное событие '{event}' для платежа {payment_id}.")
+                # Логируйте или обрабатывайте другие статусы, если необходимо (например, 'refunded', 'pending')
+
+            db.session.commit() # Сохраняем изменения статуса заказа
+            return {'message': 'Webhook processed successfully'}, 200
+
+        except Exception as e:
+            db.session.rollback() # Откатываем транзакцию в случае любой неожиданной ошибки
+            current_app.logger.error(f"Ошибка при обработке вебхука ЮKassa: {e}", exc_info=True)
+            return {'message': f'Internal server error: {str(e)}'}, 500

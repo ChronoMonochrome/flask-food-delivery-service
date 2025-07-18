@@ -1,20 +1,62 @@
 from flask import Flask, request, jsonify
 import json
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import re # For UUID validation regex
+import os # For environment variables
 
 app = Flask(__name__)
 app.logger.setLevel(logging.INFO)
+
+# Configuration for mock data
+# Use environment variables for sensitive info, or define constants for mock
+IIKO_API_TOKEN = os.getenv('IIKO_API_TOKEN', 'iiko_api_token')
+
+# Stable UUIDs for consistent testing across runs
+MOCK_ORGANIZATION_ID = "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+MOCK_TERMINAL_GROUP_ID = "09876543-210f-edcb-a987-654321fedcba"
+
+# Product IDs for specific items used in sync logic
+MOCK_WOK_PRODUCT_CONSTRUCTOR_ID = "c0c0c0c0-c0c0-c0c0-c0c0-c0c0c0c0c0c0"
+MOCK_SAUCES_CATEGORY_ID = "s0s0s0s0-s0s0-s0s0-s0s0-s0s0s0s0s0s0" # Example ID for 'Sauces' category
+MOCK_RECOMMENDATION_CATEGORY_ID = "r0r0r0r0-r0r0-r0r0-r0r0-r0r0r0r0r0r0"
 
 # Helper function to validate UUIDs
 def is_valid_uuid(uuid_string):
     if not isinstance(uuid_string, str):
         return False
     # Regex for UUID v4
-    uuid_regex = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.IGNORECASE)
+    uuid_regex = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$', re.IGNORECASE)
     return bool(uuid_regex.match(uuid_string))
+
+
+@app.route('/api/1/access_token', methods=['POST'])
+def get_access_token_mock():
+    """Mocks iiko /api/1/access_token endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Auth: Received access_token request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    # Validate basic request payload
+    if not data or 'apiLogin' not in data:
+        app.logger.error("Mock IIKO Auth: Missing 'apiLogin' in request payload.")
+        return jsonify({"error": "Missing 'apiLogin'"}), 400
+
+    api_login = data.get('apiLogin')
+
+    # Simulate authentication success/failure
+    # Generate a mock token that expires in 30 minutes
+    expires_in_seconds = 1800 # 30 minutes
+    mock_token = str(uuid4()) # A simple UUID can serve as a mock token
+
+    response_data = {
+        "token": mock_token,
+        "expiresInSeconds": expires_in_seconds
+    }
+    app.logger.info(f"Mock IIKO Auth: Successfully issued access token for API login '{api_login}'.")
+    return jsonify(response_data), 200
 
 @app.route('/api/1/deliveries/create', methods=['POST'])
 def create_delivery():
@@ -36,13 +78,13 @@ def create_delivery():
     order_payload = data.get('order')
 
     # --- Validate UUID formats for IDs ---
-    if not isinstance(organization_id, str) or not is_valid_uuid(organization_id):
-        app.logger.error(f"Mock IIKO Delivery: Invalid organizationId format: {organization_id}")
-        return jsonify({"error": "Invalid organizationId format (expected UUID)"}), 400
+    # if not isinstance(organization_id, str) or not is_valid_uuid(organization_id):
+        # app.logger.error(f"Mock IIKO Delivery: Invalid organizationId format: {organization_id}")
+        # return jsonify({"error": "Invalid organizationId format (expected UUID)"}), 400
     # terminalGroupId returned by IIKO appears not to be a valid UUID, ignoring this
-    if terminal_group_id is not None and (not isinstance(terminal_group_id, str)): # or not is_valid_uuid(terminal_group_id)):
-        app.logger.error(f"Mock IIKO Delivery: Invalid terminalGroupId format: {terminal_group_id}")
-        return jsonify({"error": "Invalid terminalGroupId format (expected UUID or null)"}), 400
+    # if terminal_group_id is not None and (not isinstance(terminal_group_id, str)): # or not is_valid_uuid(terminal_group_id)):
+        # app.logger.error(f"Mock IIKO Delivery: Invalid terminalGroupId format: {terminal_group_id}")
+        # return jsonify({"error": "Invalid terminalGroupId format (expected UUID or null)"}), 400
 
     # --- Order Object Checks ---
     if not isinstance(order_payload, dict):
@@ -195,6 +237,112 @@ def create_delivery():
     app.logger.info(f"Mock IIKO Delivery: Successfully created mock delivery order with ID: {mock_order_id}")
     return jsonify(response_data), 200
 
+@app.route('/api/1/organizations', methods=['POST'])
+def get_organizations_mock():
+    """Mocks iiko /api/1/organizations endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Organizations: Received request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    # Validate Authorization header
+    auth_header = headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        app.logger.error("Mock IIKO Organizations: Missing or malformed Authorization header.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    token = auth_header.split(' ')[1]
+    # In a real mock, you might check if the token is valid and not expired.
+    # For simplicity here, we'll assume any token from our /access_token endpoint is valid.
+
+    # Basic validation of the request payload (though often empty for this endpoint)
+    if not data or 'returnAdditionalInfo' not in data:
+        app.logger.warning("Mock IIKO Organizations: 'returnAdditionalInfo' missing, defaulting to false.")
+
+    mock_organizations = [
+        {
+            "id": MOCK_ORGANIZATION_ID,
+            "name": "Mock Main Restaurant",
+            "country": "Germany",
+            "phone": "+49123456789",
+            "address": "Mock Street 123, 10115 Berlin",
+            "timezone": "Europe/Berlin",
+            "cultureInfo": "de-DE",
+            "currencyIsoCode": "EUR",
+            "isMain": True,
+            "latitude": 52.5200,
+            "longitude": 13.4050
+        },
+        {
+            "id": str(uuid4()),
+            "name": "Mock Secondary Branch",
+            "country": "Germany",
+            "phone": "+49987654321",
+            "address": "Another Mock Str. 45, 20354 Hamburg",
+            "timezone": "Europe/Berlin",
+            "cultureInfo": "de-DE",
+            "currencyIsoCode": "EUR",
+            "isMain": False
+        }
+    ]
+
+    response_data = {
+        "correlationId": str(uuid4()),
+        "organizations": mock_organizations
+    }
+    app.logger.info(f"Mock IIKO Organizations: Responding with {len(mock_organizations)} organizations.")
+    return jsonify(response_data), 200
+
+@app.route('/api/1/terminal_groups', methods=['POST'])
+def get_terminal_groups_mock():
+    """Mocks iiko /api/1/terminal_groups endpoint.
+    Modified to return data in a nested 'items' structure as expected by the client's current parsing logic.
+    """
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Terminal Groups: Received request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    auth_header = headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        app.logger.error("Mock IIKO Terminal Groups: Missing or malformed Authorization header.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Always return these mock terminal groups, regardless of the organizationIds in the request
+    # Adjusted to match the `terminal_groups[0]["items"][0].get("id")` expectation.
+    mock_terminal_groups_data = [
+        {
+            "organizationId": MOCK_ORGANIZATION_ID,
+            "name": "Main Mock Organization Terminal Groups",
+            "items": [ # This is the "items" list your flask_app is looking for!
+                {
+                    "id": MOCK_TERMINAL_GROUP_ID,
+                    "organizationId": MOCK_ORGANIZATION_ID,
+                    "name": "Main Kitchen Terminal",
+                    "address": "Mock Street 123",
+                    "timeZone": "Europe/Berlin",
+                    "externalData": []
+                },
+                {
+                    "id": str(uuid4()), # A different, random ID for another terminal group
+                    "organizationId": MOCK_ORGANIZATION_ID,
+                    "name": "Delivery Terminal",
+                    "address": "Mock Street 123",
+                    "timeZone": "Europe/Berlin",
+                    "externalData": []
+                }
+            ]
+        }
+        # You could add more organization-specific terminal group data here if needed,
+        # each with its own 'organizationId' and 'items' array.
+    ]
+
+    response_data = {
+        "correlationId": str(uuid4()),
+        "terminalGroups": mock_terminal_groups_data
+    }
+    app.logger.info(f"Mock IIKO Terminal Groups: Responding with {len(mock_terminal_groups_data)} top-level terminal group entries.")
+    return jsonify(response_data), 200
 
 @app.route('/api/1/payment_types', methods=['POST'])
 def get_payment_types_mock():
@@ -209,10 +357,10 @@ def get_payment_types_mock():
         app.logger.error("Mock IIKO Payment Types: Missing or invalid 'organizationIds' in request payload.")
         return jsonify({"error": "Missing or invalid 'organizationIds'"}), 400
 
-    for org_id in data['organizationIds']:
-        if not is_valid_uuid(org_id):
-            app.logger.error(f"Mock IIKO Payment Types: Invalid organizationId format: {org_id}")
-            return jsonify({"error": f"Invalid organizationId format: {org_id}"}), 400
+    # for org_id in data['organizationIds']:
+        # if not is_valid_uuid(org_id):
+            # app.logger.error(f"Mock IIKO Payment Types: Invalid organizationId format: {org_id}")
+            # return jsonify({"error": f"Invalid organizationId format: {org_id}"}), 400
 
     # --- Sample Mock Payment Types ---
     # These UUIDs should be stable for your mock testing
@@ -220,55 +368,57 @@ def get_payment_types_mock():
     mock_card_payment_id = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e" # Example UUID for Card
 
     # Customize these mock payment types as needed
-    mock_payment_types = [
-        {
-            "id": mock_cash_payment_id,
-            "code": "CASH",
-            "name": "Наличные",
-            "comment": "Оплата наличными курьеру",
-            "combinable": True,
-            "externalRevision": 1,
-            "applicableMarketingCampaigns": [],
-            "isDeleted": False,
-            "printCheque": True,
-            "paymentProcessingType": "Cash",
-            "paymentTypeKind": "Cash",
-            "terminalGroups": [
-                {
-                    "id": str(uuid4()), # Mock Terminal Group ID, should match client's if specific
-                    "organizationId": data['organizationIds'][0] if data['organizationIds'] else str(uuid4()),
-                    "name": "Основная Касса",
-                    "address": "ул. Тестовая, 1",
-                    "timeZone": "Europe/Moscow",
-                    "externalData": []
-                }
-            ]
-        },
-        {
-            "id": mock_card_payment_id,
-            "code": "CARD",
-            "name": "Карта",
-            "comment": "Оплата картой при получении",
-            "combinable": True,
-            "externalRevision": 1,
-            "applicableMarketingCampaigns": [],
-            "isDeleted": False,
-            "printCheque": True,
-            "paymentProcessingType": "External",
-            "paymentTypeKind": "Card",
-            "terminalGroups": [
-                {
-                    "id": str(uuid4()),
-                    "organizationId": data['organizationIds'][0] if data['organizationIds'] else str(uuid4()),
-                    "name": "Основная Касса",
-                    "address": "ул. Тестовая, 1",
-                    "timeZone": "Europe/Moscow",
-                    "externalData": []
-                }
-            ]
-        }
-        # Add more mock payment types as needed
-    ]
+    mock_payment_types = []
+    if data['organizationIds'] and data['organizationIds'][0] == MOCK_ORGANIZATION_ID:
+        mock_payment_types = [
+            {
+                "id": mock_cash_payment_id,
+                "code": "CASH",
+                "name": "Наличные",
+                "comment": "Оплата наличными курьеру",
+                "combinable": True,
+                "externalRevision": 1,
+                "applicableMarketingCampaigns": [],
+                "isDeleted": False,
+                "printCheque": True,
+                "paymentProcessingType": "Cash",
+                "paymentTypeKind": "Cash",
+                "terminalGroups": [
+                    {
+                        "id": MOCK_TERMINAL_GROUP_ID, # Use stable TG ID
+                        "organizationId": MOCK_ORGANIZATION_ID,
+                        "name": "Основная Касса",
+                        "address": "ул. Тестовая, 1",
+                        "timeZone": "Europe/Moscow",
+                        "externalData": []
+                    }
+                ]
+            },
+            {
+                "id": mock_card_payment_id,
+                "code": "CARD",
+                "name": "Карта",
+                "comment": "Оплата картой при получении",
+                "combinable": True,
+                "externalRevision": 1,
+                "applicableMarketingCampaigns": [],
+                "isDeleted": False,
+                "printCheque": True,
+                "paymentProcessingType": "External",
+                "paymentTypeKind": "Card",
+                "terminalGroups": [
+                    {
+                        "id": MOCK_TERMINAL_GROUP_ID, # Use stable TG ID
+                        "organizationId": MOCK_ORGANIZATION_ID,
+                        "name": "Основная Касса",
+                        "address": "ул. Тестовая, 1",
+                        "timeZone": "Europe/Moscow",
+                        "externalData": []
+                    }
+                ]
+            }
+            # Add more mock payment types as needed
+        ]
 
     response_data = {
         "correlationId": str(uuid4()),
@@ -276,6 +426,543 @@ def get_payment_types_mock():
     }
     app.logger.info(f"Mock IIKO Payment Types: Responding with {len(mock_payment_types)} payment types.")
     return jsonify(response_data), 200
+
+@app.route('/api/2/menu', methods=['POST'])
+def get_menu_mock():
+    """Mocks iiko /api/2/menu endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Menu: Received request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    auth_header = headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        app.logger.error("Mock IIKO Menu: Missing or malformed Authorization header.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if not data or 'organizationId' not in data or not is_valid_uuid(data['organizationId']):
+        app.logger.error("Mock IIKO Menu: Missing or invalid 'organizationId' in request payload.")
+        return jsonify({"error": "Missing or invalid 'organizationId'"}), 400
+
+    organization_id = data['organizationId']
+
+    if organization_id != MOCK_ORGANIZATION_ID:
+        app.logger.warning(f"Mock IIKO Menu: Request for unknown organizationId: {organization_id}. Returning empty menu.")
+        return jsonify({
+            "correlationId": str(uuid4()),
+            "itemCategories": [],
+            "items": [],
+            "modifierGroups": [],
+            "outOfStock": []
+        }), 200
+
+    # --- Sample Mock Menu Data ---
+    # This data structure must align with what your _fetch_and_prepare_iiko_data expects.
+    # Specifically, itemCategories, items (standalone), and modifierGroups.
+
+    # Example Item IDs (use stable UUIDs for predictable testing)
+    mock_burger_id = "b1b1b1b1-b1b1-b1b1-b1b1-b1b1b1b1b1b1"
+    mock_fries_id = "f2f2f2f2-f2f2-f2f2-f2f2-f2f2f2f2f2f2"
+    mock_coke_id = "c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3"
+    mock_wok_base_id = MOCK_WOK_PRODUCT_CONSTRUCTOR_ID # Wok Constructor Product ID
+    mock_wok_chicken_id = "w4w4w4w4-w4w4-w4w4-w4w4-w4w4w4w4w4w4" # Wok Addon
+    mock_wok_veg_id = "v5v5v5v5-v5v5-v5v5-v5v5-v5v5v5v5v5v5" # Wok Addon
+
+    # Sauces (as items within a category or standalone modifiers)
+    mock_ketchup_sauce_id = "s6s6s6s6-s6s6-s6s6-s6s6-s6s6s6s6s6s6"
+    mock_mayo_sauce_id = "s7s7s7s7-s7s7-s7s7-s7s7-s7s7s7s7s7s7"
+
+    # Recommendation Product (needs to be an 'item' within the recommendation category)
+    mock_recommended_dessert_id = "d8d8d8d8-d8d8-d8d8-d8d8-d8d8d8d8d8d8"
+
+    # Modifier Group IDs
+    mock_burger_addons_group_id = "m1m1m1m1-m1m1-m1m1-m1m1-m1m1m1m1m1m1"
+    mock_wok_base_addons_group_id = "m2m2m2m2-m2m2-m2m2-m2m2-m2m2m2m2m2m2"
+
+    mock_menu_data = {
+        "correlationId": str(uuid4()),
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "itemCategories": [
+            {
+                "id": "cat1-burgers-id",
+                "name": "Burgers",
+                "description": "Delicious gourmet burgers",
+                "buttonImageUrl": "https://example.com/images/burgers_cat.jpg",
+                "headerImageUrl": "https://example.com/images/burgers_header.jpg",
+                "isHidden": False,
+                "order": 1,
+                "items": [
+                    {
+                        "itemId": mock_burger_id,
+                        "code": "B001",
+                        "name": "Classic Cheeseburger",
+                        "description": "Juicy beef patty, cheddar, lettuce, tomato, pickles.",
+                        "type": "DISH",
+                        "measureUnit": "pc",
+                        "order": 1,
+                        "modifierGroups": [ # Modifiers directly linked to this product
+                            {
+                                "id": mock_burger_addons_group_id,
+                                "name": "Burger Addons",
+                                "minAmount": 0,
+                                "maxAmount": 2,
+                                "childModifiers": [
+                                    {
+                                        "id": "bun-type-mod-group-id",
+                                        "name": "Bun Type",
+                                        "minAmount": 1,
+                                        "maxAmount": 1,
+                                        "childModifiers": [
+                                            {
+                                                "id": str(uuid4()),
+                                                "type": "Product",
+                                                "name": "Brioche Bun",
+                                                "defaultAmount": 1,
+                                                "price": 0.00
+                                            },
+                                            {
+                                                "id": str(uuid4()),
+                                                "type": "Product",
+                                                "name": "Sesame Seed Bun",
+                                                "defaultAmount": 0,
+                                                "price": 0.00
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "id": str(uuid4()), # extra cheese modifier
+                                        "type": "Product",
+                                        "name": "Extra Cheese",
+                                        "defaultAmount": 0,
+                                        "price": 1.50
+                                    }
+                                ]
+                            }
+                        ],
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Standard",
+                                "prices": [{"price": 12.99, "organizationId": organization_id}],
+                                "nutritionPerHundredGrams": {
+                                    "energy": 250.5,
+                                    "carbs": 25.0,
+                                    "fats": 15.0,
+                                    "proteins": 10.0
+                                }
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/cheeseburger.jpg"}],
+                        "picture": "https://example.com/images/cheeseburger_fallback.jpg",
+                        "allergens": [{"id": str(uuid4()), "name": "Gluten"}, {"id": str(uuid4()), "name": "Dairy"}],
+                        "tags": ["Popular", "New"],
+                        "labels": ["Best Seller"]
+                    }
+                ]
+            },
+            {
+                "id": "cat2-sides-id",
+                "name": "Sides",
+                "description": "Tasty additions to your meal",
+                "buttonImageUrl": "https://example.com/images/sides_cat.jpg",
+                "isHidden": False,
+                "order": 2,
+                "items": [
+                    {
+                        "itemId": mock_fries_id,
+                        "code": "F001",
+                        "name": "French Fries",
+                        "description": "Crispy golden fries.",
+                        "type": "DISH",
+                        "measureUnit": "g",
+                        "order": 1,
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Regular",
+                                "prices": [{"price": 3.50, "organizationId": organization_id}],
+                                "nutritionPerHundredGrams": {
+                                    "energy": 150.0,
+                                    "carbs": 20.0,
+                                    "fats": 7.0,
+                                    "proteins": 2.0
+                                }
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/fries.jpg"}]
+                    },
+                    {
+                        "itemId": mock_coke_id,
+                        "code": "D001",
+                        "name": "Coca-Cola (0.33L)",
+                        "description": "Refreshing soft drink.",
+                        "type": "GOODS", # Example of GOODS type
+                        "measureUnit": "ml",
+                        "order": 2,
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Can",
+                                "prices": [{"price": 2.00, "organizationId": organization_id}],
+                                "nutritionPerHundredGrams": {
+                                    "energy": 42.0,
+                                    "carbs": 10.6,
+                                    "fats": 0.0,
+                                    "proteins": 0.0
+                                }
+                            }
+                        ],
+                        "picture": "https://example.com/images/coke.jpg"
+                    }
+                ]
+            },
+            {
+                "id": MOCK_SAUCES_CATEGORY_ID, # Sauces category ID
+                "name": "Sauces",
+                "description": "Add a flavor kick!",
+                "buttonImageUrl": "https://example.com/images/sauces_cat.jpg",
+                "isHidden": False,
+                "order": 3,
+                "items": [
+                    {
+                        "itemId": mock_ketchup_sauce_id,
+                        "code": "S001",
+                        "name": "Ketchup",
+                        "description": "Classic tomato ketchup.",
+                        "type": "DISH", # Could also be MODIFIER depending on iiko setup
+                        "measureUnit": "g",
+                        "order": 1,
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Standard",
+                                "prices": [{"price": 0.50, "organizationId": organization_id}]
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/ketchup.jpg"}]
+                    },
+                    {
+                        "itemId": mock_mayo_sauce_id,
+                        "code": "S002",
+                        "name": "Mayonnaise",
+                        "description": "Creamy mayo.",
+                        "type": "DISH",
+                        "measureUnit": "g",
+                        "order": 2,
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Standard",
+                                "prices": [{"price": 0.75, "organizationId": organization_id}]
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/mayo.jpg"}]
+                    }
+                ]
+            },
+            {
+                "id": MOCK_RECOMMENDATION_CATEGORY_ID, # Recommendation category ID
+                "name": "Recommendations", # This name should match RECOMMENDATION_CATEGORY_NAME in your sync logic
+                "description": "Our chef's specials!",
+                "buttonImageUrl": "https://example.com/images/recommend_cat.jpg",
+                "isHidden": False,
+                "order": 4,
+                "items": [
+                    {
+                        "itemId": mock_recommended_dessert_id,
+                        "code": "R001",
+                        "name": "Chocolate Lava Cake",
+                        "description": "Warm chocolate cake with a molten center.",
+                        "type": "DISH",
+                        "measureUnit": "pc",
+                        "order": 1,
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Standard",
+                                "prices": [{"price": 6.50, "organizationId": organization_id}],
+                                "nutritionPerHundredGrams": {
+                                    "energy": 350.0,
+                                    "carbs": 45.0,
+                                    "fats": 18.0,
+                                    "proteins": 5.0
+                                }
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/lava_cake.jpg"}],
+                        "tags": ["Dessert"]
+                    }
+                ]
+            },
+            {
+                "id": "cat5-wok-id",
+                "name": "Wok Constructor",
+                "description": "Build your own wok!",
+                "buttonImageUrl": "https://example.com/images/wok_cat.jpg",
+                "isHidden": False,
+                "order": 5,
+                "items": [
+                    {
+                        "itemId": mock_wok_base_id, # Wok constructor product
+                        "code": "WOK001",
+                        "name": "Custom Wok",
+                        "description": "Choose your base, protein, and veggies!",
+                        "type": "DISH",
+                        "measureUnit": "pc",
+                        "order": 1,
+                        "isPrepackaged": False, # Important for customizability
+                        "modifierGroups": [
+                            {
+                                "id": mock_wok_base_addons_group_id, # Link to Wok Addons modifier group
+                                "name": "Wok Ingredients",
+                                "minAmount": 1,
+                                "maxAmount": 5,
+                                "childModifiers": [
+                                    {
+                                        "id": mock_wok_chicken_id,
+                                        "type": "Product",
+                                        "name": "Chicken",
+                                        "defaultAmount": 1,
+                                        "price": 3.00
+                                    },
+                                    {
+                                        "id": mock_wok_veg_id,
+                                        "type": "Product",
+                                        "name": "Mixed Vegetables",
+                                        "defaultAmount": 1,
+                                        "price": 2.50
+                                    }
+                                ]
+                            }
+                        ],
+                        "itemSizes": [
+                            {
+                                "id": str(uuid4()),
+                                "name": "Standard",
+                                "prices": [{"price": 8.00, "organizationId": organization_id}], # Base price
+                                "nutritionPerHundredGrams": {
+                                    "energy": 100.0,
+                                    "carbs": 15.0,
+                                    "fats": 2.0,
+                                    "proteins": 3.0
+                                }
+                            }
+                        ],
+                        "images": [{"imageUrl": "https://example.com/images/wok_base.jpg"}]
+                    }
+                ]
+            }
+        ],
+        "items": [ # Standalone items that might be modifiers or other special items
+            # These might be modifiers that are not directly linked to a specific product
+            # but are part of `modifierGroups` which are then linked to products.
+            # Or they could be products not linked to a category directly (less common for menu items).
+            {
+                "itemId": str(uuid4()),
+                "code": "MOD001",
+                "name": "Spicy Sauce",
+                "description": "Extra spicy kick.",
+                "type": "MODIFIER",
+                "measureUnit": "ml",
+                "itemSizes": [
+                    {
+                        "id": str(uuid4()),
+                        "name": "Standard",
+                        "prices": [{"price": 0.75, "organizationId": organization_id}]
+                    }
+                ],
+                "images": [{"imageUrl": "https://example.com/images/spicy_sauce.jpg"}]
+            }
+        ],
+        "modifierGroups": [ # Modifier groups that can be referenced by items
+            {
+                "id": mock_burger_addons_group_id,
+                "name": "Burger Toppings",
+                "description": "Choose your toppings",
+                "minAmount": 0,
+                "maxAmount": 3,
+                "childModifiers": [
+                    {
+                        "id": str(uuid4()),
+                        "type": "Product", # Could be 'Product' or 'Modifier' depending on iiko setup
+                        "name": "Bacon Strip",
+                        "defaultAmount": 0,
+                        "price": 2.00,
+                        "image": "https://example.com/images/bacon.jpg"
+                    },
+                    {
+                        "id": str(uuid4()),
+                        "type": "Product",
+                        "name": "Fried Egg",
+                        "defaultAmount": 0,
+                        "price": 1.00,
+                        "image": "https://example.com/images/egg.jpg"
+                    }
+                ]
+            },
+            {
+                "id": mock_wok_base_addons_group_id,
+                "name": "Wok Proteins & Veggies",
+                "description": "Select your wok ingredients",
+                "minAmount": 1,
+                "maxAmount": 5,
+                "childModifiers": [
+                    {
+                        "id": mock_wok_chicken_id,
+                        "type": "Product",
+                        "name": "Chicken",
+                        "defaultAmount": 1,
+                        "price": 3.00,
+                        "image": "https://example.com/images/chicken.jpg"
+                    },
+                    {
+                        "id": mock_wok_veg_id,
+                        "type": "Product",
+                        "name": "Mixed Vegetables",
+                        "defaultAmount": 1,
+                        "price": 2.50,
+                        "image": "https://example.com/images/veggies.jpg"
+                    },
+                    {
+                        "id": str(uuid4()),
+                        "type": "Product",
+                        "name": "Tofu",
+                        "defaultAmount": 0,
+                        "price": 2.00,
+                        "image": "https://example.com/images/tofu.jpg"
+                    },
+                    {
+                        "id": str(uuid4()),
+                        "type": "Product",
+                        "name": "Shrimp",
+                        "defaultAmount": 0,
+                        "price": 4.00,
+                        "image": "https://example.com/images/shrimp.jpg"
+                    }
+                ]
+            }
+        ],
+        "outOfStock": [] # List of item IDs that are currently out of stock
+    }
+
+    app.logger.info(f"Mock IIKO Menu: Responding with menu data for organization {organization_id}.")
+    return jsonify(mock_menu_data), 200
+
+
+@app.route('/api/2/menu/by_id', methods=['POST'])
+def get_menu_by_id_mock():
+    """Mocks iiko /api/2/menu/by_id endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Menu by ID: Received request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    auth_header = headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        app.logger.error("Mock IIKO Menu by ID: Missing or malformed Authorization header.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if not data or 'organizationId' not in data or not is_valid_uuid(data['organizationId']) or \
+       'productIds' not in data or not isinstance(data['productIds'], list):
+        app.logger.error("Mock IIKO Menu by ID: Missing or invalid 'organizationId' or 'productIds' in request payload.")
+        return jsonify({"error": "Missing or invalid 'organizationId' or 'productIds'"}), 400
+
+    organization_id = data['organizationId']
+    product_ids_requested = data['productIds']
+
+    # For a robust mock, you'd load the full menu (similar to /api/2/menu)
+    # and then filter based on `product_ids_requested`.
+    # For this example, we'll return a subset based on some known mock IDs.
+
+    mock_items_by_id = {}
+    # Populate this dict from a full mock menu if you have one, or define specific items
+    # For now, let's just create a few on the fly that match previously defined stable IDs
+    # and potential modifier IDs.
+
+    # Example items (these should align with the full menu mock for consistency)
+    if mock_burger_id in product_ids_requested:
+        mock_items_by_id[mock_burger_id] = {
+            "itemId": mock_burger_id,
+            "code": "B001",
+            "name": "Classic Cheeseburger",
+            "description": "Juicy beef patty, cheddar, lettuce, tomato, pickles.",
+            "type": "DISH",
+            "measureUnit": "pc",
+            "itemSizes": [
+                {
+                    "id": str(uuid4()),
+                    "name": "Standard",
+                    "prices": [{"price": 12.99, "organizationId": organization_id}],
+                    "nutritionPerHundredGrams": {
+                        "energy": 250.5, "carbs": 25.0, "fats": 15.0, "proteins": 10.0
+                    }
+                }
+            ],
+            "images": [{"imageUrl": "https://example.com/images/cheeseburger.jpg"}],
+            "allergens": [{"id": str(uuid4()), "name": "Gluten"}, {"id": str(uuid4()), "name": "Dairy"}],
+            "tags": ["Popular", "New"],
+            "labels": ["Best Seller"],
+            "modifierGroups": [ # Example of an inline modifier group definition
+                {
+                    "id": str(uuid4()), # Unique ID for this specific modifier group on this item
+                    "name": "Sauces",
+                    "minAmount": 0,
+                    "maxAmount": 2,
+                    "childModifiers": [
+                        {"id": mock_ketchup_sauce_id, "type": "Product", "name": "Ketchup", "defaultAmount": 0, "price": 0.50},
+                        {"id": mock_mayo_sauce_id, "type": "Product", "name": "Mayonnaise", "defaultAmount": 0, "price": 0.75},
+                    ]
+                }
+            ]
+        }
+
+    if mock_ketchup_sauce_id in product_ids_requested:
+        mock_items_by_id[mock_ketchup_sauce_id] = {
+            "itemId": mock_ketchup_sauce_id,
+            "code": "S001",
+            "name": "Ketchup",
+            "description": "Classic tomato ketchup.",
+            "type": "MODIFIER", # It's common for addons to be type MODIFIER
+            "measureUnit": "g",
+            "itemSizes": [
+                {
+                    "id": str(uuid4()),
+                    "name": "Standard",
+                    "prices": [{"price": 0.50, "organizationId": organization_id}]
+                }
+            ],
+            "images": [{"imageUrl": "https://example.com/images/ketchup.jpg"}]
+        }
+
+    if mock_wok_chicken_id in product_ids_requested:
+        mock_items_by_id[mock_wok_chicken_id] = {
+            "itemId": mock_wok_chicken_id,
+            "code": "WCH001",
+            "name": "Chicken (Wok Addon)",
+            "description": "Grilled chicken strips for your wok.",
+            "type": "MODIFIER", # Addons are often 'MODIFIER' type
+            "measureUnit": "g",
+            "itemSizes": [
+                {
+                    "id": str(uuid4()),
+                    "name": "Standard",
+                    "prices": [{"price": 3.00, "organizationId": organization_id}]
+                }
+            ],
+            "images": [{"imageUrl": "https://example.com/images/chicken_addon.jpg"}]
+        }
+    # Add other items as needed for your specific test cases
+
+    found_items = list(mock_items_by_id.values())
+
+    response_data = {
+        "correlationId": str(uuid4()),
+        "items": found_items,
+        "outOfStock": []
+    }
+    app.logger.info(f"Mock IIKO Menu by ID: Responding with {len(found_items)} items.")
+    return jsonify(response_data), 200
+
 
 if __name__ == '__main__':
     from dotenv import load_dotenv

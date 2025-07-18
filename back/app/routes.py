@@ -4,6 +4,7 @@
 
 # Import the 'app' instance from __init__.py
 from app import app
+from app.config import Config
 from flask import send_from_directory, request, jsonify, current_app
 import os
 from .logger import logger
@@ -98,7 +99,7 @@ import os
 import hashlib
 import hmac
 
-TELEGRAM_TOKEN =  os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = Config.TELEGRAM_TOKEN
 
 def validate_telegram_init_data(init_data: str, bot_token: str) -> bool: # Renamed parameter for clarity
     """

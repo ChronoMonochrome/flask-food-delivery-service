@@ -232,6 +232,10 @@ class Order(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     estimated_delivery = db.Column(db.DateTime, nullable=True)
 
+    # Новые поля для интеграции с платежами
+    yookassa_payment_id = db.Column(db.String(255), nullable=True, unique=True) # ID платежа ЮKassa
+    confirmation_url = db.Column(db.String(500), nullable=True) # URL для перенаправления пользователя для оплаты
+
     # Relationship to OrderItem (one-to-many)
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
     

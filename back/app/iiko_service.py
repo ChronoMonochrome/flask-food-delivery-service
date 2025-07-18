@@ -1,4 +1,5 @@
 import requests
+from app.config import Config
 from app.logger import logger
 from app.models import db, Category, MainCategory, Product, Addon, Recommendation, ProductAddon, ProductRecommendation, SAUCES_CATEGORY_NAME, WOK_PRODUCT_CONSTRUCTOR_ID
 from datetime import datetime, timezone
@@ -17,8 +18,9 @@ from diskcache import Cache
 # Data will expire after 900 seconds (15 minutes)
 cache = Cache('iiko_cache', expire=900)
 
-IIKO_API_URL = os.getenv("IIKO_API_URL")
-IIKO_API_TOKEN = os.getenv("IIKO_API_TOKEN")
+#IIKO_API_URL = os.getenv("IIKO_API_URL")
+IIKO_API_URL = "http://mock_iiko:5000"
+IIKO_API_TOKEN = Config.IIKO_API_TOKEN
 
 RECOMMENDATION_CATEGORY_NAME = "Рекомендованные (сиутативные)"
 
