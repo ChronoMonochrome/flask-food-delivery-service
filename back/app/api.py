@@ -841,15 +841,18 @@ class OrderList(Resource):
         # Create DeliveryInfo object from the flat incoming data
         apartment = data.get('apartment')
         floor = data.get('floor')
+        
         if not USING_MOCK:
+            phone = data['phone']
             comment = data.get('comment')
         else:
+            phone = '+79999999999'
             comment = "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
         delivery_info_obj = DeliveryInfo(
             address=data['address'],
             apartment=apartment,
             floor=floor,
-            phone=data['phone'],
+            phone=phone,
             payment_method=data['paymentMethod'],
             comment=comment,
             latitude=data['latitude'],
