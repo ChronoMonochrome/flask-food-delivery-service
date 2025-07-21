@@ -19,6 +19,7 @@ def generate_uuid():
 SAUCES_CATEGORY_NAME = "Соусы"
 WOK_CATEGORY_NAME = "Wok"
 WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
+WOK_BUILDER_PRODUCT_ID = "wok-builder"
 
 class Category(db.Model):
     __tablename__ = 'category'

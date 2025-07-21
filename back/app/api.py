@@ -7,7 +7,7 @@ from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
-    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_CATEGORY_NAME
+    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID, WOK_CATEGORY_NAME
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from app.iiko_service import USING_MOCK
@@ -1157,10 +1157,14 @@ class AddToCartResource(Resource):
         """Add an item to the cart or increment quantity if it exists."""
         user_id = get_telegram_user_id()
         data = api.payload
+        
         product_id = data.get('productId')
         quantity_to_add = data.get('quantity', 1)
-        addons_data = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
-        recommendation_ids = data.get('recommendations', [])
+        
+        # Original addon/recommendation data from frontend
+        addons_data_from_frontend = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
+        recommendation_ids_from_frontend = data.get('recommendations', [])
+
         custom_wok_data = data.get('customWok')
         custom_name = data.get('customName')
         custom_description = data.get('customDescription')
@@ -1171,29 +1175,67 @@ class AddToCartResource(Resource):
         cart = get_or_create_cart(user_id)
 
         product = None
-        if product_id:
+        # Handle the "wok-builder" special product ID
+        if product_id == WOK_BUILDER_PRODUCT_ID:
+            is_custom_item = True
+            # For a custom Wok, the product_id for the CartItem should be None,
+            # as its details are in custom_wok_data.
+            product_id = None 
+
+            # --- Convert customWok components into the 'addons_data' format ---
+            converted_wok_addons = []
+            
+            if custom_wok_data:
+                # Add Wok Base as an addon
+                base_id = custom_wok_data.get('baseId')
+                if base_id:
+                    converted_wok_addons.append({'id': base_id, 'quantity': 1})
+
+                # Add Wok Meats as addons
+                for meat_id in custom_wok_data.get('meatIds', []):
+                    converted_wok_addons.append({'id': meat_id, 'quantity': 1})
+
+                # Add Wok Toppings as addons
+                for topping_id in custom_wok_data.get('toppingIds', []):
+                    converted_wok_addons.append({'id': topping_id, 'quantity': 1})
+
+                # Add Wok Sauces as addons
+                for sauce_id in custom_wok_data.get('sauceIds', []):
+                    converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
+            
+            # Combine frontend's addons with converted wok components
+            addons_to_process = addons_data_from_frontend + converted_wok_addons
+            recommendation_ids_to_process = recommendation_ids_from_frontend
+
+        else:
+            # It's a regular product
             product = Product.query.get(product_id)
             if not product:
                 api.abort(404, "Product not found.")
-
-        is_custom_item = custom_wok_data is not None
+            is_custom_item = False
+            addons_to_process = addons_data_from_frontend
+            recommendation_ids_to_process = recommendation_ids_from_frontend
 
         existing_item = None
         for item in cart.items:
+            # Check for existing regular product item with same addons/recs
             if not is_custom_item and item.product_id == product_id:
                 current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
-                request_addons = sorted(addons_data, key=lambda x: x['id'])
+                request_addons = sorted(addons_to_process, key=lambda x: x['id']) # Use processed addons
                 addons_match = (current_addons == request_addons)
 
                 current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
-                request_recs = sorted(recommendation_ids)
+                request_recs = sorted(recommendation_ids_to_process) # Use processed recommendations
                 recs_match = (current_recs == request_recs)
 
                 if addons_match and recs_match and item.custom_wok_data is None:
                     existing_item = item
                     break
+            # Check for existing custom Wok item with same custom_wok_data and other custom fields
             elif is_custom_item and item.custom_wok_data is not None:
+                # Compare custom_wok_data directly
                 if item.custom_wok_data == custom_wok_data:
+                    # Also compare other custom fields for exact match for incrementing quantity
                     if item.custom_name == custom_name and \
                        item.custom_description == custom_description and \
                        item.custom_price == (Decimal(str(custom_price)) if custom_price is not None else None):
@@ -1205,19 +1247,39 @@ class AddToCartResource(Resource):
         else:
             new_cart_item = CartItem(
                 cart_id=cart.id,
-                product_id=product_id if not is_custom_item else None,
+                # product_id is None for custom Wok items, otherwise the actual product ID
+                product_id=product_id, 
                 quantity=quantity_to_add,
-                custom_wok_data=custom_wok_data,
-                custom_name=custom_name,
-                custom_description=custom_description,
-                custom_price=Decimal(str(custom_price)) if custom_price is not None else None,
-                custom_image=product.image if product and is_custom_item else None
+                custom_wok_data=custom_wok_data if is_custom_item else None, # Store custom wok data only if it's a custom item
+                custom_name=custom_name if is_custom_item else None,
+                custom_description=custom_description if is_custom_item else None,
+                custom_price=Decimal(str(custom_price)) if is_custom_item and custom_price is not None else None,
+                custom_image=None if is_custom_item else (product.image if product else None)
             )
             db.session.add(new_cart_item)
-            db.session.flush()
+            db.session.flush() # Flush to get new_cart_item.id
 
-            for addon_data in addons_data:
+            # Process addons (now includes converted Wok components)
+            for addon_data in addons_to_process:
                 addon_obj = Addon.query.get(addon_data['id'])
+                # Also check Wok component tables if addon_obj is not found directly in Addon
+                # This depends on how you store IIKO IDs for Wok components.
+                # Assuming WokBase, WokMeat, WokTopping, WokSauce models also have a relationship
+                # to their respective Addon entry, or directly contain the addon's data.
+                # For simplicity, if these IDs are truly `addon_ids`, querying Addon table is correct.
+                
+                # If your Wok component IDs are *not* directly `addon.id`s
+                # then you'd need logic here like:
+                # wok_component = None
+                # if not addon_obj:
+                #     wok_component = WokBase.query.get(addon_data['id']) or \
+                #                     WokMeat.query.get(addon_data['id']) or \
+                #                     WokTopping.query.get(addon_data['id']) or \
+                #                     WokSauce.query.get(addon_data['id'])
+                # if wok_component:
+                #     # Create a dummy addon_obj or find a corresponding Addon
+                #     addon_obj = Addon.query.filter_by(name=wok_component.name).first() # Or by some other IIKO ID mapping
+
                 if addon_obj:
                     cart_addon = CartAddon(
                         cart_item_id=new_cart_item.id,
@@ -1226,9 +1288,10 @@ class AddToCartResource(Resource):
                     )
                     db.session.add(cart_addon)
                 else:
-                    current_app.logger.warning(f"Addon with ID {addon_data['id']} not found.")
+                    current_app.logger.warning(f"Addon/Wok component with ID {addon_data['id']} not found.")
 
-            for rec_id in recommendation_ids:
+            # Process recommendations
+            for rec_id in recommendation_ids_to_process:
                 rec_obj = Recommendation.query.get(rec_id)
                 if rec_obj:
                     cart_rec = CartRecommendation(
@@ -1242,8 +1305,7 @@ class AddToCartResource(Resource):
         db.session.commit()
         update_cart_total(cart)
 
-        # Corrected line: Instantiate CartResource and call its get method
-        updated_cart_data = CartResource().get() 
+        updated_cart_data = CartResource().get()
         return api.marshal(updated_cart_data, cart_response_model), 201
 
 @api.route('/cart/update')
