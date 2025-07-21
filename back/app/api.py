@@ -790,45 +790,18 @@ class OrderList(Resource):
                 selected_addons_ids=[ca.addon_id for ca in cart_item.selected_addons],
                 selected_recommendation_ids=[cr.recommendation_id for cr in cart_item.selected_recommendations]
             ))
-            
-            iiko_order_item_data = {}
-            # Add modifiers if any were explicitly selected by the user
-            if iiko_modifiers:
-                iiko_order_item_data["modifiers"] = iiko_modifiers
-            else:
-                # TEMP HACK FOR DEBUGGING: Add a dummy empty modifier if none exist and price > 0
-                # If your product *should* be a simple item without modifiers, this is a sign
-                # that the IIKO configuration is the root cause.
-                # Use an invalid/dummy ID for "id" if you don't have a real one, and "type"
-                # should be a valid IIKO modifier type (e.g., "Product", "Modifier").
-                iiko_order_item_data["modifiers"] = [{
-                    "id": "00000000-0000-0000-0000-000000000000", # Use a dummy or actual IIKO modifier ID
-                    "type": "Product", # Or "Modifier", based on IIKO setup
-                    "amount": 0 # Or 1, depending on what a "null" modifier implies
-                }]
 
             # Prepare for IIKO payload
-            if iiko_order_item_data["modifiers"]:
-                iiko_order_items.append({
-                    "productId": product.iiko_product_id if product else product_id_for_iiko,
-                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
-                    "name": product.name if product else product_name,
-                    "amount": cart_item.quantity,
-                    "price": float(item_price),
-                    "modifiers": iiko_order_item_data["modifiers"],
-                    "comboId": None,
-                    "positionId": str(uuid4())
-                })
-            else:
-                iiko_order_items.append({
-                    "productId": product.iiko_product_id if product else product_id_for_iiko,
-                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
-                    "name": product.name if product else product_name,
-                    "amount": cart_item.quantity,
-                    "price": float(item_price),
-                    "comboId": None,
-                    "positionId": str(uuid4())
-                })
+            iiko_order_items.append({
+                "productId": product.iiko_product_id if product else product_id_for_iiko,
+                "productCode": product.iiko_product_id if product else product_id_for_iiko,
+                "name": product.name if product else product_name,
+                "amount": cart_item.quantity,
+                "price": float(item_price),
+                "modifiers": iiko_modifiers,
+                "comboId": None,
+                "positionId": str(uuid4())
+            })
 
         # Add delivery cost to the total
         final_total = calculated_total + delivery_cost
