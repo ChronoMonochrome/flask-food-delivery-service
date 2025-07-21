@@ -749,7 +749,7 @@ class OrderList(Resource):
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
                 product_name = cart_item.custom_name if cart_item.custom_name else "Custom Wok"
-                product_id_for_iiko = "GENERIC_WOK_PRODUCT_ID_IIKO" # Placeholder, replace with actual IIKO ID
+                product_id_for_iiko = WOK_PRODUCT_CONSTRUCTOR_ID
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue # Skip malformed cart items
