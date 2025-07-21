@@ -1154,9 +1154,9 @@ class AddToCartResource(Resource):
         # Handle the "wok-builder" special product ID
         if product_id == WOK_BUILDER_PRODUCT_ID:
             is_custom_item = True
-            # For a custom Wok, the product_id for the CartItem should be None,
+            # For a custom Wok, the product_id for the CartItem should be WOK_PRODUCT_CONSTRUCTOR_ID,
             # as its details are in custom_wok_data.
-            product_id = None 
+            product_id = WOK_PRODUCT_CONSTRUCTOR_ID 
 
             # --- Convert customWok components into the 'addons_data' format ---
             converted_wok_addons = []
