@@ -7,7 +7,8 @@ from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
-    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID, WOK_CATEGORY_NAME
+    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID,
+    WOK_CATEGORY_NAME, DELIVERY_100_PRODUCT_ID
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from app.iiko_service import USING_MOCK
@@ -802,6 +803,20 @@ class OrderList(Resource):
                 "comboId": None,
                 "positionId": str(uuid4())
             })
+            
+        delivery_product = Product.query.get(DELIVERY_100_PRODUCT_ID)
+            
+        # Prepare for IIKO payload
+        iiko_order_items.append({
+            "productId": delivery_product.iiko_product_id,
+            "productCode": delivery_product.iiko_product_id,
+            "name": delivery_product.name,
+            "amount": 1,
+            "price": float(delivery_product.price),
+            "modifiers": [],
+            "comboId": None,
+            "positionId": str(uuid4())
+        })
 
         # Add delivery cost to the total
         final_total = calculated_total + delivery_cost
@@ -1797,6 +1812,20 @@ class PaymentCallback(Resource):
                                 "comboId": None,
                                 "positionId": str(uuid4())
                             })
+                            
+                        delivery_product = Product.query.get(DELIVERY_100_PRODUCT_ID)
+            
+                        # Prepare for IIKO payload
+                        iiko_order_items.append({
+                            "productId": delivery_product.iiko_product_id,
+                            "productCode": delivery_product.iiko_product_id,
+                            "name": delivery_product.name,
+                            "amount": 1,
+                            "price": float(delivery_product.price),
+                            "modifiers": [],
+                            "comboId": None,
+                            "positionId": str(uuid4())
+                        })
 
                         # Используем DeliveryInfo из объекта заказа
                         delivery_info = order.delivery_info
