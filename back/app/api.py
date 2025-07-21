@@ -749,7 +749,7 @@ class OrderList(Resource):
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
                 product_name = cart_item.custom_name if cart_item.custom_name else "Custom Wok"
-                product_id_for_iiko = "GENERIC_WOK_PRODUCT_ID_IIKO" # Placeholder, replace with actual IIKO ID
+                product_id_for_iiko = WOK_PRODUCT_CONSTRUCTOR_ID
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue # Skip malformed cart items
@@ -790,45 +790,18 @@ class OrderList(Resource):
                 selected_addons_ids=[ca.addon_id for ca in cart_item.selected_addons],
                 selected_recommendation_ids=[cr.recommendation_id for cr in cart_item.selected_recommendations]
             ))
-            
-            iiko_order_item_data = {}
-            # Add modifiers if any were explicitly selected by the user
-            if iiko_modifiers:
-                iiko_order_item_data["modifiers"] = iiko_modifiers
-            else:
-                # TEMP HACK FOR DEBUGGING: Add a dummy empty modifier if none exist and price > 0
-                # If your product *should* be a simple item without modifiers, this is a sign
-                # that the IIKO configuration is the root cause.
-                # Use an invalid/dummy ID for "id" if you don't have a real one, and "type"
-                # should be a valid IIKO modifier type (e.g., "Product", "Modifier").
-                iiko_order_item_data["modifiers"] = [{
-                    "id": "00000000-0000-0000-0000-000000000000", # Use a dummy or actual IIKO modifier ID
-                    "type": "Product", # Or "Modifier", based on IIKO setup
-                    "amount": 0 # Or 1, depending on what a "null" modifier implies
-                }]
 
             # Prepare for IIKO payload
-            if iiko_order_item_data["modifiers"]:
-                iiko_order_items.append({
-                    "productId": product.iiko_product_id if product else product_id_for_iiko,
-                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
-                    "name": product.name if product else product_name,
-                    "amount": cart_item.quantity,
-                    "price": float(item_price),
-                    "modifiers": iiko_order_item_data["modifiers"],
-                    "comboId": None,
-                    "positionId": str(uuid4())
-                })
-            else:
-                iiko_order_items.append({
-                    "productId": product.iiko_product_id if product else product_id_for_iiko,
-                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
-                    "name": product.name if product else product_name,
-                    "amount": cart_item.quantity,
-                    "price": float(item_price),
-                    "comboId": None,
-                    "positionId": str(uuid4())
-                })
+            iiko_order_items.append({
+                "productId": product.iiko_product_id if product else product_id_for_iiko,
+                "productCode": product.iiko_product_id if product else product_id_for_iiko,
+                "name": product.name if product else product_name,
+                "amount": cart_item.quantity,
+                "price": float(item_price),
+                "modifiers": iiko_modifiers,
+                "comboId": None,
+                "positionId": str(uuid4())
+            })
 
         # Add delivery cost to the total
         final_total = calculated_total + delivery_cost
@@ -841,15 +814,18 @@ class OrderList(Resource):
         # Create DeliveryInfo object from the flat incoming data
         apartment = data.get('apartment')
         floor = data.get('floor')
+        
         if not USING_MOCK:
+            phone = data['phone']
             comment = data.get('comment')
         else:
+            phone = '+79999999999'
             comment = "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
         delivery_info_obj = DeliveryInfo(
             address=data['address'],
             apartment=apartment,
             floor=floor,
-            phone=data['phone'],
+            phone=phone,
             payment_method=data['paymentMethod'],
             comment=comment,
             latitude=data['latitude'],
@@ -1178,9 +1154,9 @@ class AddToCartResource(Resource):
         # Handle the "wok-builder" special product ID
         if product_id == WOK_BUILDER_PRODUCT_ID:
             is_custom_item = True
-            # For a custom Wok, the product_id for the CartItem should be None,
+            # For a custom Wok, the product_id for the CartItem should be WOK_PRODUCT_CONSTRUCTOR_ID,
             # as its details are in custom_wok_data.
-            product_id = None 
+            product_id = WOK_PRODUCT_CONSTRUCTOR_ID 
 
             # --- Convert customWok components into the 'addons_data' format ---
             converted_wok_addons = []

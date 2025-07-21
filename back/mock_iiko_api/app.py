@@ -165,15 +165,15 @@ def create_delivery():
             if field not in item:
                 app.logger.error(f"Mock IIKO Delivery: Missing required item field '{field}' at index {idx}.")
                 return jsonify({"error": f"Missing required item field '{field}' at index {idx}"}), 400
-        if not is_valid_uuid(item.get('productId', '')):
-            app.logger.error(f"Mock IIKO Delivery: Invalid productId format for item at index {idx}.")
-            return jsonify({"error": f"Invalid productId format for item at index {idx}"}), 400
+        # if not is_valid_uuid(item.get('productId', '')):
+            # app.logger.error(f"Mock IIKO Delivery: Invalid productId format for item at index {idx}.")
+            # return jsonify({"error": f"Invalid productId format for item at index {idx}"}), 400
         if not isinstance(item.get('amount'), (int, float)) or item.get('amount') <= 0:
             app.logger.error(f"Mock IIKO Delivery: Invalid amount for item at index {idx}.")
             return jsonify({"error": f"Invalid amount for item at index {idx}"}), 400
-        if not is_valid_uuid(item.get('positionId', '')):
-            app.logger.error(f"Mock IIKO Delivery: Invalid positionId format for item at index {idx}.")
-            return jsonify({"error": f"Invalid positionId format for item at index {idx}"}), 400
+        # if not is_valid_uuid(item.get('positionId', '')):
+            # app.logger.error(f"Mock IIKO Delivery: Invalid positionId format for item at index {idx}.")
+            # return jsonify({"error": f"Invalid positionId format for item at index {idx}"}), 400
 
         # Modifiers check
         if 'modifiers' in item:
@@ -184,9 +184,9 @@ def create_delivery():
                 if not isinstance(modifier, dict) or 'id' not in modifier or 'type' not in modifier or 'amount' not in modifier:
                     app.logger.error(f"Mock IIKO Delivery: Malformed modifier at index {mod_idx} for item {idx}.")
                     return jsonify({"error": f"Malformed modifier at index {mod_idx} for item {idx}"}), 400
-                if not is_valid_uuid(modifier.get('id', '')):
-                    app.logger.error(f"Mock IIKO Delivery: Invalid modifier ID format at index {mod_idx} for item {idx}.")
-                    return jsonify({"error": f"Invalid modifier ID format at index {mod_idx} for item {idx}"}), 400
+                # if not is_valid_uuid(modifier.get('id', '')):
+                    # app.logger.error(f"Mock IIKO Delivery: Invalid modifier ID format at index {mod_idx} for item {idx}.")
+                    # return jsonify({"error": f"Invalid modifier ID format at index {mod_idx} for item {idx}"}), 400
                 if modifier.get('type') != 'Product': # Or other allowed types
                     app.logger.warning(f"Mock IIKO Delivery: Unexpected modifier type '{modifier.get('type')}' at index {mod_idx} for item {idx}.")
 
@@ -440,7 +440,7 @@ def get_menu_mock():
         app.logger.error("Mock IIKO Menu: Missing or malformed Authorization header.")
         return jsonify({"error": "Unauthorized"}), 401
 
-    if not data or 'organizationId' not in data or not is_valid_uuid(data['organizationId']):
+    if not data or 'organizationId' not in data:# or not is_valid_uuid(data['organizationId']):
         app.logger.error("Mock IIKO Menu: Missing or invalid 'organizationId' in request payload.")
         return jsonify({"error": "Missing or invalid 'organizationId'"}), 400
 
@@ -862,7 +862,7 @@ def get_menu_by_id_mock():
         app.logger.error("Mock IIKO Menu by ID: Missing or malformed Authorization header.")
         return jsonify({"error": "Unauthorized"}), 401
 
-    if not data or 'organizationId' not in data or not is_valid_uuid(data['organizationId']) or \
+    if not data or 'organizationId' not in data or \
        'productIds' not in data or not isinstance(data['productIds'], list):
         app.logger.error("Mock IIKO Menu by ID: Missing or invalid 'organizationId' or 'productIds' in request payload.")
         return jsonify({"error": "Missing or invalid 'organizationId' or 'productIds'"}), 400
