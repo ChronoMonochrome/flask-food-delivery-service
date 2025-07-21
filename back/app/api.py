@@ -10,6 +10,7 @@ from app.models import (
     WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_CATEGORY_NAME
 )
 from app import iiko_service # Assuming this is your IIKO integration service
+from app.iiko_service import USING_MOCK
 from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
 from datetime import datetime,  timedelta, timezone
@@ -808,25 +809,22 @@ class OrderList(Resource):
 
         # Parse city from address. This is a simple regex, might need refinement.
         full_address = data['address']
-        city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
-        city = "Default City" # Fallback
-        if city_match:
-            city = city_match.group(1).strip()
-        elif full_address:
-            parts = full_address.split(',')
-            if len(parts) > 1:
-                city = parts[-1].strip()
-            else:
-                city = full_address.split()[-1] if full_address.split() else "Default City"
+        city = _parse_city_from_address(full_address)
 
         # Create DeliveryInfo object from the flat incoming data
+        apartment = data.get('apartment')
+        floor = data.get('floor')
+        if not USING_MOCK:
+            comment = data.get('comment')
+        else:
+            comment = "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
         delivery_info_obj = DeliveryInfo(
             address=data['address'],
-            apartment=data.get('apartment'),
-            floor=data.get('floor'),
+            apartment=apartment,
+            floor=floor,
             phone=data['phone'],
             payment_method=data['paymentMethod'],
-            comment=data.get('comment'),
+            comment=comment,
             latitude=data['latitude'],
             longitude=data['longitude']
         )
@@ -884,7 +882,7 @@ class OrderList(Resource):
                     "items": iiko_order_items,
                     "deliveryPoint": {
                         "address": {
-                            "street": new_order.delivery_info.address,
+                            "street": f"{new_order.delivery_info.address} (кв. {apartment}, этаж {floor})",
                             "city": city,
                         },
                         "coordinates": {
@@ -1295,7 +1293,7 @@ class ClearCartResource(Resource):
         return api.marshal(updated_cart_data, cart_response_model)
 
 # --- Configuration ---
-DELIVERY_COST_MOCK = 100 # Mock value for delivery cost
+DELIVERY_COST_MOCK = 100
 
 # IMPORTANT: User-Agent for Nominatim API
 # Replace 'YourDeliveryApp/1.0 (your.email@example.com)' with your actual app name and email.
@@ -1516,19 +1514,13 @@ payment_webhook_ns = Namespace('payment', description='Payment webhooks')
 # So, /payment/callback will be the full URL for the webhook.
 api.add_namespace(payment_webhook_ns, path='/payment')
 
-# Вспомогательная функция для парсинга города (скопирована для согласованности)
+# Вспомогательная функция для парсинга города
 def _parse_city_from_address(full_address):
-    city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
-    city = "Default City" # Запасной вариант
-    if city_match:
-        city = city_match.group(1).strip()
-    elif full_address:
-        parts = full_address.split(',')
-        if len(parts) > 1:
-            city = parts[-1].strip()
-        else:
-            city = full_address.split()[-1] if full_address.split() else "Default City"
-    return city
+    # parts = full_address.split(",")
+    # if len(parts) < 3:
+        # return full_address
+    # return parts[2].strip()
+    return full_address
 
 import ipaddress # For IP address checking
 
@@ -1750,7 +1742,7 @@ class PaymentCallback(Resource):
                             "items": iiko_order_items,
                             "deliveryPoint": {
                                 "address": {
-                                    "street": delivery_info.address,
+                                    "street": f"{order.delivery_info.address} (кв. {delivery_info.apartment}, этаж {delivery_info.floor})",
                                     "city": city,
                                 },
                                 "coordinates": {
@@ -1760,15 +1752,15 @@ class PaymentCallback(Resource):
                             },
                             "payments": [
                                 {
-                                    "sum": float(order.total),
+                                    "sum": float(order.total) if not USING_MOCK else .0,
                                     "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
                                     "paymentTypeId": selected_iiko_payment_type.get('id'),
                                     "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
-                                    "isFiscalizedExternally": False, # Уточните, фискализируется ли ЮKassa
-                                    "isPrepay": True # Это предоплата через ЮKassa
+                                    "isFiscalizedExternally": False, 
+                                    "isPrepay": True
                                 }
                             ],
-                            "comment": delivery_info.comment,
+                            "comment": delivery_info.comment if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ.",
                             "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                         }
 

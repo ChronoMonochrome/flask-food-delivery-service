@@ -18,8 +18,13 @@ from diskcache import Cache
 # Data will expire after 900 seconds (15 minutes)
 cache = Cache('iiko_cache', expire=900)
 
-#IIKO_API_URL = os.getenv("IIKO_API_URL")
-IIKO_API_URL = "http://mock_iiko:5000"
+USING_MOCK = True
+
+if not USING_MOCK:
+    IIKO_API_URL = os.getenv("IIKO_API_URL")
+else:
+    IIKO_API_URL = "http://mock_iiko:5000"
+
 IIKO_API_TOKEN = Config.IIKO_API_TOKEN
 
 RECOMMENDATION_CATEGORY_NAME = "Рекомендованные (сиутативные)"
