@@ -761,7 +761,7 @@ def _sync_products_addons_recommendations(iiko_data, iiko_categories_raw, catego
 
             if recommendation_category_internal_db_id and category_id == recommendation_iiko_id:
                 is_our_recommendation = True
-            elif item_type in ['DISH', 'GOODS']: # Assuming 'DISH' and 'GOODS' are product types
+            elif item_type in ['DISH', 'GOODS', 'SERVICE']: # Assuming 'DISH' and 'GOODS' are product types
                 is_our_product = True
 
             if is_our_product:
