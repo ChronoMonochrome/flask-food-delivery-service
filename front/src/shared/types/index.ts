@@ -55,8 +55,8 @@ export interface DeliveryInfo {
   phone: string;
   paymentMethod: 'cash' | 'card' | 'online';
   comment: string;
-  apartment?: string;
-  floor?: string;
+  apartment: string;
+  floor: string;
 }
 
 export interface Order {
