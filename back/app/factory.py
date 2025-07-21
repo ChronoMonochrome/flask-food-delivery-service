@@ -1,6 +1,7 @@
 # app/factory.py
 from os.path import join, realpath, dirname
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 # from flask_session import Session # Removed, will be initialized in __init__.py
 from datetime import timedelta
 import os
@@ -15,6 +16,17 @@ def create_app(static_folder: str = "", static_url_path: str = ""):
                 static_folder=static_folder,
                 static_url_path=static_url_path
                )
+
+    # Configure ProxyFix
+    # This tells Flask to trust the X-Forwarded-For, X-Forwarded-Proto,
+    # and X-Forwarded-Host headers.
+    # num_proxies=1 if Nginx is the only proxy directly in front of Flask.
+    # If you have multiple layers (e.g., Load Balancer -> Nginx -> Flask),
+    # you might need to increase num_proxies accordingly.
+    # Based on your docker-compose, it's just Nginx -> Flask, so 1 is correct.
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1
+    )
 
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

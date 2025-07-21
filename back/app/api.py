@@ -7,9 +7,10 @@ from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
-    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_CATEGORY_NAME
+    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID, WOK_CATEGORY_NAME
 )
 from app import iiko_service # Assuming this is your IIKO integration service
+from app.iiko_service import USING_MOCK
 from sqlalchemy import distinct # Import distinct for unique values
 from sqlalchemy.orm import joinedload
 from datetime import datetime,  timedelta, timezone
@@ -789,18 +790,45 @@ class OrderList(Resource):
                 selected_addons_ids=[ca.addon_id for ca in cart_item.selected_addons],
                 selected_recommendation_ids=[cr.recommendation_id for cr in cart_item.selected_recommendations]
             ))
+            
+            iiko_order_item_data = {}
+            # Add modifiers if any were explicitly selected by the user
+            if iiko_modifiers:
+                iiko_order_item_data["modifiers"] = iiko_modifiers
+            else:
+                # TEMP HACK FOR DEBUGGING: Add a dummy empty modifier if none exist and price > 0
+                # If your product *should* be a simple item without modifiers, this is a sign
+                # that the IIKO configuration is the root cause.
+                # Use an invalid/dummy ID for "id" if you don't have a real one, and "type"
+                # should be a valid IIKO modifier type (e.g., "Product", "Modifier").
+                iiko_order_item_data["modifiers"] = [{
+                    "id": "00000000-0000-0000-0000-000000000000", # Use a dummy or actual IIKO modifier ID
+                    "type": "Product", # Or "Modifier", based on IIKO setup
+                    "amount": 0 # Or 1, depending on what a "null" modifier implies
+                }]
 
             # Prepare for IIKO payload
-            iiko_order_items.append({
-                "productId": product.iiko_product_id if product else product_id_for_iiko,
-                "productCode": product.iiko_product_id if product else product_id_for_iiko,
-                "name": product.name if product else product_name,
-                "amount": cart_item.quantity,
-                "price": float(item_price),
-                "modifiers": iiko_modifiers,
-                "comboId": None,
-                "positionId": str(uuid4())
-            })
+            if iiko_order_item_data["modifiers"]:
+                iiko_order_items.append({
+                    "productId": product.iiko_product_id if product else product_id_for_iiko,
+                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
+                    "name": product.name if product else product_name,
+                    "amount": cart_item.quantity,
+                    "price": float(item_price),
+                    "modifiers": iiko_order_item_data["modifiers"],
+                    "comboId": None,
+                    "positionId": str(uuid4())
+                })
+            else:
+                iiko_order_items.append({
+                    "productId": product.iiko_product_id if product else product_id_for_iiko,
+                    "productCode": product.iiko_product_id if product else product_id_for_iiko,
+                    "name": product.name if product else product_name,
+                    "amount": cart_item.quantity,
+                    "price": float(item_price),
+                    "comboId": None,
+                    "positionId": str(uuid4())
+                })
 
         # Add delivery cost to the total
         final_total = calculated_total + delivery_cost
@@ -808,25 +836,22 @@ class OrderList(Resource):
 
         # Parse city from address. This is a simple regex, might need refinement.
         full_address = data['address']
-        city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
-        city = "Default City" # Fallback
-        if city_match:
-            city = city_match.group(1).strip()
-        elif full_address:
-            parts = full_address.split(',')
-            if len(parts) > 1:
-                city = parts[-1].strip()
-            else:
-                city = full_address.split()[-1] if full_address.split() else "Default City"
+        city = _parse_city_from_address(full_address)
 
         # Create DeliveryInfo object from the flat incoming data
+        apartment = data.get('apartment')
+        floor = data.get('floor')
+        if not USING_MOCK:
+            comment = data.get('comment')
+        else:
+            comment = "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
         delivery_info_obj = DeliveryInfo(
             address=data['address'],
-            apartment=data.get('apartment'),
-            floor=data.get('floor'),
+            apartment=apartment,
+            floor=floor,
             phone=data['phone'],
             payment_method=data['paymentMethod'],
-            comment=data.get('comment'),
+            comment=comment,
             latitude=data['latitude'],
             longitude=data['longitude']
         )
@@ -877,6 +902,8 @@ class OrderList(Resource):
                     
             else:
                 # --- Интеграция с IIKO для других типов платежей ---
+                if USING_MOCK:
+                    final_total = 0.0
                 iiko_order_data_for_payload = {
                     "id": new_order.id,
                     "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
@@ -884,7 +911,7 @@ class OrderList(Resource):
                     "items": iiko_order_items,
                     "deliveryPoint": {
                         "address": {
-                            "street": new_order.delivery_info.address,
+                            "street": f"{new_order.delivery_info.address} (кв. {apartment}, этаж {floor})",
                             "city": city,
                         },
                         "coordinates": {
@@ -1130,10 +1157,14 @@ class AddToCartResource(Resource):
         """Add an item to the cart or increment quantity if it exists."""
         user_id = get_telegram_user_id()
         data = api.payload
+        
         product_id = data.get('productId')
         quantity_to_add = data.get('quantity', 1)
-        addons_data = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
-        recommendation_ids = data.get('recommendations', [])
+        
+        # Original addon/recommendation data from frontend
+        addons_data_from_frontend = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
+        recommendation_ids_from_frontend = data.get('recommendations', [])
+
         custom_wok_data = data.get('customWok')
         custom_name = data.get('customName')
         custom_description = data.get('customDescription')
@@ -1144,29 +1175,67 @@ class AddToCartResource(Resource):
         cart = get_or_create_cart(user_id)
 
         product = None
-        if product_id:
+        # Handle the "wok-builder" special product ID
+        if product_id == WOK_BUILDER_PRODUCT_ID:
+            is_custom_item = True
+            # For a custom Wok, the product_id for the CartItem should be None,
+            # as its details are in custom_wok_data.
+            product_id = None 
+
+            # --- Convert customWok components into the 'addons_data' format ---
+            converted_wok_addons = []
+            
+            if custom_wok_data:
+                # Add Wok Base as an addon
+                base_id = custom_wok_data.get('baseId')
+                if base_id:
+                    converted_wok_addons.append({'id': base_id, 'quantity': 1})
+
+                # Add Wok Meats as addons
+                for meat_id in custom_wok_data.get('meatIds', []):
+                    converted_wok_addons.append({'id': meat_id, 'quantity': 1})
+
+                # Add Wok Toppings as addons
+                for topping_id in custom_wok_data.get('toppingIds', []):
+                    converted_wok_addons.append({'id': topping_id, 'quantity': 1})
+
+                # Add Wok Sauces as addons
+                for sauce_id in custom_wok_data.get('sauceIds', []):
+                    converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
+            
+            # Combine frontend's addons with converted wok components
+            addons_to_process = addons_data_from_frontend + converted_wok_addons
+            recommendation_ids_to_process = recommendation_ids_from_frontend
+
+        else:
+            # It's a regular product
             product = Product.query.get(product_id)
             if not product:
                 api.abort(404, "Product not found.")
-
-        is_custom_item = custom_wok_data is not None
+            is_custom_item = False
+            addons_to_process = addons_data_from_frontend
+            recommendation_ids_to_process = recommendation_ids_from_frontend
 
         existing_item = None
         for item in cart.items:
+            # Check for existing regular product item with same addons/recs
             if not is_custom_item and item.product_id == product_id:
                 current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
-                request_addons = sorted(addons_data, key=lambda x: x['id'])
+                request_addons = sorted(addons_to_process, key=lambda x: x['id']) # Use processed addons
                 addons_match = (current_addons == request_addons)
 
                 current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
-                request_recs = sorted(recommendation_ids)
+                request_recs = sorted(recommendation_ids_to_process) # Use processed recommendations
                 recs_match = (current_recs == request_recs)
 
                 if addons_match and recs_match and item.custom_wok_data is None:
                     existing_item = item
                     break
+            # Check for existing custom Wok item with same custom_wok_data and other custom fields
             elif is_custom_item and item.custom_wok_data is not None:
+                # Compare custom_wok_data directly
                 if item.custom_wok_data == custom_wok_data:
+                    # Also compare other custom fields for exact match for incrementing quantity
                     if item.custom_name == custom_name and \
                        item.custom_description == custom_description and \
                        item.custom_price == (Decimal(str(custom_price)) if custom_price is not None else None):
@@ -1178,19 +1247,39 @@ class AddToCartResource(Resource):
         else:
             new_cart_item = CartItem(
                 cart_id=cart.id,
-                product_id=product_id if not is_custom_item else None,
+                # product_id is None for custom Wok items, otherwise the actual product ID
+                product_id=product_id, 
                 quantity=quantity_to_add,
-                custom_wok_data=custom_wok_data,
-                custom_name=custom_name,
-                custom_description=custom_description,
-                custom_price=Decimal(str(custom_price)) if custom_price is not None else None,
-                custom_image=product.image if product and is_custom_item else None
+                custom_wok_data=custom_wok_data if is_custom_item else None, # Store custom wok data only if it's a custom item
+                custom_name=custom_name if is_custom_item else None,
+                custom_description=custom_description if is_custom_item else None,
+                custom_price=Decimal(str(custom_price)) if is_custom_item and custom_price is not None else None,
+                custom_image=None if is_custom_item else (product.image if product else None)
             )
             db.session.add(new_cart_item)
-            db.session.flush()
+            db.session.flush() # Flush to get new_cart_item.id
 
-            for addon_data in addons_data:
+            # Process addons (now includes converted Wok components)
+            for addon_data in addons_to_process:
                 addon_obj = Addon.query.get(addon_data['id'])
+                # Also check Wok component tables if addon_obj is not found directly in Addon
+                # This depends on how you store IIKO IDs for Wok components.
+                # Assuming WokBase, WokMeat, WokTopping, WokSauce models also have a relationship
+                # to their respective Addon entry, or directly contain the addon's data.
+                # For simplicity, if these IDs are truly `addon_ids`, querying Addon table is correct.
+                
+                # If your Wok component IDs are *not* directly `addon.id`s
+                # then you'd need logic here like:
+                # wok_component = None
+                # if not addon_obj:
+                #     wok_component = WokBase.query.get(addon_data['id']) or \
+                #                     WokMeat.query.get(addon_data['id']) or \
+                #                     WokTopping.query.get(addon_data['id']) or \
+                #                     WokSauce.query.get(addon_data['id'])
+                # if wok_component:
+                #     # Create a dummy addon_obj or find a corresponding Addon
+                #     addon_obj = Addon.query.filter_by(name=wok_component.name).first() # Or by some other IIKO ID mapping
+
                 if addon_obj:
                     cart_addon = CartAddon(
                         cart_item_id=new_cart_item.id,
@@ -1199,9 +1288,10 @@ class AddToCartResource(Resource):
                     )
                     db.session.add(cart_addon)
                 else:
-                    current_app.logger.warning(f"Addon with ID {addon_data['id']} not found.")
+                    current_app.logger.warning(f"Addon/Wok component with ID {addon_data['id']} not found.")
 
-            for rec_id in recommendation_ids:
+            # Process recommendations
+            for rec_id in recommendation_ids_to_process:
                 rec_obj = Recommendation.query.get(rec_id)
                 if rec_obj:
                     cart_rec = CartRecommendation(
@@ -1215,8 +1305,7 @@ class AddToCartResource(Resource):
         db.session.commit()
         update_cart_total(cart)
 
-        # Corrected line: Instantiate CartResource and call its get method
-        updated_cart_data = CartResource().get() 
+        updated_cart_data = CartResource().get()
         return api.marshal(updated_cart_data, cart_response_model), 201
 
 @api.route('/cart/update')
@@ -1295,7 +1384,7 @@ class ClearCartResource(Resource):
         return api.marshal(updated_cart_data, cart_response_model)
 
 # --- Configuration ---
-DELIVERY_COST_MOCK = 100 # Mock value for delivery cost
+DELIVERY_COST_MOCK = 100
 
 # IMPORTANT: User-Agent for Nominatim API
 # Replace 'YourDeliveryApp/1.0 (your.email@example.com)' with your actual app name and email.
@@ -1516,31 +1605,72 @@ payment_webhook_ns = Namespace('payment', description='Payment webhooks')
 # So, /payment/callback will be the full URL for the webhook.
 api.add_namespace(payment_webhook_ns, path='/payment')
 
-# Вспомогательная функция для парсинга города (скопирована для согласованности)
+# Вспомогательная функция для парсинга города
 def _parse_city_from_address(full_address):
-    city_match = re.search(r',\s*([^,]+?)(?:\s*\d{5})?\s*$', full_address)
-    city = "Default City" # Запасной вариант
-    if city_match:
-        city = city_match.group(1).strip()
-    elif full_address:
-        parts = full_address.split(',')
-        if len(parts) > 1:
-            city = parts[-1].strip()
-        else:
-            city = full_address.split()[-1] if full_address.split() else "Default City"
-    return city
+    # parts = full_address.split(",")
+    # if len(parts) < 3:
+        # return full_address
+    # return parts[2].strip()
+    return full_address
+
+import ipaddress # For IP address checking
+
+# --- Configuration for Yookassa IP Whitelist ---
+# These are the IP ranges provided by Yookassa
+YOOKASSA_IP_WHITELIST = [
+    ipaddress.ip_network('185.71.76.0/27'),
+    ipaddress.ip_network('185.71.77.0/27'),
+    ipaddress.ip_network('77.75.153.0/25'),
+    ipaddress.ip_network('77.75.156.11'), # Single IP, represented as a /32 network
+    ipaddress.ip_network('77.75.156.35'), # Single IP, represented as a /32 network
+    ipaddress.ip_network('77.75.154.128/25'),
+    ipaddress.ip_network('2a02:5180::/32')
+]
 
 @payment_webhook_ns.route('/callback')
 class PaymentCallback(Resource):
     @api.doc(responses={200: 'Success', 400: 'Invalid Request', 403: 'Forbidden'})
     def post(self):
-        """Обработка вебхуков платежей ЮKassa."""
+        """Обработка вебхуков платежей ЮKassa с проверкой подлинности."""
         current_app.logger.info("Получен вебхук ЮKassa.")
+
+        # Логируем все полученные заголовки для отладки
+        current_app.logger.info("Полученные заголовки:")
+        for header, value in request.headers.items():
+            current_app.logger.info(f"  {header}: {value}")
+
+        # --- 1. Проверка IP-адреса (Второй уровень безопасности) ---
+        # Получаем IP-адрес клиента, отправившего запрос.
+        client_ip = request.remote_addr
+        if not client_ip:
+            current_app.logger.warning("Не удалось получить IP-адрес клиента для вебхука ЮKassa.")
+            return {"message": "Forbidden: Unable to determine client IP"}, 403
+
+        is_trusted_ip = False
+        try:
+            client_ip_obj = ipaddress.ip_address(client_ip)
+            for trusted_network in YOOKASSA_IP_WHITELIST:
+                if client_ip_obj in trusted_network:
+                    is_trusted_ip = True
+                    break
+        except ValueError:
+            current_app.logger.error(f"Некорректный формат IP-адреса: {client_ip}")
+            return {"message": "Forbidden: Invalid IP address format"}, 403
+
+        if (not is_trusted_ip) and (not current_app.config.get('DEV_NO_IP_ADDRESS_CHECK_FAIL', False)):
+            current_app.logger.warning(f"Вебхук ЮKassa получен с неизвестного IP-адреса: {client_ip}")
+            return {"message": "Forbidden: Untrusted IP address"}, 403
+        
+        current_app.logger.info(f"Вебхук ЮKassa получен с доверенного IP-адреса: {client_ip}")
+
+        # --- Продолжаем обработку payload ---
         try:
             payload = request.json
             if not payload:
                 current_app.logger.error("Вебхук ЮKassa: JSON-payload не получен.")
                 return {'message': 'No JSON payload'}, 400
+            
+            current_app.logger.info(f"Содержимое вебхука ЮKassa: {payload}")
 
             event = payload.get('event')
             payment_object = payload.get('object')
@@ -1550,14 +1680,47 @@ class PaymentCallback(Resource):
                 return {'message': 'Invalid webhook payload structure'}, 400
 
             payment_id = payment_object.get('id')
-            payment_status = payment_object.get('status')
-            order_id = payment_object.get('metadata', {}).get('order_id') # Наш внутренний ID заказа
+            webhook_status = payment_object.get('status') # Статус из вебхука
+            order_id = payment_object.get('metadata', {}).get('order_id')
 
-            if not payment_id or not payment_status or not order_id:
+            if not payment_id or not webhook_status or not order_id:
                 current_app.logger.error(f"Вебхук ЮKassa: Отсутствуют важные поля (id, status, или metadata.order_id): {payload}")
                 return {'message': 'Missing vital payment details'}, 400
 
-            current_app.logger.info(f"Получен вебхук ЮKassa для платежа {payment_id} (Заказ {order_id}), событие: {event}, статус: {payment_status}")
+            current_app.logger.info(f"Получен вебхук ЮKassa для платежа {payment_id} (Заказ {order_id}), событие: {event}, статус (из вебхука): {webhook_status}")
+
+            # --- 2. Проверка статуса объекта (Основной уровень безопасности) ---
+            if yookassa_service is None:
+                current_app.logger.error("Yookassa Service не инициализирован. Невозможно проверить статус платежа.")
+                return {'message': 'Yookassa service not configured'}, 500
+
+            try:
+                # Используем существующий метод get_payment_status из yookassa_service
+                actual_payment_details = yookassa_service.get_payment_status(payment_id)
+                
+                if not actual_payment_details:
+                    current_app.logger.error(f"Не удалось получить актуальные детали платежа {payment_id} от ЮKassa API.")
+                    return {'message': 'Failed to retrieve payment details from Yookassa'}, 500
+
+                actual_status = actual_payment_details.get('status')
+                current_app.logger.info(f"Актуальный статус платежа {payment_id} по API ЮKassa: {actual_status}")
+
+                # Сравниваем статус из вебхука с актуальным статусом из API
+                if actual_status != webhook_status:
+                    current_app.logger.warning(f"Несоответствие статусов для платежа {payment_id}. Вебхук: {webhook_status}, API: {actual_status}.")
+                    # В зависимости от вашей бизнес-логики, вы можете:
+                    # 1. Продолжить обработку, но с учетом актуального статуса (как сейчас).
+                    # 2. Отклонить запрос, если статусы не совпадают, так как это может быть подозрительно.
+                    # Для строгой безопасности рекомендуется отклонять.
+                    return {'message': 'Forbidden: Status mismatch with Yookassa API'}, 403 # Строгий подход
+                else:
+                    current_app.logger.info(f"Статус платежа {payment_id} подтвержден по API ЮKassa.")
+
+            except Exception as e:
+                current_app.logger.error(f"Ошибка при проверке статуса платежа {payment_id} через API ЮKassa: {e}", exc_info=True)
+                # Если проверка статуса не удалась, это серьезная проблема безопасности.
+                return {'message': 'Payment status verification failed'}, 500
+
 
             # Загружаем заказ со всеми необходимыми связями
             order = Order.query.filter_by(id=order_id).options(
@@ -1670,7 +1833,7 @@ class PaymentCallback(Resource):
                             "items": iiko_order_items,
                             "deliveryPoint": {
                                 "address": {
-                                    "street": delivery_info.address,
+                                    "street": f"{order.delivery_info.address} (кв. {delivery_info.apartment}, этаж {delivery_info.floor})",
                                     "city": city,
                                 },
                                 "coordinates": {
@@ -1680,15 +1843,15 @@ class PaymentCallback(Resource):
                             },
                             "payments": [
                                 {
-                                    "sum": float(order.total),
+                                    "sum": float(order.total) if not USING_MOCK else .0,
                                     "paymentTypeKind": selected_iiko_payment_type.get('paymentTypeKind'),
                                     "paymentTypeId": selected_iiko_payment_type.get('id'),
                                     "isProcessedExternally": selected_iiko_payment_type.get('paymentProcessingType') == 'External',
-                                    "isFiscalizedExternally": False, # Уточните, фискализируется ли ЮKassa
-                                    "isPrepay": True # Это предоплата через ЮKassa
+                                    "isFiscalizedExternally": False, 
+                                    "isPrepay": True
                                 }
                             ],
-                            "comment": delivery_info.comment,
+                            "comment": delivery_info.comment if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ.",
                             "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                         }
 
@@ -1734,6 +1897,9 @@ class PaymentCallback(Resource):
             db.session.commit() # Сохраняем изменения статуса заказа
             return {'message': 'Webhook processed successfully'}, 200
 
+        except json.JSONDecodeError:
+            current_app.logger.error("Некорректное JSON-тело запроса.")
+            return {"message": "Invalid JSON payload"}, 400
         except Exception as e:
             db.session.rollback() # Откатываем транзакцию в случае любой неожиданной ошибки
             current_app.logger.error(f"Ошибка при обработке вебхука ЮKassa: {e}", exc_info=True)

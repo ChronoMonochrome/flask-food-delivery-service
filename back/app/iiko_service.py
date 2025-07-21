@@ -18,8 +18,13 @@ from diskcache import Cache
 # Data will expire after 900 seconds (15 minutes)
 cache = Cache('iiko_cache', expire=900)
 
-#IIKO_API_URL = os.getenv("IIKO_API_URL")
-IIKO_API_URL = "http://mock_iiko:5000"
+USING_MOCK = True
+
+#if not USING_MOCK:
+IIKO_API_URL = os.getenv("IIKO_API_URL")
+#else:
+#    IIKO_API_URL = "http://mock_iiko:5000"
+
 IIKO_API_TOKEN = Config.IIKO_API_TOKEN
 
 RECOMMENDATION_CATEGORY_NAME = "Рекомендованные (сиутативные)"
@@ -390,7 +395,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: d
     :return: Ответ API iiko.
     """
     logger.info(f"Attempting to create delivery order in IIKO for organization: {organization_id}, terminal group: {terminal_group_id}")
-    url = f"http://mock_iiko:5000/api/1/deliveries/create" # This is the endpoint for delivery orders
+    url = f"{IIKO_API_URL}/api/1/deliveries/create" # This is the endpoint for delivery orders
     token = get_iiko_token() # Get token for each request, or cache it appropriately
     if not token:
         logger.error("Failed to get IIKO access token, cannot create delivery order.")
@@ -407,7 +412,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: d
         "order": order,
         "createOrderSettings": create_order_settings or {"transportToFrontTimeout": 0}
     }
-    logger.debug(f"Sending IIKO delivery order payload: {json.dumps(payload, indent=2)}")
+    logger.info(f"Sending IIKO delivery order payload: {json.dumps(payload, indent=2)}")
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
