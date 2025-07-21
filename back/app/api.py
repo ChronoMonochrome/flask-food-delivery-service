@@ -875,6 +875,8 @@ class OrderList(Resource):
                     
             else:
                 # --- Интеграция с IIKO для других типов платежей ---
+                if USING_MOCK:
+                    final_total = 0.0
                 iiko_order_data_for_payload = {
                     "id": new_order.id,
                     "externalNumber": f"WEB-{new_order.id.split('-')[0]}",
