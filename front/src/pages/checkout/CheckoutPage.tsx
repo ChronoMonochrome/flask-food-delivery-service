@@ -3,7 +3,7 @@ import { useDispatch } from 'react-redux';
 import { ArrowLeft, Phone, CreditCard, MessageSquare } from 'lucide-react';
 import { LocationOn } from '@mui/icons-material';
 import { useBackendCartSelector } from '../../entities/cart';
-import { useClearCartMutation, useGetCartQuery } from '../../shared/api/cart-api';
+import {useClearCartMutation, useGetCartQuery, useUpdateCartItemMutation} from '../../shared/api/cart-api';
 import { navigationActions } from '../../features/navigation';
 import { DeliveryInfo } from '../../shared/types';
 import { LeafletMapPicker } from '../../components/YandexMapPicker/LeafletMapPicker';
@@ -21,6 +21,7 @@ import {
   FormControlLabel,
   Radio,
 } from '@mui/material';
+import {useAddOrderMutation} from "../../shared/api/orderApi.ts";
 
 export const CheckoutPage: React.FC = () => {
   const dispatch = useDispatch();
@@ -39,17 +40,20 @@ export const CheckoutPage: React.FC = () => {
   const [isMapOpen, setIsMapOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deliveryCost, setDeliveryCost] = useState<number>(0);
+  const [addOrderMutation] = useAddOrderMutation();
 
   const handleBack = () => {
     dispatch(navigationActions.navigateToPage('cart'));
   };
+
+  console.log(coordinates)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     // Simulate order processing
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await addOrderMutation({...deliveryInfo, latitude: coordinates![0], longitude: coordinates![1]}).unwrap();
 
     await clearCart();
     dispatch(navigationActions.navigateToPage('success'));
@@ -267,22 +271,29 @@ export const CheckoutPage: React.FC = () => {
                   <Box key={index}>
                     <Box display="flex" justifyContent="space-between">
                       <Typography color="text.secondary">
-                      Товар {item.productId} × {item.quantity}
+                      {item.name} × {item.quantity}
                       </Typography>
                       <Typography fontWeight="medium" color="text.primary">
-                      ₽{/* TODO: Рассчитать цену товара */}
+                      ₽{item.priceTotal}
                       </Typography>
                     </Box>
-                  {item.selectedAddons && item.selectedAddons.length > 0 && (
-                      <Typography variant="body2" color="primary.main" sx={{ ml: 2 }}>
-                        + {item.selectedAddons.length} добавок
-                      </Typography>
-                  )}
-                  {item.selectedRecommendations && item.selectedRecommendations.length > 0 && (
-                      <Typography variant="body2" color="success.main" sx={{ ml: 2 }}>
-                        + {item.selectedRecommendations.length} дополнительно
-                      </Typography>
-                  )}
+                    {item.selectedAddons && item.selectedAddons.length > 0 && (
+                        <Box mt={1} >
+                          <Typography variant="caption" color="primary.main">
+                            Добавки: {item.selectedAddons.length} шт. {" "}
+                          </Typography>
+                          {item.selectedAddons.map((addon) => (
+                              <Typography key={addon.id} variant="caption" color="primary.main">
+                                {addon.group_name} кол-во: {addon.quantity}, {" "}
+                              </Typography>
+                          ))}
+                        </Box>
+                    )}
+                  {/*{item.selectedRecommendations && item.selectedRecommendations.length > 0 && (*/}
+                  {/*    <Typography variant="body2" color="success.main" sx={{ ml: 2 }}>*/}
+                  {/*      + {item.selectedRecommendations.length} дополнительно*/}
+                  {/*    </Typography>*/}
+                  {/*)}*/}
                   </Box>
               )) || (
                   <Typography color="text.secondary">Корзина пуста</Typography>
