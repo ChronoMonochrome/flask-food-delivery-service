@@ -1755,6 +1755,101 @@ class MapResource(Resource):
         else:
             api.abort(500, "Coordinates are within a valid delivery area, but Nominatim lookup failed.")
 
+# Define response models if you want to explicitly document the output structure
+# For simplicity, we'll return raw JSON, but it's good practice to define models
+city_model = api.model('City', {
+    'id': fields.String(description='City ID'),
+    'name': fields.String(description='City Name'),
+    'externalId': fields.String(description='External ID (if any)', required=False),
+})
+
+city_list_model = api.model('CityList', {
+    'organizationId': fields.String(description='Organization ID'),
+    'items': fields.List(fields.Nested(city_model), description='List of cities for the organization')
+})
+
+street_model = api.model('Street', {
+    'id': fields.String(description='Street ID'),
+    'name': fields.String(description='Street Name'),
+    'externalId': fields.String(description='External ID (if any)', required=False),
+    'classifierId': fields.String(description='Classifier ID (if any)', required=False),
+})
+
+# --- /api/cities endpoint ---
+@api.route('/cities')
+class CitiesResource(Resource):
+    @api.doc('get_cities')
+    @api.marshal_list_with(city_list_model) # Marshal as a list of organization city lists
+    def get(self):
+        """
+        Returns a list of cities from IIKO for all available organizations.
+        """
+        current_app.logger.info("API call: /api/cities")
+        try:
+            iiko_token = iiko_service.get_iiko_token()
+            if not iiko_token:
+                api.abort(500, "Failed to obtain IIKO token.")
+
+            # Get all organization IDs to fetch cities for them
+            organizations = iiko_service.get_organizations(iiko_token)
+            organization_ids = [org['id'] for org in organizations if 'id' in org]
+
+            if not organization_ids:
+                return [], 200 # No organizations found
+
+            # Call the cached get_cities function
+            cities_data = iiko_service.get_cities(organization_ids)
+
+            return cities_data, 200
+        except Exception as e:
+            current_app.logger.error(f"Error fetching cities: {e}", exc_info=True)
+            api.abort(500, f"Error fetching cities from IIKO: {e}")
+
+# --- /api/streets endpoint ---
+@api.route('/streets')
+class StreetsResource(Resource):
+    @api.doc('get_streets')
+    @api.marshal_list_with(street_model) # Marshal as a list of streets
+    def get(self):
+        """
+        Returns a list of streets for a specific city ("Черноголовка") from IIKO.
+        """
+        current_app.logger.info("API call: /api/streets for 'Черноголовка'")
+        try:
+            iiko_token = iiko_service.get_iiko_token()
+            if not iiko_token:
+                api.abort(500, "Failed to obtain IIKO token.")
+
+            # 1. Find the organization ID (assuming you have one primary organization)
+            organizations = iiko_service.get_organizations(iiko_token)
+            if not organizations:
+                api.abort(500, "No organizations found from IIKO API.")
+            
+            organization_id = organizations[0]['id'] # Use the first organization ID
+
+            # 2. Find the city ID for "Черноголовка"
+            cities_for_org = iiko_service.get_cities([organization_id])
+            chernogolovka_city_id = None
+            for org_cities in cities_for_org:
+                if org_cities.get('organizationId') == organization_id:
+                    for city in org_cities.get('items', []):
+                        if city.get('name') == "Черноголовка":
+                            chernogolovka_city_id = city['id']
+                            break
+                if chernogolovka_city_id:
+                    break
+
+            if not chernogolovka_city_id:
+                api.abort(404, "City 'Черноголовка' not found in IIKO for the primary organization.")
+
+            # 3. Get streets by the found city ID and organization ID
+            streets_data = iiko_service.get_streets_by_city(organization_id, chernogolovka_city_id)
+
+            return streets_data, 200
+        except Exception as e:
+            current_app.logger.error(f"Error fetching streets: {e}", exc_info=True)
+            api.abort(500, f"Error fetching streets from IIKO: {e}")
+
 # Error handling for the API blueprint
 @api_bp.errorhandler(Exception)
 def handle_exception(e):

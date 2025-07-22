@@ -48,6 +48,7 @@ services:
       - app_network
     volumes:
       - ./migrations:/back/app/migrations # Mount the migrations folder
+      - ./iiko_cache:/back/app/iiko_cache # Mount iiko cache
     environment: #
       TZ: Europe/Moscow
 
