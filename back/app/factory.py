@@ -56,8 +56,8 @@ def create_app(static_folder: str = "", static_url_path: str = ""):
     # app.session.init_app(app)
 
     # Database and Logger configurations are now loaded from app.config.from_object(Config)
-    # app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///test.db")
-    # app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///test.db")
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     # app.config["DEBUG"] = True
     # app.debug = app.config["DEBUG"]
     # app.config["LOG_ROTATE_DAYS"] = int(os.getenv("LOG_ROTATE_DAYS", 30))

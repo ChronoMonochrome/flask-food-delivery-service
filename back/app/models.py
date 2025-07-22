@@ -20,6 +20,7 @@ SAUCES_CATEGORY_NAME = "Соусы"
 WOK_CATEGORY_NAME = "Wok"
 WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
 WOK_BUILDER_PRODUCT_ID = "wok-builder"
+DELIVERY_100_PRODUCT_ID = "2d36623b-0e2d-4cf1-bd9a-196fe13da4d7"
 
 class Category(db.Model):
     __tablename__ = 'category'

@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 import json
 import os
 
+from typing import List, Dict, Any
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -18,12 +20,9 @@ from diskcache import Cache
 # Data will expire after 900 seconds (15 minutes)
 cache = Cache('iiko_cache', expire=900)
 
-USING_MOCK = True
-
-#if not USING_MOCK:
-#IIKO_API_URL = os.getenv("IIKO_API_URL")
-#else:
-IIKO_API_URL = "http://mock_iiko:5000"
+USING_MOCK = False
+IIKO_API_URL = os.getenv("IIKO_API_URL")
+IIKO_API_MOCK_URL = "http://mock_iiko:5000"
 
 IIKO_API_TOKEN = Config.IIKO_API_TOKEN
 
@@ -143,6 +142,8 @@ color_map = {
 
 
 # --- Helper functions for iiko API interaction ---
+# Cache IIKO token for 10 minutes (600 seconds)
+@cache.memoize(expire=10 * 60)
 def get_iiko_token():
     """
     Получить токен доступа для работы с iiko API.
@@ -151,16 +152,17 @@ def get_iiko_token():
     url = f"{IIKO_API_URL}/api/1/access_token"
     payload = {"apiLogin": IIKO_API_TOKEN}
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=10) # Added timeout
         response.raise_for_status()
         token = response.json().get("token")
-        logger.info(f"iiko token fetched successfully {token}.")
+        logger.info(f"iiko token fetched successfully.")
         return token
     except requests.exceptions.RequestException as e:
         logger.error(f"Error getting iiko token: {e}")
         return None
 
-@cache.memoize()
+# Cache organizations for 10 minutes (600 seconds)
+@cache.memoize(expire=10 * 60)
 def get_organizations(token):
     """
     Получить список организаций.
@@ -170,7 +172,7 @@ def get_organizations(token):
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"organizationIds": []} # Empty list to get all organizations
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=10) # Added timeout
         response.raise_for_status()
         organizations = response.json().get("organizations", [])
         logger.info(f"Fetched {len(organizations)} organizations.")
@@ -179,11 +181,13 @@ def get_organizations(token):
         logger.error(f"Error getting organizations: {e}")
         return None
 
+# Cache terminal groups for 10 minutes (600 seconds)
+@cache.memoize(expire=10 * 60)
 def get_terminal_groups(organization_id: str, token: str):
     """
     Получить терминальные группы для организации.
     """
-    logger.info(f"Fetching terminal groups for organization {organization_id} from IIKO... using token {token}")
+    logger.info(f"Fetching terminal groups for organization {organization_id} from IIKO...")
     url = f"{IIKO_API_URL}/api/1/terminal_groups"
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"organizationIds": [organization_id], "includeDisabled": True}
@@ -191,7 +195,6 @@ def get_terminal_groups(organization_id: str, token: str):
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
-        # The structure is {"terminalGroups": [{"organizationId": "...", "items": [...]}]}
         terminal_groups_data = response.json().get("terminalGroups", [])
         logger.info(f"Fetched {len(terminal_groups_data)} terminal group entries for organization {organization_id}.")
         return terminal_groups_data
@@ -199,7 +202,8 @@ def get_terminal_groups(organization_id: str, token: str):
         logger.error(f"Error getting terminal groups from IIKO for organization {organization_id}: {e}")
         return None
 
-@cache.memoize()
+# Cache menu summary for 2 hours (7200 seconds)
+@cache.memoize(expire=2 * 60 * 60)
 def get_menu_summary(token):
     """
     Получить сводную информацию по меню (список доступных внешних меню).
@@ -208,7 +212,7 @@ def get_menu_summary(token):
     url = f"{IIKO_API_URL}/api/2/menu"
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        response = requests.post(url, headers=headers)
+        response = requests.post(url, headers=headers, timeout=10) # Added timeout
         response.raise_for_status()
         menu_summary = response.json()
         logger.info(f"Menu summary fetched with {len(menu_summary.get('externalMenus', []))} external menus.")
@@ -217,7 +221,8 @@ def get_menu_summary(token):
         logger.error(f"Error getting menu summary: {e}")
         return None
 
-@cache.memoize()
+# Cache menu details by ID for 2 hours (7200 seconds)
+@cache.memoize(expire=2 * 60 * 60)
 def get_menu_details_by_id(organization_id, menu_id, token):
     """
     Получить номенклатуру (детали меню) для конкретной организации и внешнего меню ID.
@@ -227,7 +232,7 @@ def get_menu_details_by_id(organization_id, menu_id, token):
     headers = {"Authorization": f"Bearer {token}"}
     json_payload = {"externalMenuId": menu_id, "organizationIds": [organization_id]}
     try:
-        response = requests.post(url, headers=headers, json=json_payload)
+        response = requests.post(url, headers=headers, json=json_payload, timeout=30) # Increased timeout
         response.raise_for_status()
         data = response.json()
         logger.info("Menu details fetched successfully.")
@@ -288,7 +293,7 @@ def get_addons_from_iiko_item(iiko_item):
     if "itemModifierGroups" in iiko_item and iiko_item["itemModifierGroups"]:
         for modifier_group in iiko_item["itemModifierGroups"]:
             if "name" in modifier_group and modifier_group["name"]:
-                addon_group_name = modifier_group[name]
+                addon_group_name = modifier_group["name"] # Corrected: use modifier_group["name"]
             else:
                 addon_group_name = "Ungrouped"
             if "items" in modifier_group and modifier_group["items"]:
@@ -383,6 +388,135 @@ def get_addons_from_iiko_item(iiko_item):
                                 "image": addon_image
                             })
     return addons
+    
+def _make_post_request(url_path: str, payload: Dict[str, Any], token: str, timeout: int = 10) -> Dict[str, Any]:
+    """
+    Helper function to make a POST request.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    full_url = f"{IIKO_API_URL}{url_path}" # Changed 'url' to 'url_path' for consistency
+    try:
+        response = requests.post(full_url, json=payload, headers=headers, timeout=timeout)
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error occurred: {http_err} - Response: {response.text if response else 'N/A'}")
+        raise
+    except requests.exceptions.ConnectionError as conn_err:
+        logger.error(f"Connection error occurred: {conn_err}")
+        raise
+    except requests.exceptions.Timeout as timeout_err:
+        logger.error(f"Timeout error occurred: {timeout_err}")
+        raise
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"An unexpected request error occurred: {req_err}")
+        raise
+    
+# Cache cities for 24 hours (86400 seconds)
+@cache.memoize(expire=24 * 60 * 60)
+def get_cities(organization_ids: List[str]) -> List[Dict[str, Any]]:
+    """
+    Получить список городов для указанных организаций.
+    """
+    token = get_iiko_token()
+    if not token:
+        raise RuntimeError("Failed to get IIKO token.")
+
+    url = "/api/1/cities"
+    payload = {"organizationIds": organization_ids}
+    logger.info(f"Получаем города для {organization_ids}.")
+    try:
+        response_json = _make_post_request(url, payload, token, timeout=10)
+        cities = response_json.get("cities", [])
+        logger.info(f"Города для {organization_ids} получены.")
+        return cities
+    except Exception as e:
+        logger.error(f"Ошибка получения городов: {e}")
+        raise
+
+# Cache streets by city for 24 hours (86400 seconds)
+@cache.memoize(expire=24 * 60 * 60)
+def get_streets_by_city(organization_id: str, city_id: str) -> List[Dict[str, Any]]:
+    """
+    Получить список улиц для указанного города и организации.
+    """
+    token = get_iiko_token()
+    if not token:
+        raise RuntimeError("Failed to get IIKO token.")
+
+    url = "/api/1/streets/by_city"
+    payload = {"organizationId": organization_id, "cityId": city_id}
+    logger.info(f"Получаем улицы для города {city_id} (организация: {organization_id}).")
+    try:
+        response_json = _make_post_request(url, payload, token, timeout=10)
+        streets = response_json.get("streets", [])
+        logger.info(f"Улицы для города {city_id} получены.")
+        return streets
+    except Exception as e:
+        logger.error(f"Ошибка получения улиц: {e}")
+        raise
+
+
+# Add other IIKO service functions as they were (e.g., get_payment_types, create_delivery_order)
+def get_payment_types(organization_ids: List[str], token: str) -> List[Dict[str, Any]]:
+    """
+    Retrieves a list of payment types from the IIKO API for specified organizations.
+    """
+    logger.info(f"Fetching payment types for organizations {organization_ids} from IIKO...")
+    url = f"{IIKO_API_URL}/api/1/payment_types"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"organizationIds": organization_ids}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        payment_types_data = response.json().get("paymentTypes", [])
+        # IIKO returns a list of dicts, each containing 'organizationId' and 'items' (list of payment types)
+        # We want to flatten this into a single list of all payment types
+        all_payment_types = []
+        for org_data in payment_types_data:
+            all_payment_types.extend(org_data.get('items', []))
+        logger.info(f"Fetched {len(all_payment_types)} payment types for organizations {organization_ids}.")
+        return all_payment_types
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error getting payment types from IIKO for organizations {organization_ids}: {e}")
+        raise
+
+def create_delivery_order(organization_id: str, terminal_group_id: str, order: Dict[str, Any], create_order_settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sends a delivery order to the IIKO API.
+    """
+    logger.info(f"Sending delivery order for organization {organization_id}, terminal group {terminal_group_id} to IIKO.")
+    token = get_iiko_token() # Re-fetch token to ensure it's fresh for crucial calls
+    if not token:
+        raise RuntimeError("Failed to get IIKO token for order creation.")
+
+    url = f"{IIKO_API_URL}/api/1/deliveries/create"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    payload = {
+        "organizationId": organization_id,
+        "terminalGroupId": terminal_group_id,
+        "order": order,
+        "createOrderSettings": create_order_settings
+    }
+    
+    try:
+        # Use a longer timeout for order creation as it can take more time
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        response_data = response.json()
+        logger.info(f"IIKO delivery order response: {response_data}")
+        return response_data
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error sending delivery order to IIKO: {e}")
+        # Log the full response text if available for debugging
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"IIKO API Error Response Text: {e.response.text}")
+        raise
 
 def create_delivery_order(organization_id: str, terminal_group_id: str, order: dict, create_order_settings: dict = None):
     """
@@ -395,7 +529,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: d
     :return: Ответ API iiko.
     """
     logger.info(f"Attempting to create delivery order in IIKO for organization: {organization_id}, terminal group: {terminal_group_id}")
-    url = f"{IIKO_API_URL}/api/1/deliveries/create" # This is the endpoint for delivery orders
+    url = f"{IIKO_API_MOCK_URL}/api/1/deliveries/create" # This is the endpoint for delivery orders
     token = get_iiko_token() # Get token for each request, or cache it appropriately
     if not token:
         logger.error("Failed to get IIKO access token, cannot create delivery order.")
@@ -760,7 +894,7 @@ def _sync_products_addons_recommendations(iiko_data, iiko_categories_raw, catego
 
             if recommendation_category_internal_db_id and category_id == recommendation_iiko_id:
                 is_our_recommendation = True
-            elif item_type in ['DISH', 'GOODS']: # Assuming 'DISH' and 'GOODS' are product types
+            elif item_type in ['DISH', 'GOODS', 'SERVICE']: # Assuming 'DISH' and 'GOODS' are product types
                 is_our_product = True
 
             if is_our_product:

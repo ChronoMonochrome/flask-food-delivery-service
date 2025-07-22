@@ -58,6 +58,78 @@ def get_access_token_mock():
     app.logger.info(f"Mock IIKO Auth: Successfully issued access token for API login '{api_login}'.")
     return jsonify(response_data), 200
 
+@app.route('/api/1/cities', methods=['POST'])
+def get_cities():
+    """Mocks iiko /api/1/cities endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Cities: Received get_cities request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    if not data or 'organizationIds' not in data or not isinstance(data['organizationIds'], list):
+        app.logger.error("Mock IIKO Cities: Missing or invalid 'organizationIds' in payload.")
+        return jsonify({"error": "Missing or invalid 'organizationIds' (expected a list)"}), 400
+
+    requested_org_ids = data['organizationIds']
+    response_cities = []
+    
+    for org_id in requested_org_ids:
+        # if not is_valid_uuid(org_id):
+            # app.logger.warning(f"Mock IIKO Cities: Invalid organizationId format: {org_id}. Skipping.")
+            # continue # Or return an error for individual invalid IDs if needed
+
+        organization = MOCK_ORGANIZATIONS.get(org_id)
+        if organization:
+            response_cities.extend(organization['cities'])
+        else:
+            app.logger.warning(f"Mock IIKO Cities: Organization ID not found: {org_id}")
+
+    # Remove duplicates if an organization is requested multiple times, or if cities are shared
+    unique_cities = []
+    seen_city_ids = set()
+    for city in response_cities:
+        if city['id'] not in seen_city_ids:
+            unique_cities.append(city)
+            seen_city_ids.add(city['id'])
+
+    app.logger.info(f"Mock IIKO Cities: Responding with {len(unique_cities)} cities.")
+    return jsonify({"cities": unique_cities}), 200
+
+@app.route('/api/1/streets/by_city', methods=['POST'])
+def get_streets_by_city():
+    """Mocks iiko /api/1/streets/by_city endpoint."""
+    data = request.json
+    headers = request.headers
+
+    app.logger.info(f"Mock IIKO Streets: Received get_streets_by_city request. Headers: {headers}, Payload: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+    required_fields = ['organizationId', 'cityId']
+    for field in required_fields:
+        if field not in data:
+            app.logger.error(f"Mock IIKO Streets: Missing required field: {field}")
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    organization_id = data.get('organizationId')
+    city_id = data.get('cityId')
+
+    # if not is_valid_uuid(organization_id):
+        # app.logger.error(f"Mock IIKO Streets: Invalid organizationId format: {organization_id}")
+        # return jsonify({"error": "Invalid organizationId format (expected UUID)"}), 400
+    # iiko's cityId might not always be a strict UUID, but we can validate if we expect it to be.
+    # For this mock, we'll allow it if it's a string, as per the original comment.
+    if not isinstance(city_id, str) or not city_id:
+        app.logger.error(f"Mock IIKO Streets: Invalid cityId format: {city_id}")
+        return jsonify({"error": "Invalid cityId format (expected non-empty string)"}), 400
+
+    streets = MOCK_STREETS.get(city_id, [])
+
+    if not streets:
+        app.logger.warning(f"Mock IIKO Streets: No streets found for city ID: {city_id}")
+
+    app.logger.info(f"Mock IIKO Streets: Responding with {len(streets)} streets for city {city_id}.")
+    return jsonify({"streets": streets}), 200
+
+
 @app.route('/api/1/deliveries/create', methods=['POST'])
 def create_delivery():
     """Mocks iiko /api/1/deliveries/create endpoint."""
@@ -77,45 +149,43 @@ def create_delivery():
     terminal_group_id = data.get('terminalGroupId')
     order_payload = data.get('order')
 
-    # --- Validate UUID formats for IDs ---
-    # if not isinstance(organization_id, str) or not is_valid_uuid(organization_id):
-        # app.logger.error(f"Mock IIKO Delivery: Invalid organizationId format: {organization_id}")
-        # return jsonify({"error": "Invalid organizationId format (expected UUID)"}), 400
-    # terminalGroupId returned by IIKO appears not to be a valid UUID, ignoring this
-    # if terminal_group_id is not None and (not isinstance(terminal_group_id, str)): # or not is_valid_uuid(terminal_group_id)):
-        # app.logger.error(f"Mock IIKO Delivery: Invalid terminalGroupId format: {terminal_group_id}")
-        # return jsonify({"error": "Invalid terminalGroupId format (expected UUID or null)"}), 400
+    # Removed UUID validation for organizationId as requested
+    if not isinstance(organization_id, str) or not organization_id:
+        app.logger.error(f"Mock IIKO Delivery: Invalid organizationId format: {organization_id}. Expected non-empty string.")
+        return jsonify({"error": "Invalid organizationId format (expected non-empty string)"}), 400
+    
+    if terminal_group_id is not None and not isinstance(terminal_group_id, str):
+        app.logger.error(f"Mock IIKO Delivery: Invalid terminalGroupId format: {terminal_group_id}")
+        return jsonify({"error": "Invalid terminalGroupId format (expected string or null)"}), 400
 
     # --- Order Object Checks ---
     if not isinstance(order_payload, dict):
         app.logger.error("Mock IIKO Delivery: 'order' field must be an object.")
         return jsonify({"error": "'order' field must be an object"}), 400
 
-    # Note: Removed 'externalNumber' from required here as per original client sample,
-    # but the client code was updated to send it. Make sure this mock is aligned.
-    required_order_fields = ['id', 'phone', 'items', 'deliveryPoint', 'payments'] # externalNumber is optional in this mock
+    required_order_fields = ['id', 'phone', 'items', 'deliveryPoint', 'payments']
     for field in required_order_fields:
         if field not in order_payload:
             app.logger.error(f"Mock IIKO Delivery: Missing required 'order' field: {field}")
             return jsonify({"error": f"Missing required 'order' field: {field}"}), 400
 
     order_id = order_payload.get('id')
-    external_number = order_payload.get('externalNumber') # Optional in this mock's strict check
+    external_number = order_payload.get('externalNumber') 
     phone = order_payload.get('phone')
     items = order_payload.get('items')
     delivery_point = order_payload.get('deliveryPoint')
     payments = order_payload.get('payments')
     complete_before = order_payload.get('completeBefore')
     order_service_type = order_payload.get('orderServiceType')
+    customer = order_payload.get('customer')
 
-    # Validate Order ID and External Number (if present)
-    if not isinstance(order_id, str) or not is_valid_uuid(order_id):
-        app.logger.error(f"Mock IIKO Delivery: Invalid order.id format: {order_id}")
-        return jsonify({"error": "Invalid order.id format (expected UUID)"}), 400
+    # Removed UUID validation for order.id as requested
+    if not isinstance(order_id, str) or not order_id:
+        app.logger.error(f"Mock IIKO Delivery: Invalid order.id format: {order_id}. Expected non-empty string.")
+        return jsonify({"error": "Invalid order.id format (expected non-empty string)"}), 400
     if external_number is not None and (not isinstance(external_number, str) or not external_number):
-         app.logger.error(f"Mock IIKO Delivery: Invalid order.externalNumber: {external_number}")
-         return jsonify({"error": "Invalid order.externalNumber (expected non-empty string or null)"}), 400
-
+           app.logger.error(f"Mock IIKO Delivery: Invalid order.externalNumber: {external_number}")
+           return jsonify({"error": "Invalid order.externalNumber (expected non-empty string or null)"}), 400
 
     # Validate Phone Number
     if not isinstance(phone, str) or not (8 <= len(phone) <= 40) or not phone.startswith('+'):
@@ -126,16 +196,60 @@ def create_delivery():
     if not isinstance(delivery_point, dict):
         app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint' must be an object.")
         return jsonify({"error": "'order.deliveryPoint' must be an object"}), 400
+
+    # More detailed deliveryPoint.address validation
     if 'address' not in delivery_point or not isinstance(delivery_point['address'], dict):
         app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address' is missing or invalid.")
         return jsonify({"error": "'order.deliveryPoint.address' is missing or invalid"}), 400
-    if 'street' not in delivery_point['address'] or not isinstance(delivery_point['address']['street'], str):
-        app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address.street' is missing or invalid.")
-        return jsonify({"error": "'order.deliveryPoint.address.street' is missing or invalid"}), 400
+
+    address = delivery_point['address']
+
+    # Validate 'street' as an object with 'id' and 'name'
+    if 'street' not in address or not isinstance(address['street'], dict):
+        app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address.street' is missing or not an object.")
+        return jsonify({"error": "'order.deliveryPoint.address.street' is missing or not an object"}), 400
+    
+    street_obj = address['street']
+    # Removed UUID validation for street.id as requested
+    if 'id' not in street_obj or not isinstance(street_obj['id'], str) or not street_obj['id']:
+        app.logger.error(f"Mock IIKO Delivery: Invalid 'order.deliveryPoint.address.street.id' format: {street_obj.get('id')}. Expected non-empty string.")
+        return jsonify({"error": "Invalid 'order.deliveryPoint.address.street.id' (expected non-empty string)"}), 400
+    if 'name' not in street_obj or not isinstance(street_obj['name'], str) or not street_obj['name']:
+        app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address.street.name' is missing, invalid, or empty.")
+        return jsonify({"error": "'order.deliveryPoint.address.street.name' is missing, invalid, or empty"}), 400
+
+    # Validate 'city' as an object with 'id' and 'name' (if present)
+    if 'city' in address:
+        if not isinstance(address['city'], dict):
+            app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address.city' must be an object.")
+            return jsonify({"error": "'order.deliveryPoint.address.city' must be an object"}), 400
+        city_obj = address['city']
+        # Removed UUID validation for city.id as requested
+        if 'id' not in city_obj or not isinstance(city_obj['id'], str) or not city_obj['id']:
+            app.logger.error(f"Mock IIKO Delivery: Invalid 'order.deliveryPoint.address.city.id' format: {city_obj.get('id')}. Expected non-empty string.")
+            return jsonify({"error": "Invalid 'order.deliveryPoint.address.city.id' (expected non-empty string)"}), 400
+        if 'name' not in city_obj or not isinstance(city_obj['name'], str) or not city_obj['name']:
+            app.logger.error("Mock IIKO Delivery: 'order.deliveryPoint.address.city.name' is missing, invalid, or empty.")
+            return jsonify({"error": "'order.deliveryPoint.address.city.name' is missing, invalid, or empty"}), 400
+
+    # Required simple string address fields
+    required_simple_address_fields = ['house'] 
+    for field in required_simple_address_fields:
+        if field not in address or not isinstance(address[field], str) or not address[field]:
+            app.logger.error(f"Mock IIKO Delivery: 'order.deliveryPoint.address.{field}' is missing, invalid, or empty.")
+            return jsonify({"error": f"'order.deliveryPoint.address.{field}' is missing, invalid, or empty"}), 400
+
+    # Validate optional string fields in address (if present, must be string)
+    optional_string_address_fields = ['building', 'flat', 'entrance', 'floor', 'doorphone', 'comment', 'index', 'line1']
+    for field in optional_string_address_fields:
+        if field in address and not isinstance(address[field], str):
+            app.logger.error(f"Mock IIKO Delivery: Invalid type for 'order.deliveryPoint.address.{field}' (expected string).")
+            return jsonify({"error": f"Invalid type for 'order.deliveryPoint.address.{field}' (expected string)."}), 400
+
+
     if 'coordinates' in delivery_point and (not isinstance(delivery_point['coordinates'], dict) or 'latitude' not in delivery_point['coordinates'] or 'longitude' not in delivery_point['coordinates']):
         app.logger.warning("Mock IIKO Delivery: 'order.deliveryPoint.coordinates' is present but malformed.")
-
-
+    
     # Validate completeBefore date format (optional but good to check if present)
     if complete_before:
         try:
@@ -146,10 +260,28 @@ def create_delivery():
             return jsonify({"error": "Invalid order.completeBefore format"}), 400
 
     # Validate orderServiceType
-    allowed_service_types = ["DeliveryByCourier", "DeliveryByClient"]
+    allowed_service_types = ["DeliveryByCourier", "DeliveryByClient", "Common"]
     if order_service_type and order_service_type not in allowed_service_types:
         app.logger.error(f"Mock IIKO Delivery: Invalid order.orderServiceType: {order_service_type}. Allowed: {allowed_service_types}")
         return jsonify({"error": f"Invalid order.orderServiceType: {order_service_type}"}), 400
+
+    # Validate Customer (new field)
+    if customer:
+        if not isinstance(customer, dict):
+            app.logger.error("Mock IIKO Delivery: 'order.customer' must be an object if present.")
+            return jsonify({"error": "'order.customer' must be an object"}), 400
+        # Basic customer fields check
+        # Removed UUID validation for customer.id as requested
+        if 'id' in customer and (not isinstance(customer['id'], str) or not customer['id']):
+            app.logger.error(f"Mock IIKO Delivery: Invalid order.customer.id format: {customer.get('id')}. Expected non-empty string.")
+            return jsonify({"error": "Invalid order.customer.id format (expected non-empty string)"}), 400
+        if 'name' in customer and not isinstance(customer['name'], str):
+            app.logger.error("Mock IIKO Delivery: 'order.customer.name' must be a string.")
+            return jsonify({"error": "'order.customer.name' must be a string"}), 400
+        if 'phone' in customer and (not isinstance(customer['phone'], str) or not (8 <= len(customer['phone']) <= 40) or not customer['phone'].startswith('+')):
+            app.logger.error(f"Mock IIKO Delivery: Invalid order.customer.phone format: {customer['phone']}")
+            return jsonify({"error": "Invalid order.customer.phone (must start with '+' and be 8-40 chars)"}), 400
+
 
     # --- Items Checks ---
     if not isinstance(items, list) or not items:
@@ -160,20 +292,36 @@ def create_delivery():
         if not isinstance(item, dict):
             app.logger.error(f"Mock IIKO Delivery: Item at index {idx} is not an object.")
             return jsonify({"error": f"Item at index {idx} is not an object"}), 400
+        
         required_item_fields = ['productId', 'amount', 'positionId']
         for field in required_item_fields:
             if field not in item:
                 app.logger.error(f"Mock IIKO Delivery: Missing required item field '{field}' at index {idx}.")
                 return jsonify({"error": f"Missing required item field '{field}' at index {idx}"}), 400
-        # if not is_valid_uuid(item.get('productId', '')):
-            # app.logger.error(f"Mock IIKO Delivery: Invalid productId format for item at index {idx}.")
-            # return jsonify({"error": f"Invalid productId format for item at index {idx}"}), 400
+        
+        # Removed UUID validation for productId and positionId as requested
+        if not isinstance(item.get('productId'), str) or not item.get('productId'):
+            app.logger.error(f"Mock IIKO Delivery: Invalid productId format for item at index {idx}. Expected non-empty string.")
+            return jsonify({"error": f"Invalid productId format for item at index {idx} (expected non-empty string)"}), 400
         if not isinstance(item.get('amount'), (int, float)) or item.get('amount') <= 0:
             app.logger.error(f"Mock IIKO Delivery: Invalid amount for item at index {idx}.")
             return jsonify({"error": f"Invalid amount for item at index {idx}"}), 400
-        # if not is_valid_uuid(item.get('positionId', '')):
-            # app.logger.error(f"Mock IIKO Delivery: Invalid positionId format for item at index {idx}.")
-            # return jsonify({"error": f"Invalid positionId format for item at index {idx}"}), 400
+        if not isinstance(item.get('positionId'), str) or not item.get('positionId'):
+            app.logger.error(f"Mock IIKO Delivery: Invalid positionId format for item at index {idx}. Expected non-empty string.")
+            return jsonify({"error": f"Invalid positionId format for item at index {idx} (expected non-empty string)"}), 400
+
+        # Validate optional string fields in item
+        optional_item_strings = ['type', 'productCode', 'name', 'comboId']
+        for field in optional_item_strings:
+            if field in item and not (isinstance(item[field], str) or item[field] is None): # Allow None for comboId
+                app.logger.error(f"Mock IIKO Delivery: Invalid type for item field '{field}' at index {idx} (expected string or null).")
+                return jsonify({"error": f"Invalid type for item field '{field}' at index {idx} (expected string or null)."}), 400
+        
+        # Validate optional price field in item
+        if 'price' in item and not isinstance(item['price'], (int, float)):
+            app.logger.error(f"Mock IIKO Delivery: Invalid type for item field 'price' at index {idx} (expected number).")
+            return jsonify({"error": f"Invalid type for item field 'price' at index {idx} (expected number)."}), 400
+
 
         # Modifiers check
         if 'modifiers' in item:
@@ -181,14 +329,35 @@ def create_delivery():
                 app.logger.error(f"Mock IIKO Delivery: Modifiers for item at index {idx} must be a list.")
                 return jsonify({"error": f"Modifiers for item at index {idx} must be a list"}), 400
             for mod_idx, modifier in enumerate(item['modifiers']):
-                if not isinstance(modifier, dict) or 'id' not in modifier or 'type' not in modifier or 'amount' not in modifier:
-                    app.logger.error(f"Mock IIKO Delivery: Malformed modifier at index {mod_idx} for item {idx}.")
-                    return jsonify({"error": f"Malformed modifier at index {mod_idx} for item {idx}"}), 400
-                # if not is_valid_uuid(modifier.get('id', '')):
-                    # app.logger.error(f"Mock IIKO Delivery: Invalid modifier ID format at index {mod_idx} for item {idx}.")
-                    # return jsonify({"error": f"Invalid modifier ID format at index {mod_idx} for item {idx}"}), 400
-                if modifier.get('type') != 'Product': # Or other allowed types
-                    app.logger.warning(f"Mock IIKO Delivery: Unexpected modifier type '{modifier.get('type')}' at index {mod_idx} for item {idx}.")
+                if not isinstance(modifier, dict):
+                    app.logger.error(f"Mock IIKO Delivery: Modifier at index {mod_idx} for item {idx} is not an object.")
+                    return jsonify({"error": f"Modifier at index {mod_idx} for item {idx} is not an object"}), 400
+
+                required_modifier_fields = ['productId', 'type', 'amount']
+                for field in required_modifier_fields:
+                    if field not in modifier:
+                        app.logger.error(f"Mock IIKO Delivery: Missing required modifier field '{field}' at index {mod_idx} for item {idx}.")
+                        return jsonify({"error": f"Missing required modifier field '{field}' at index {mod_idx} for item {idx}"}), 400
+
+                # Removed UUID validation for modifier.productId as requested
+                if not isinstance(modifier.get('productId'), str) or not modifier.get('productId'):
+                    app.logger.error(f"Mock IIKO Delivery: Invalid modifier productId format at index {mod_idx} for item {idx}. Expected non-empty string.")
+                    return jsonify({"error": f"Invalid modifier productId format at index {mod_idx} for item {idx} (expected non-empty string)"}), 400
+                
+                allowed_modifier_types = ["Product", "Compound"]
+                if modifier.get('type') not in allowed_modifier_types:
+                    app.logger.warning(f"Mock IIKO Delivery: Unexpected modifier type '{modifier.get('type')}' at index {mod_idx} for item {idx}. Allowed: {allowed_modifier_types}")
+                if not isinstance(modifier.get('amount'), (int, float)) or modifier.get('amount') <= 0:
+                    app.logger.error(f"Mock IIKO Delivery: Invalid amount for modifier at index {mod_idx} for item {idx}.")
+                    return jsonify({"error": f"Invalid amount for modifier at index {mod_idx} for item {idx}"}), 400
+                
+                # Optional modifier fields (name, price)
+                if 'name' in modifier and not isinstance(modifier['name'], str):
+                    app.logger.error(f"Mock IIKO Delivery: Invalid type for modifier field 'name' at index {mod_idx} for item {idx} (expected string).")
+                    return jsonify({"error": f"Invalid type for modifier field 'name' at index {mod_idx} for item {idx} (expected string)."}), 400
+                if 'price' in modifier and not isinstance(modifier['price'], (int, float)):
+                    app.logger.error(f"Mock IIKO Delivery: Invalid type for modifier field 'price' at index {mod_idx} for item {idx} (expected number).")
+                    return jsonify({"error": f"Invalid type for modifier field 'price' at index {mod_idx} for item {idx} (expected number)."}), 400
 
 
     # --- Payments Checks ---
@@ -208,33 +377,44 @@ def create_delivery():
         if not isinstance(payment.get('sum'), (int, float)) or payment.get('sum') < 0:
             app.logger.error(f"Mock IIKO Delivery: Invalid sum for payment at index {idx}.")
             return jsonify({"error": f"Invalid sum for payment at index {idx}"}), 400
-        allowed_payment_kinds = ["Cash", "Card", "LoyaltyCard", "Credit"] # Add other kinds as needed
+        allowed_payment_kinds = ["Cash", "Card", "LoyaltyCard", "Credit", "Writeoff", "Voucher", "External", "SmartSale", "Sberbank", "Trpos", "Unknown"]
         if payment.get('paymentTypeKind') not in allowed_payment_kinds:
-            app.logger.error(f"Mock IIKO Delivery: Invalid paymentTypeKind '{payment.get('paymentTypeKind')}' at index {idx}.")
+            app.logger.error(f"Mock IIKO Delivery: Invalid paymentTypeKind '{payment.get('paymentTypeKind')}' at index {idx}. Allowed: {allowed_payment_kinds}")
             return jsonify({"error": f"Invalid paymentTypeKind at index {idx}"}), 400
 
-        # paymentTypeId appears to be a non-valid UUID, ignoring this
-        #if not is_valid_uuid(payment.get('paymentTypeId', '')):
-        #    app.logger.error(f"Mock IIKO Delivery: Invalid paymentTypeId format for payment at index {idx}.")
-        #    return jsonify({"error": f"Invalid paymentTypeId format for payment at index {idx}"}), 400
-        
+        # paymentTypeId is now only checked for being a non-empty string.
+        if not isinstance(payment.get('paymentTypeId'), str) or not payment.get('paymentTypeId'):
+            app.logger.error(f"Mock IIKO Delivery: Invalid paymentTypeId format for payment at index {idx}. Expected non-empty string.")
+            return jsonify({"error": f"Invalid paymentTypeId format for payment at index {idx} (expected non-empty string)"}), 400
+            
         # Check optional boolean fields if they are present and not bool
         for bool_field in ['isProcessedExternally', 'isFiscalizedExternally', 'isPrepay']:
             if bool_field in payment and not isinstance(payment.get(bool_field), bool):
                 app.logger.error(f"Mock IIKO Delivery: Invalid type for '{bool_field}' for payment at index {idx} (expected boolean).")
                 return jsonify({"error": f"Invalid type for '{bool_field}' for payment at index {idx} (expected boolean)."}), 400
 
+    # Add validation for 'createOrderSettings' if present
+    create_order_settings = data.get('createOrderSettings')
+    if create_order_settings:
+        if not isinstance(create_order_settings, dict):
+            app.logger.error("Mock IIKO Delivery: 'createOrderSettings' must be an object if present.")
+            return jsonify({"error": "'createOrderSettings' must be an object"}), 400
+        if 'transportToFrontTimeout' in create_order_settings and not isinstance(create_order_settings['transportToFrontTimeout'], (int, float)):
+            app.logger.error("Mock IIKO Delivery: Invalid type for 'createOrderSettings.transportToFrontTimeout' (expected number).")
+            return jsonify({"error": "Invalid type for 'createOrderSettings.transportToFrontTimeout' (expected number)."}), 400
+
 
     # If all checks pass, generate a successful response
-    mock_order_id = str(uuid4())
+    mock_order_id = str(uuid4()) # Still generate a valid UUID for the mock response
+    mock_correlation_id = str(uuid4()) # Still generate a valid UUID for the mock response
     response_data = {
-        "correlationId": str(uuid4()),
+        "correlationId": mock_correlation_id,
         "orderId": mock_order_id,
         "orderStatus": "OnDelivery",
         "timestamp": int(datetime.now().timestamp() * 1000),
         "error": None
     }
-    app.logger.info(f"Mock IIKO Delivery: Successfully created mock delivery order with ID: {mock_order_id}")
+    app.logger.info(f"Mock IIKO Delivery: Successfully created mock delivery order with ID: {mock_order_id}, Correlation ID: {mock_correlation_id}")
     return jsonify(response_data), 200
 
 @app.route('/api/1/organizations', methods=['POST'])
@@ -356,11 +536,6 @@ def get_payment_types_mock():
     if not data or 'organizationIds' not in data or not isinstance(data['organizationIds'], list):
         app.logger.error("Mock IIKO Payment Types: Missing or invalid 'organizationIds' in request payload.")
         return jsonify({"error": "Missing or invalid 'organizationIds'"}), 400
-
-    # for org_id in data['organizationIds']:
-        # if not is_valid_uuid(org_id):
-            # app.logger.error(f"Mock IIKO Payment Types: Invalid organizationId format: {org_id}")
-            # return jsonify({"error": f"Invalid organizationId format: {org_id}"}), 400
 
     # --- Sample Mock Payment Types ---
     # These UUIDs should be stable for your mock testing

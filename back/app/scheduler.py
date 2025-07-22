@@ -3,14 +3,10 @@ import os
 import atexit
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
-from dotenv import load_dotenv
 from sqlalchemy import inspect
 from sqlalchemy.exc import ProgrammingError
 from collections import defaultdict
 from sqlalchemy.exc import IntegrityError
-
-# Load environment variables specific to the scheduler if any
-load_dotenv()
 
 from app import create_app
 from app.models import db, Category, MainCategory, Product # Make sure MainCategory is imported
