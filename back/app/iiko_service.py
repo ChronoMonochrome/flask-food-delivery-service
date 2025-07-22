@@ -20,7 +20,7 @@ from diskcache import Cache
 # Data will expire after 900 seconds (15 minutes)
 cache = Cache('iiko_cache', expire=900)
 
-USING_MOCK = True
+USING_MOCK = False
 IIKO_API_URL = os.getenv("IIKO_API_URL")
 IIKO_API_MOCK_URL = "http://mock_iiko:5000"
 
