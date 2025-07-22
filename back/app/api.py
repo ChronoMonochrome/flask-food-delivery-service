@@ -2,7 +2,7 @@
 
 import traceback
 from flask import Blueprint, jsonify, current_app, request
-from flask_restx import Api, Namespace, Resource, fields
+from flask_restx import Api, Namespace, Resource, fields, reqparse
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
@@ -21,6 +21,7 @@ import json
 import requests
 import uuid
 import re
+import time
 
 from .geojson import geojson_data
 from .yookassa_service import yookassa_service
@@ -530,11 +531,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                 },
                 "house": house_parsed,
                 "building": building_parsed,
-                # "flat": order.delivery_info.apartment, # IIKO might use flat, apartment, or house/building
-                "entrance": "1", # Fixed as per your original code
-                #"floor": order.delivery_info.floor,
-                # "comment": order.delivery_info.comment,
-                "index": "123456", # Fixed as per your original code
+                "entrance": "1",
+                "index": "123456",
                 "line1": order.delivery_info.comment,
             },
             "coordinates": {
@@ -1570,26 +1568,26 @@ NOMINATIM_USER_AGENT = "MyDeliveryApp/1.0 (my.email@example.com)"
 # Store loaded polygons globally
 VALID_DELIVERY_AREAS = []
 
-# --- Helper Function for Reverse Geocoding ---
+# --- MODIFIED get_address_from_coordinates function ---
 def get_address_from_coordinates(latitude, longitude):
     """
-    Retrieves the address for given latitude and longitude coordinates
-    using OpenStreetMap's Nominatim reverse geocoding service.
+    Retrieves the full Nominatim response for given latitude and longitude coordinates.
 
     Args:
         latitude (float): The latitude of the location.
         longitude (float): The longitude of the location.
 
     Returns:
-        str or None: The full address string if found, otherwise None.
+        dict or None: The full JSON response dictionary from Nominatim if successful,
+                      otherwise None.
     """
     url = "https://nominatim.openstreetmap.org/reverse"
     params = {
-        "format": "json",
+        "format": "json",        # Request a JSON response
         "lat": latitude,
         "lon": longitude,
-        "zoom": 18,
-        "addressdetails": 1
+        "zoom": 18,              # Adjust zoom level for more detailed address
+        "addressdetails": 1      # IMPORTANT: Include detailed address breakdown
     }
     headers = {
         "User-Agent": NOMINATIM_USER_AGENT
@@ -1599,16 +1597,23 @@ def get_address_from_coordinates(latitude, longitude):
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
         data = response.json()
-        if data and "display_name" in data:
-            return data["display_name"]
+
+        # Return the entire data dictionary
+        if data:
+            return data
         else:
-            print(f"Nominatim: No address found for {latitude}, {longitude}. Response: {data}")
+            print(f"Empty response from Nominatim for coordinates: {latitude}, {longitude}")
             return None
+
     except requests.exceptions.RequestException as e:
-        print(f"Nominatim Error: {e}")
+        print(f"Error making request to Nominatim: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"Nominatim JSON Decode Error: {e}. Raw response: {response.text}")
+        print(f"Error decoding JSON response: {e}")
+        try:
+            print(f"Raw response content: {response.text}")
+        except NameError: # response might not be defined if request failed before assignment
+            print("No response content available.")
         return None
 
 # Cache for memoization
@@ -1658,28 +1663,64 @@ def load_delivery_areas():
     else:
         print(f"Error: Expected FeatureCollection from geojson, got {geojson_data.get('type') if geojson_data else 'None/Invalid'}")
 
+
+# Define the model for the detailed address components (nested inside Nominatim response)
+address_details_model = api.model('AddressDetails', {
+    'house_number': fields.String(description='House number', required=False),
+    'road': fields.String(description='Street name', required=False),
+    'residential': fields.String(description='Residential area (e.g., neighborhood)', required=False),
+    'suburb': fields.String(description='Suburb or district', required=False),
+    'city': fields.String(description='City', required=False),
+    'county': fields.String(description='County', required=False),
+    'state': fields.String(description='State or province', required=False),
+    'postcode': fields.String(description='Postal code', required=False),
+    'country': fields.String(description='Country', required=False),
+    'country_code': fields.String(description='Two-letter country code', required=False),
+    # Add any other specific address details you expect from Nominatim's 'address' object
+    'building': fields.String(description='Building name', required=False),
+    'amenity': fields.String(description='Amenity type (e.g., restaurant, park)', required=False),
+    'tourism': fields.String(description='Tourism object (e.g., monument)', required=False),
+})
+
+
+# Define the model for the FULL Nominatim response
+nominatim_response_model = api.model('NominatimResponse', {
+    'place_id': fields.Integer(description='Unique ID of the Nominatim entry', required=False),
+    'licence': fields.String(description='Nominatim usage licence', required=False),
+    'osm_type': fields.String(description='OpenStreetMap object type', required=False),
+    'osm_id': fields.Integer(description='OpenStreetMap object ID', required=False),
+    'lat': fields.String(description='Latitude of the found object', required=False), # Nominatim sends as string
+    'lon': fields.String(description='Longitude of the found object', required=False), # Nominatim sends as string
+    'display_name': fields.String(description='Full formatted address string', required=False),
+    'address': fields.Nested(address_details_model, description='Detailed address breakdown', required=False, skip_none=True),
+    'boundingbox': fields.List(fields.String, description='Bounding box coordinates', required=False),
+    # You can add other top-level fields from Nominatim response if you need them documented,
+    # e.g., 'namedetails', 'extratags', etc.
+})
+
+# Define the output model for the /map endpoint
+map_output_model = api.model('MapResponse', {
+    'nominatim_details': fields.Nested(nominatim_response_model, description='Full structured Nominatim API response', skip_none=True),
+    'delivery_cost': fields.Float(description='Cost of delivery for the area', example=5.00, required=False),
+    'message': fields.String(description='Additional message (e.g., why delivery is not available)', required=False),
+})
+
+# Define a request parser for query parameters
+map_query_parser = reqparse.RequestParser()
+map_query_parser.add_argument('latitude', type=float, help='Latitude of the location', required=True, location='args')
+map_query_parser.add_argument('longitude', type=float, help='Longitude of the location', required=True, location='args')
+
 @api.route('/map')
 class MapResource(Resource):
-    # If you want to document input parameters
-    # @api.expect(map_query_parser) # Define a parser if needed
-    # @api.marshal_with(map_output_model) # Define an output model if needed
+    @api.expect(map_query_parser) # Document input parameters
+    @api.marshal_with(map_output_model) # Define an output model for successful responses
     def get(self):
         load_delivery_areas()
-        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK 
+        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK
 
-        lat_str = request.args.get('latitude')
-        lon_str = request.args.get('longitude')
-
-        if not lat_str or not lon_str:
-            # Use api.abort which integrates with Flask-RESTx's error handling
-            # api.abort will automatically return a JSON response with the error message
-            api.abort(400, "Latitude (lat) and Longitude (lon) are required query parameters.")
-
-        try:
-            latitude = float(lat_str)
-            longitude = float(lon_str)
-        except ValueError:
-            api.abort(400, "Invalid latitude or longitude format. Must be numbers.")
+        args = map_query_parser.parse_args(request)
+        latitude = args['latitude']
+        longitude = args['longitude']
 
         point = Point(longitude, latitude)
 
@@ -1693,21 +1734,26 @@ class MapResource(Resource):
                 break
 
         if not is_in_delivery_area:
+            # For a 404, we provide a message and no nominatim_details or cost
             return {
-                "address": None,
+                "nominatim_details": None,
                 "delivery_cost": None,
                 "message": "Coordinates are outside our valid delivery areas."
             }, 404
 
-        address = get_address_from_coordinates(latitude, longitude)
+        # Delay to respect Nominatim usage policy if this is part of a real system
+        time.sleep(0.5) # Minimum recommended delay between requests
 
-        if address:
+        # Call the function to get the full Nominatim response
+        full_nominatim_response = get_address_from_coordinates(latitude, longitude)
+
+        if full_nominatim_response:
             return {
-                "address": address,
+                "nominatim_details": full_nominatim_response, # This will be marshaled by nominatim_response_model
                 "delivery_cost": DELIVERY_COST_MOCK
             }, 200
         else:
-            api.abort(500, "Coordinates are within a valid delivery area, but address lookup failed.")
+            api.abort(500, "Coordinates are within a valid delivery area, but Nominatim lookup failed.")
 
 # Error handling for the API blueprint
 @api_bp.errorhandler(Exception)

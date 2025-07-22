@@ -6,24 +6,36 @@ def get_address_from_coordinates(latitude, longitude):
     """
     Retrieves the address for given latitude and longitude coordinates
     using OpenStreetMap's Nominatim reverse geocoding service.
+    This updated version returns a dictionary with structured address details.
 
     Args:
         latitude (float): The latitude of the location.
         longitude (float): The longitude of the location.
 
     Returns:
-        str or None: The full address string if found, otherwise None.
+        dict or None: A dictionary containing detailed address components if found,
+                      otherwise None.
+                      Example structure:
+                      {
+                        "road": "Unter den Linden",
+                        "suburb": "Mitte",
+                        "city": "Berlin",
+                        "postcode": "10117",
+                        "country": "Deutschland",
+                        "country_code": "de",
+                        # ... other address details
+                      }
     """
     # Nominatim API endpoint for reverse geocoding
     url = "https://nominatim.openstreetmap.org/reverse"
 
     # Parameters for the request
     params = {
-        "format": "json",       # Request a JSON response
+        "format": "json",        # Request a JSON response
         "lat": latitude,
         "lon": longitude,
-        "zoom": 18,             # Adjust zoom level for more detailed address (0=country, 18=building)
-        "addressdetails": 1     # Include detailed address breakdown
+        "zoom": 18,              # Adjust zoom level for more detailed address (0=country, 18=building)
+        "addressdetails": 1      # IMPORTANT: Include detailed address breakdown
     }
 
     # IMPORTANT: Provide a User-Agent to identify your application.
@@ -43,11 +55,11 @@ def get_address_from_coordinates(latitude, longitude):
         # Parse the JSON response
         data = response.json()
 
-        # Check if an address was found
-        if data and "display_name" in data:
-            return data["display_name"]
+        # Check if a detailed address was found and return it
+        if data and "address" in data:
+            return data["address"]
         else:
-            print(f"No address found for coordinates: {latitude}, {longitude}")
+            print(f"No structured address found for coordinates: {latitude}, {longitude}")
             print(f"Full API response: {data}") # Print full response for debugging
             return None
 
@@ -56,7 +68,11 @@ def get_address_from_coordinates(latitude, longitude):
         return None
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON response: {e}")
-        print(f"Raw response content: {response.text}") # Print raw content for debugging
+        # Attempt to print raw response content if available, for debugging
+        try:
+            print(f"Raw response content: {response.text}")
+        except NameError:
+            print("No response content available.")
         return None
 
 # --- Example Usage ---
@@ -65,13 +81,19 @@ if __name__ == "__main__":
     lat_berlin = 52.51627
     lon_berlin = 13.37770
 
-    print(f"Attempting to get address for coordinates: Lat {lat_berlin}, Lon {lon_berlin}")
+    print(f"Attempting to get structured address for coordinates: Lat {lat_berlin}, Lon {lon_berlin}")
     address_berlin = get_address_from_coordinates(lat_berlin, lon_berlin)
 
     if address_berlin:
-        print(f"\nAddress found: {address_berlin}")
+        print(f"\nStructured Address found for Berlin:")
+        for key, value in address_berlin.items():
+            print(f"  {key}: {value}")
+        # You can access specific fields like this:
+        # print(f"\n  City: {address_berlin.get('city', 'N/A')}")
+        # print(f"  Road: {address_berlin.get('road', 'N/A')}")
+        # print(f"  Postcode: {address_berlin.get('postcode', 'N/A')}")
     else:
-        print("\nCould not retrieve address for Berlin example.")
+        print("\nCould not retrieve structured address for Berlin example.")
 
     # --- Another example (e.g., Eiffel Tower, Paris, France) ---
     print("\n--- Another Example ---")
@@ -81,13 +103,15 @@ if __name__ == "__main__":
     # Add a small delay to respect Nominatim's usage policy (1 request per second max)
     time.sleep(1.5) # Increased sleep slightly to be safe
 
-    print(f"Attempting to get address for coordinates: Lat {lat_eiffel}, Lon {lon_eiffel}")
+    print(f"Attempting to get structured address for coordinates: Lat {lat_eiffel}, Lon {lon_eiffel}")
     address_eiffel = get_address_from_coordinates(lat_eiffel, lon_eiffel)
 
     if address_eiffel:
-        print(f"\nAddress found: {address_eiffel}")
+        print(f"\nStructured Address found for Eiffel Tower:")
+        for key, value in address_eiffel.items():
+            print(f"  {key}: {value}")
     else:
-        print("\nCould not retrieve address for Eiffel Tower example.")
+        print("\nCould not retrieve structured address for Eiffel Tower example.")
 
     # --- New Example: Red Square, Moscow, Russia ---
     print("\n--- New Example: Red Square, Moscow, Russia ---")
@@ -97,10 +121,12 @@ if __name__ == "__main__":
     # Add a small delay again
     time.sleep(1.5)
 
-    print(f"Attempting to get address for coordinates: Lat {lat_red_square}, Lon {lon_red_square}")
+    print(f"Attempting to get structured address for coordinates: Lat {lat_red_square}, Lon {lon_red_square}")
     address_red_square = get_address_from_coordinates(lat_red_square, lon_red_square)
 
     if address_red_square:
-        print(f"\nAddress found: {address_red_square}")
+        print(f"\nStructured Address found for Red Square:")
+        for key, value in address_red_square.items():
+            print(f"  {key}: {value}")
     else:
-        print("\nCould not retrieve address for Red Square example.")
+        print("\nCould not retrieve structured address for Red Square example.")
