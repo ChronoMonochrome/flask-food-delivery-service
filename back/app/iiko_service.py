@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 import json
 import os
 
+from typing import List, Dict, Any
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -19,10 +21,6 @@ from diskcache import Cache
 cache = Cache('iiko_cache', expire=900)
 
 USING_MOCK = True
-
-#if not USING_MOCK:
-#IIKO_API_URL = os.getenv("IIKO_API_URL")
-#else:
 IIKO_API_URL = os.getenv("IIKO_API_URL")
 IIKO_API_MOCK_URL = "http://mock_iiko:5000"
 
@@ -384,6 +382,66 @@ def get_addons_from_iiko_item(iiko_item):
                                 "image": addon_image
                             })
     return addons
+    
+def _make_post_request(url: str, payload: Dict[str, Any], token: str, timeout: int = 10) -> Dict[str, Any]:
+    """
+    Helper function to make a POST request.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+    full_url = f"{IIKO_API_URL}{url}"
+    try:
+        response = requests.post(full_url, json=payload, headers=headers, timeout=timeout)
+        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error occurred: {http_err} - Response: {response.text if response else 'N/A'}")
+        raise
+    except requests.exceptions.ConnectionError as conn_err:
+        logger.error(f"Connection error occurred: {conn_err}")
+        raise
+    except requests.exceptions.Timeout as timeout_err:
+        logger.error(f"Timeout error occurred: {timeout_err}")
+        raise
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"An unexpected request error occurred: {req_err}")
+        raise
+    
+def get_cities(organization_ids: List[str]) -> List[Dict[str, Any]]:
+    """
+    Получить список городов для указанных организаций.
+    """
+    token = get_iiko_token() 
+    url = "/api/1/cities"
+    payload = {"organizationIds": organization_ids}
+    logger.info(f"Получаем города для {organization_ids}.")
+    try:
+        response_json = _make_post_request(url, payload, token, timeout=10)
+        cities = response_json.get("cities", [])
+        logger.info(f"Города для {organization_ids} получены.")
+        return cities
+    except Exception as e:
+        logger.error(f"Ошибка получения городов: {e}")
+        raise
+
+def get_streets_by_city(organization_id: str, city_id: str) -> List[Dict[str, Any]]:
+    """
+    Получить список улиц для указанного города и организации.
+    """
+    token = get_iiko_token() 
+    url = "/api/1/streets/by_city"
+    payload = {"organizationId": organization_id, "cityId": city_id}
+    logger.info(f"Получаем улицы для города {city_id} (организация: {organization_id}).")
+    try:
+        response_json = _make_post_request(url, payload, token, timeout=10)
+        streets = response_json.get("streets", [])
+        logger.info(f"Улицы для города {city_id} получены.")
+        return streets
+    except Exception as e:
+        logger.error(f"Ошибка получения улиц: {e}")
+        raise
 
 def create_delivery_order(organization_id: str, terminal_group_id: str, order: dict, create_order_settings: dict = None):
     """
