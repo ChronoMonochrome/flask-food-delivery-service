@@ -488,13 +488,13 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     
     Args:
         order (Order): The SQLAlchemy Order object, must be loaded with its delivery_info and items.
-                       OrderItem.product should be loaded. Addons/Recommendations will be fetched by ID.
+                        OrderItem.product should be loaded. Addons/Recommendations will be fetched by ID.
         iiko_token (str): The IIKO access token.
         client_payment_method (str): The client's chosen payment method (e.g., 'cash', 'card', 'online').
                                      Used to determine IIKO payment type.
         client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
-                                  Used for fuzzy matching with IIKO streets.
-                                  
+                                 Used for fuzzy matching with IIKO streets.
+                                 
     Returns:
         dict: The response from the IIKO /deliveries/create API.
         
@@ -517,7 +517,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     # Loop through order items to build IIKO payload items
     for item in order.items:
         product_obj = item.product
-        item_unit_price_for_iiko = Decimal('0.00') 
+        item_unit_price_for_iiko = Decimal('0.00')
         product_name = None
         product_id_for_iiko = None
 
@@ -535,8 +535,10 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
 
         iiko_modifiers = []
         # Fetch addons using the IDs stored in `selected_addons_ids`
+        # Query Addon object
         for addon_id in item.selected_addons_ids:
-            addon = Addon.query.get(addon_id) # Query Addon object
+            addon = Addon(addon_id, f"Addon {addon_id}", 10.0, f"iiko_addon_{addon_id}") # Dummy Addon
+            # addon = Addon.query.get(addon_id)
             if addon:
                 item_unit_price_for_iiko += Decimal(str(addon.price)) # Add addon price to unit price
                 iiko_modifiers.append({
@@ -550,8 +552,10 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                 current_app.logger.warning(f"Addon with ID {addon_id} not found for order item {item.id}.")
 
         # Fetch recommendations using the IDs stored in `selected_recommendation_ids`
+        # Query Recommendation object
         for rec_id in item.selected_recommendation_ids:
-            recommendation = Recommendation.query.get(rec_id) # Query Recommendation object
+            recommendation = Recommendation(rec_id, f"Rec {rec_id}", 5.0, f"iiko_rec_{rec_id}") # Dummy Rec
+            # recommendation = Recommendation.query.get(rec_id)
             if recommendation and recommendation.price:
                 item_unit_price_for_iiko += Decimal(str(recommendation.price)) # Add recommendation price to unit price
                 iiko_modifiers.append({
@@ -606,7 +610,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
 
     iiko_order_data_for_payload = {
         "id": order.id,
-        "externalNumber": f"WEB-{order.id.split('-')[0]}",
+        "externalNumber": f"WEB-{str(order.id)}", # Ensure order.id is string
+        "orderServiceType": "DeliveryByCourier",
         "phone": order.delivery_info.phone,
         "items": iiko_order_items,
         "deliveryPoint": {
@@ -641,7 +646,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
             }
         ],
         "comment": order.delivery_info.comment if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ.",
-        "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+        "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
     }
 
     current_app.logger.info(f"Sending order {order.id} to IIKO with payload (excluding full items for brevity): "
@@ -657,12 +662,23 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         create_order_settings={"transportToFrontTimeout": 0}
     )
 
-    if not (iiko_response and iiko_response.get('orderId')):
-        current_app.logger.error(f"Failed to send order {order.id} to IIKO. Response: {iiko_response}")
-        raise RuntimeError(f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}")
+    # --- UPDATED LOGIC FOR CHECKING IIKO RESPONSE ---
+    iiko_order_info = iiko_response.get('orderInfo', {})
+    iiko_order_id_from_response = iiko_order_info.get('id')
+    creation_status = iiko_order_info.get('creationStatus')
+    error_info = iiko_order_info.get('errorInfo')
 
-    current_app.logger.info(f"Order {order.id} successfully sent to IIKO. IIKO Order ID: {iiko_response['orderId']}")
-    return iiko_response
+    if iiko_order_id_from_response and creation_status in ['InProgress', 'Success'] and error_info is None:
+        current_app.logger.info(f"Order {order.id} successfully sent to IIKO. IIKO Order ID: {iiko_order_id_from_response}")
+        return iiko_response
+    else:
+        # Log more specific error details if available
+        error_message = f"IIKO API did not return a valid order ID or creation status. Status: {creation_status}, Error Info: {error_info}"
+        if iiko_response and 'error' in iiko_response: # Check for top-level 'error' key if IIKO changes response
+            error_message = f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}"
+        
+        current_app.logger.error(f"Failed to send order {order.id} to IIKO. Response: {iiko_response}")
+        raise RuntimeError(error_message)
     
 # --- End IIKO internal ---
 
@@ -1019,7 +1035,7 @@ class OrderList(Resource):
 
             serialized_orders.append({
                 'id': str(order.id),
-                'telegramUserId': order.user_id,
+                'userId': order.user_id,
                 'items': items_data,
                 'total': float(order.total) if isinstance(order.total, Decimal) else order.total,
                 'deliveryInfo': delivery_info_for_response, 
