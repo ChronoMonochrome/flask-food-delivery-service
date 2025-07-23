@@ -78,8 +78,8 @@ def get_address_from_coordinates(latitude, longitude):
 # --- Example Usage ---
 if __name__ == "__main__":
     # Example coordinates (e.g., Brandenburg Gate, Berlin, Germany)
-    lat_berlin = 52.51627
-    lon_berlin = 13.37770
+    lat_berlin = 56.012226
+    lon_berlin = 38.381220
 
     print(f"Attempting to get structured address for coordinates: Lat {lat_berlin}, Lon {lon_berlin}")
     address_berlin = get_address_from_coordinates(lat_berlin, lon_berlin)
@@ -97,8 +97,8 @@ if __name__ == "__main__":
 
     # --- Another example (e.g., Eiffel Tower, Paris, France) ---
     print("\n--- Another Example ---")
-    lat_eiffel = 48.8583701
-    lon_eiffel = 2.2944813
+    lat_eiffel = 55.992897
+    lon_eiffel = 38.373313
 
     # Add a small delay to respect Nominatim's usage policy (1 request per second max)
     time.sleep(1.5) # Increased sleep slightly to be safe

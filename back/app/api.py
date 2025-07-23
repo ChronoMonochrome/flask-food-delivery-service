@@ -127,7 +127,8 @@ delivery_info_model_new = api.model('DeliveryInfoNew', {
     'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
     'comment': fields.String(description='Additional comments for delivery', allow_null=True),
     'latitude': fields.Float(required=True, description='Latitude for delivery'),
-    'longitude': fields.Float(required=True, description='Longitude for delivery')
+    'longitude': fields.Float(required=True, description='Longitude for delivery'),
+    'postcode': fields.String(description='Postal code', allow_null=True) # NEW FIELD IN REQUEST MODEL
 })
 
 order_item_model = api.model('OrderItem', {
@@ -481,7 +482,8 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
         "selected_street_name": selected_street_name
     }
 
-def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, client_street_name: str):
+def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, 
+                                 client_street_name: str, nominatim_postcode: str, nominatim_house_number: str):
     """
     Constructs the IIKO payload and sends the order to IIKO.
     This function consolidates the common logic from OrderList.post and PaymentCallback.post.
@@ -494,6 +496,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                                      Used to determine IIKO payment type.
         client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
                                  Used for fuzzy matching with IIKO streets.
+        nominatim_postcode (str): The postal code extracted from Nominatim.
+        nominatim_house_number (str): The house number extracted from Nominatim (e.g., '9', '2/1').
                                  
     Returns:
         dict: The response from the IIKO /deliveries/create API.
@@ -598,19 +602,33 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         current_app.logger.warning(f"Delivery product with ID {DELIVERY_100_PRODUCT_ID} not found. Delivery item not added to IIKO payload.")
 
 
-    # Parse house and building from apartment string (same logic as in OrderList.post)
-    apartment_input = order.delivery_info.apartment if order.delivery_info.apartment else ''
-    house_parsed = ""
-    building_parsed = ""
-    if apartment_input:
-        parts = apartment_input.split('/')
-        house_parsed = parts[0]
-        if len(parts) > 1:
-            building_parsed = parts[1]
+    # --- NEW / MODIFIED LOGIC FOR HOUSE, BUILDING, AND INDEX ---
+    iiko_house_final = ""
+    iiko_building = ""
+    
+    # 1. Parse house and building from Nominatim's house_number
+    if nominatim_house_number:
+        house_parts = nominatim_house_number.split('/')
+        iiko_house_final = house_parts[0]
+        if len(house_parts) > 1:
+            iiko_building = house_parts[1]
+    
+    # 2. Append apartment from client's input to the 'house' field
+    # Assuming order.delivery_info.apartment contains just the apartment number
+    if order.delivery_info.apartment:
+        # As per request: "construct house as f"{house_number}, кв. {house_parsed}""
+        # where house_parsed previously came from client_apartment_input.split('/')[0]
+        # Here, order.delivery_info.apartment is the source of that 'house_parsed' part.
+        client_apartment_part_for_display = order.delivery_info.apartment.split('/')[0] # Take first part if slash exists
+        if iiko_house_final: # If a house number exists from Nominatim
+            iiko_house_final = f"{iiko_house_final}, кв. {client_apartment_part_for_display}"
+        else: # If no house number from Nominatim, just use the apartment as house
+            iiko_house_final = f"кв. {client_apartment_part_for_display}"
+
 
     iiko_order_data_for_payload = {
-        "id": order.id,
-        "externalNumber": f"WEB-{str(order.id)}", # Ensure order.id is string
+        "id": str(order.id), # Ensure UUID is string
+        "externalNumber": f"WEB-{str(order.id)}",
         "orderServiceType": "DeliveryByCourier",
         "phone": order.delivery_info.phone,
         "items": iiko_order_items,
@@ -624,10 +642,10 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                     "id": selected_city_id, # Dynamically fetched
                     "name": selected_city_name # Dynamically fetched
                 },
-                "house": house_parsed,
-                "building": building_parsed,
+                "house": iiko_house_final,   # UPDATED
+                "building": iiko_building,   # UPDATED
                 "entrance": "1", # Defaulting to 1 as per original code
-                "index": "123456", # Defaulting to 123456 as per original code
+                "index": nominatim_postcode, # UPDATED: Use Nominatim postcode
                 "line1": order.delivery_info.comment, # Using comment for line1 as per original code
             },
             "coordinates": {
@@ -653,6 +671,9 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                              f"Org: {organization_id}, TermGroup: {terminal_group_id}, "
                              f"Phone: {iiko_order_data_for_payload['phone']}, "
                              f"Address: {iiko_order_data_for_payload['deliveryPoint']['address']['street']['name']}, "
+                             f"House: '{iiko_order_data_for_payload['deliveryPoint']['address']['house']}', "
+                             f"Building: '{iiko_order_data_for_payload['deliveryPoint']['address']['building']}', "
+                             f"Index: '{iiko_order_data_for_payload['deliveryPoint']['address']['index']}', "
                              f"Items count: {len(iiko_order_data_for_payload['items'])}")
 
     iiko_response = iiko_service.create_delivery_order(
@@ -674,7 +695,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     else:
         # Log more specific error details if available
         error_message = f"IIKO API did not return a valid order ID or creation status. Status: {creation_status}, Error Info: {error_info}"
-        if iiko_response and 'error' in iiko_response: # Check for top-level 'error' key if IIKO changes response
+        if iiko_response and 'error' in iiko_response and iiko_response['error'] is not None: # Check for top-level 'error' key if IIKO changes response
             error_message = f"Failed to send order to IIKO: {iiko_response.get('error', 'Unknown error')}"
         
         current_app.logger.error(f"Failed to send order {order.id} to IIKO. Response: {iiko_response}")
@@ -1090,6 +1111,12 @@ class OrderList(Resource):
             current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
             api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
 
+        # --- NEW: Extract house_number and postcode from Nominatim ---
+        nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
+        nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
+        
+        current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}'")
+
         point = Point(longitude, latitude)
         is_in_delivery_area = False
         for area_polygon in VALID_DELIVERY_AREAS:
@@ -1125,57 +1152,47 @@ class OrderList(Resource):
             product = None
 
             if cart_item.product_id:
-                product = cart_item.product 
+                product = cart_item.product # Already loaded by joinedload
                 if not product:
                     current_app.logger.warning(f"Product with ID {cart_item.product_id} not found for cart item {cart_item.id}. Skipping.")
-                    continue 
+                    continue
                 item_price += Decimal(str(product.price))
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
-                continue 
+                continue
 
             selected_addons_ids_for_order_item = []
             for cart_addon in cart_item.selected_addons:
-                addon = cart_addon.addon 
+                addon = cart_addon.addon # Already loaded by joinedload
                 if addon:
                     item_price += Decimal(str(addon.price)) * cart_addon.quantity
-                    selected_addons_ids_for_order_item.append(addon.id) 
+                    selected_addons_ids_for_order_item.append(addon.id)
                 else:
                     current_app.logger.warning(f"Selected addon with ID {cart_addon.addon_id} not found for cart item {cart_item.id}.")
 
             selected_recommendation_ids_for_order_item = []
             for cart_rec in cart_item.selected_recommendations:
-                recommendation = cart_rec.recommendation 
+                recommendation = cart_rec.recommendation # Already loaded by joinedload
                 if recommendation:
                     item_price += Decimal(str(recommendation.price))
-                    selected_recommendation_ids_for_order_item.append(recommendation.id) 
+                    selected_recommendation_ids_for_order_item.append(recommendation.id)
                 else:
                     current_app.logger.warning(f"Selected recommendation with ID {cart_rec.recommendation_id} not found for cart item {cart_item.id}.")
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
 
             order_items_to_add.append(OrderItem(
-                product=product, 
+                product=product,
                 quantity=cart_item.quantity,
-                selected_addons_ids=selected_addons_ids_for_order_item, 
-                selected_recommendation_ids=selected_recommendation_ids_for_order_item 
+                selected_addons_ids=selected_addons_ids_for_order_item,
+                selected_recommendation_ids=selected_recommendation_ids_for_order_item
             ))
 
         # Add delivery cost to the total
         final_total = calculated_total + delivery_cost
         current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, with delivery: {final_total}")
-
-        # Parse house and building from apartment string
-        apartment_input = data.get('apartment', '')
-        house_parsed = ""
-        building_parsed = ""
-        if apartment_input:
-            parts = apartment_input.split('/')
-            house_parsed = parts[0]
-            if len(parts) > 1:
-                building_parsed = parts[1]
 
         # Determine phone and comment based on mock setting
         phone = data['phone'] if not USING_MOCK else '+79999999999'
@@ -1190,21 +1207,22 @@ class OrderList(Resource):
             payment_method=data['paymentMethod'],
             comment=comment,
             latitude=data['latitude'],
-            longitude=data['longitude']
+            longitude=data['longitude'],
+            postcode=nominatim_postcode # NEW: Save Nominatim postcode to DB
         )
 
         # Store new order in DB
         new_order = Order(
             id=str(uuid.uuid4()),
-            user_id=user_id, 
+            user_id=user_id,
             total=final_total,
             status='pending',
-            created_at=datetime.now(timezone.utc), 
-            display_status=True, 
-            delivery_info=delivery_info_obj 
+            created_at=datetime.now(timezone.utc),
+            display_status=True,
+            delivery_info=delivery_info_obj
         )
         db.session.add(new_order)
-        db.session.flush() 
+        db.session.flush()
 
         for item in order_items_to_add:
             item.order_id = new_order.id
@@ -1229,7 +1247,7 @@ class OrderList(Resource):
                 if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
                     new_order.yookassa_payment_id = yookassa_response['id']
                     new_order.confirmation_url = yookassa_response['confirmation']['confirmation_url']
-                    new_order.status = 'pending_payment' 
+                    new_order.status = 'pending_payment'
                     current_app.logger.info(f"YuKassa payment initiated for order {new_order.id}. Confirmation URL: {new_order.confirmation_url}")
                 else:
                     new_order.status = 'payment_initiation_failed'
@@ -1252,8 +1270,9 @@ class OrderList(Resource):
                     current_app.logger.error("Failed to get IIKO access token for order creation.")
                     api.abort(500, "Failed to connect to external ordering system (IIKO).")
 
-                # Pass the extracted street name for fuzzy matching
-                _send_order_to_iiko_internal(order_to_send, iiko_token, data['paymentMethod'], street_name_from_coords)
+                # Pass the extracted street name, postcode, and house_number for fuzzy matching and payload construction
+                _send_order_to_iiko_internal(order_to_send, iiko_token, data['paymentMethod'], 
+                                             street_name_from_coords, nominatim_postcode, nominatim_house_number)
                 new_order.status = 'sent_to_iiko'
 
             # Clear cart after successful order creation/payment initiation
