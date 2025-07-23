@@ -485,7 +485,7 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
     }
 
 def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, 
-                                 street_name: str, nominatim_postcode: str, nominatim_house_number: str):
+                                 client_street_name: str, nominatim_postcode: str, nominatim_house_number: str):
     """
     Constructs the IIKO payload and sends the order to IIKO.
     This function consolidates the common logic from OrderList.post and PaymentCallback.post.
@@ -496,7 +496,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         iiko_token (str): The IIKO access token.
         client_payment_method (str): The client's chosen payment method (e.g., 'cash', 'card', 'online').
                                      Used to determine IIKO payment type.
-        street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
+        client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
                                  Used for fuzzy matching with IIKO streets.
         nominatim_postcode (str): The postal code extracted from Nominatim.
         nominatim_house_number (str): The house number extracted from Nominatim (e.g., '9', '2/1').
@@ -1278,12 +1278,12 @@ class OrderList(Resource):
 
                 # Pass the extracted street name, postcode, and house_number for fuzzy matching and payload construction
                 _send_order_to_iiko_internal(
-                    order=order_to_send,
-                    iiko_token=iiko_token,
-                    client_payment_method=data['paymentMethod'], 
-                    street_name=street_name_from_coords,
-                    postcode=nominatim_postcode,
-                    house_number=nominatim_house_number
+                    order_to_send,
+                    iiko_token,
+                    data['paymentMethod'], 
+                    street_name_from_coords,
+                    nominatim_postcode,
+                    nominatim_house_number
                 )
                 new_order.status = 'sent_to_iiko'
 
@@ -2252,12 +2252,12 @@ class PaymentCallback(Resource):
                         # Pass the necessary parameters from DeliveryInfo
                         # Ensure DeliveryInfo has 'street_name' and 'house_number' fields.
                         _send_order_to_iiko_internal(
-                            order=order,
-                            iiko_token=iiko_token,
-                            client_payment_method='online', # For successful Yookassa payment, it's always online
-                            street_name=order.delivery_info.street_name, # NEW: Pass street_name from DB
-                            postcode=order.delivery_info.postcode,       # NEW: Pass postcode from DB
-                            house_number=order.delivery_info.house_number # NEW: Pass house_number from DB
+                            order,
+                            iiko_token,
+                            'online', # For successful Yookassa payment, it's always online
+                            order.delivery_info.street_name, # NEW: Pass street_name from DB
+                            order.delivery_info.postcode,       # NEW: Pass postcode from DB
+                            order.delivery_info.house_number # NEW: Pass house_number from DB
                         )
                         order.status = 'sent_to_iiko'
                         current_app.logger.info(f"Заказ {order.id} успешно отправлен в IIKO через вебхук.")
