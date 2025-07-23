@@ -485,7 +485,7 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
     }
 
 def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, 
-                                 client_street_name: str, nominatim_postcode: str, nominatim_house_number: str):
+                                 street_name: str, nominatim_postcode: str, nominatim_house_number: str):
     """
     Constructs the IIKO payload and sends the order to IIKO.
     This function consolidates the common logic from OrderList.post and PaymentCallback.post.
@@ -496,7 +496,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         iiko_token (str): The IIKO access token.
         client_payment_method (str): The client's chosen payment method (e.g., 'cash', 'card', 'online').
                                      Used to determine IIKO payment type.
-        client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
+        street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
                                  Used for fuzzy matching with IIKO streets.
         nominatim_postcode (str): The postal code extracted from Nominatim.
         nominatim_house_number (str): The house number extracted from Nominatim (e.g., '9', '2/1').
