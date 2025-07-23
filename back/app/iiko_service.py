@@ -879,7 +879,7 @@ def _sync_products_addons_recommendations(iiko_data, iiko_categories_raw, catego
             if not item_iiko_id or not item_name:
                 logger.info(f"Skipping malformed item data in category '{category_data.get('name')}': {iiko_item}")
                 continue
-
+            logger.info(f"iiko_item {str(iiko_item)}")
             price_value = _safe_decimal_conversion(
                 iiko_item.get('itemSizes', [{}])[0].get('prices', [{}])[0].get('price')
                 if iiko_item.get('itemSizes') and iiko_item['itemSizes'][0].get('prices') else None,
