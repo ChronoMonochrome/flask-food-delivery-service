@@ -128,7 +128,9 @@ delivery_info_model_new = api.model('DeliveryInfoNew', {
     'comment': fields.String(description='Additional comments for delivery', allow_null=True),
     'latitude': fields.Float(required=True, description='Latitude for delivery'),
     'longitude': fields.Float(required=True, description='Longitude for delivery'),
-    'postcode': fields.String(description='Postal code', allow_null=True) # NEW FIELD IN REQUEST MODEL
+    'postcode': fields.String(description='Postal code', allow_null=True), # Existing new field
+    'street_name': fields.String(description='Street name from geocoding', allow_null=True), # NEW FIELD
+    'house_number': fields.String(description='House number from geocoding', allow_null=True) # NEW FIELD
 })
 
 order_item_model = api.model('OrderItem', {
@@ -1104,15 +1106,17 @@ class OrderList(Resource):
         if not nominatim_response:
             current_app.logger.error(f"Could not get address details from Nominatim for coordinates: {latitude}, {longitude}")
             api.abort(500, "Could not determine detailed address from provided coordinates.")
-        
+            
         # Extract the street name (Nominatim uses 'road')
         street_name_from_coords = nominatim_response.get('address', {}).get('road')
+        # NEW: Extract house_number from Nominatim
+        nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
+
         if not street_name_from_coords:
             current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
             api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
 
-        # --- NEW: Extract house_number and postcode from Nominatim ---
-        nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
+        # --- NEW: Extract postcode from Nominatim ---
         nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
         
         current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}'")
@@ -1208,7 +1212,9 @@ class OrderList(Resource):
             comment=comment,
             latitude=data['latitude'],
             longitude=data['longitude'],
-            postcode=nominatim_postcode # NEW: Save Nominatim postcode to DB
+            postcode=nominatim_postcode, # NEW: Save Nominatim postcode to DB
+            street_name=street_name_from_coords, # NEW: Save Nominatim street name to DB
+            house_number=nominatim_house_number # NEW: Save Nominatim house number to DB
         )
 
         # Store new order in DB
@@ -1271,8 +1277,14 @@ class OrderList(Resource):
                     api.abort(500, "Failed to connect to external ordering system (IIKO).")
 
                 # Pass the extracted street name, postcode, and house_number for fuzzy matching and payload construction
-                _send_order_to_iiko_internal(order_to_send, iiko_token, data['paymentMethod'], 
-                                             street_name_from_coords, nominatim_postcode, nominatim_house_number)
+                _send_order_to_iiko_internal(
+                    order=order_to_send,
+                    iiko_token=iiko_token,
+                    client_payment_method=data['paymentMethod'], 
+                    street_name=street_name_from_coords,
+                    postcode=nominatim_postcode,
+                    house_number=nominatim_house_number
+                )
                 new_order.status = 'sent_to_iiko'
 
             # Clear cart after successful order creation/payment initiation
@@ -2210,7 +2222,6 @@ class PaymentCallback(Resource):
 
 
             # Load the order with its delivery_info and product for OrderItems.
-            # No need to load `selected_addons` or `selected_recommendations` as they are JSON fields.
             order = db.session.query(Order).filter_by(id=order_id).options(
                 joinedload(Order.delivery_info),
                 joinedload(Order.items).joinedload(OrderItem.product)
@@ -2238,9 +2249,16 @@ class PaymentCallback(Resource):
                             db.session.commit()
                             return {'message': 'IIKO token unavailable'}, 500
 
-                        # Use the common helper function to send the order to IIKO
-                        # The helper will fetch Addon/Recommendation objects by ID when needed
-                        _send_order_to_iiko_internal(order, iiko_token, client_payment_method='online')
+                        # Pass the necessary parameters from DeliveryInfo
+                        # Ensure DeliveryInfo has 'street_name' and 'house_number' fields.
+                        _send_order_to_iiko_internal(
+                            order=order,
+                            iiko_token=iiko_token,
+                            client_payment_method='online', # For successful Yookassa payment, it's always online
+                            street_name=order.delivery_info.street_name, # NEW: Pass street_name from DB
+                            postcode=order.delivery_info.postcode,       # NEW: Pass postcode from DB
+                            house_number=order.delivery_info.house_number # NEW: Pass house_number from DB
+                        )
                         order.status = 'sent_to_iiko'
                         current_app.logger.info(f"Заказ {order.id} успешно отправлен в IIKO через вебхук.")
 
