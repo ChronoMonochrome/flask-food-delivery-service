@@ -137,14 +137,22 @@ order_item_model = api.model('OrderItem', {
 
 order_model = api.model('Order', {
     'id': fields.String(required=True, description='Order ID'),
+    'userId': fields.String(required=True, description='Telegram User ID'),
     'items': fields.List(fields.Nested(order_item_model), description='List of items in the order'),
     'total': fields.Float(required=True, description='Total price of the order'),
     'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information'),
     'status': fields.String(required=True, description='Current status of the order'),
     'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
     'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True),
-    'paymentUrl': fields.String(description='URL for online payment confirmation', attribute='confirmation_url', allow_null=True), # <--- ADDED THIS LINE
-    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True), # <--- ADDED THIS LINE (if needed on frontend)
+    'paymentUrl': fields.String(description='URL for online payment confirmation', attribute='confirmation_url', allow_null=True),
+    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True),
+    'displayStatus': fields.Boolean(required=True, description='Boolean flag to control if the order is displayed to the user')
+})
+
+# Model for updating order display status
+order_display_status_update_model = api.model('OrderDisplayStatusUpdate', {
+    'orderId': fields.String(required=True, description='ID of the order to update'),
+    'displayStatus': fields.Boolean(required=True, description='New display status for the order (true to display, false to hide)')
 })
 
 # --- Cart Models ---
@@ -856,21 +864,25 @@ class ProductResource(Resource):
 class OrderList(Resource):
     @api.marshal_with(order_model, as_list=True) # Use marshal_list_with for lists of orders
     def get(self):
-        """Get all orders"""
-        orders = Order.query.options(
+        """Get all orders for a specific Telegram user and then hide them (set display_status=False)."""
+        user_id = get_telegram_user_id() # MANDATORY HEADER
+
+        # Retrieve orders for the given telegram_user_id and display_status=True
+        # We fetch them first to serialize them before updating their display_status
+        orders_to_display = Order.query.filter_by(user_id=user_id).options(
             joinedload(Order.items)
             .joinedload(OrderItem.product)
             .joinedload(Product.available_addons)
-            .joinedload(ProductAddon.addon), # Assuming ProductAddon.addon is the correct path
+            .joinedload(ProductAddon.addon), 
             joinedload(Order.items)
             .joinedload(OrderItem.product)
             .joinedload(Product.recommendations)
-            .joinedload(ProductRecommendation.recommendation), # Assuming ProductRecommendation.recommendation is the correct path
-            joinedload(Order.delivery_info) # Eager load delivery info
+            .joinedload(ProductRecommendation.recommendation), 
+            joinedload(Order.delivery_info) 
         ).all()
 
         serialized_orders = []
-        for order in orders:
+        for order in orders_to_display: # Iterate through the fetched orders for serialization
             items_data = []
             for item in order.items:
                 product_obj = item.product
@@ -878,7 +890,6 @@ class OrderList(Resource):
                 fetched_addons = []
                 if item.selected_addons_ids:
                     addons_from_db = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all()
-                    # Ensure addon_model has 'group_name' and 'image' if you want them in response
                     fetched_addons = [api.marshal(addon, addon_model) for addon in addons_from_db]
 
                 fetched_recommendations = []
@@ -886,17 +897,16 @@ class OrderList(Resource):
                     recs_from_db = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all()
                     fetched_recommendations = [api.marshal(rec, recommendation_model) for rec in recs_from_db]
 
-                # Manually construct product_marshaled to match product_model structure
                 product_marshaled = {
                     'id': str(product_obj.id),
                     'name': product_obj.name,
                     'description': product_obj.description,
                     'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
                     'image': product_obj.image,
-                    'categoryId': str(product_obj.main_category_id), # Corrected from product_obj.categoryId
-                    'iikoCategoryId': str(product_obj.categoryId), # Original categoryId from IIKO
-                    'nutrition': product_obj.nutrition, # Assuming JSON directly
-                    'ingredients': product_obj.ingredients, # Assuming JSON directly
+                    'categoryId': str(product_obj.main_category_id), 
+                    'iikoCategoryId': str(product_obj.categoryId), 
+                    'nutrition': product_obj.nutrition, 
+                    'ingredients': product_obj.ingredients, 
                     'availableAddons': [api.marshal(pa.addon, addon_model) for pa in product_obj.available_addons if pa.addon],
                     'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in product_obj.recommendations if pr.recommendation],
                     'isCustomizable': product_obj.is_customizable
@@ -910,7 +920,6 @@ class OrderList(Resource):
                     'selectedRecommendations': fetched_recommendations
                 })
 
-            # Reconstruct the nested deliveryInfo for the response
             delivery_info_obj = order.delivery_info
             delivery_info_for_response = {}
             if delivery_info_obj:
@@ -928,21 +937,37 @@ class OrderList(Resource):
 
             serialized_orders.append({
                 'id': str(order.id),
+                'telegramUserId': order.user_id,
                 'items': items_data,
                 'total': float(order.total) if isinstance(order.total, Decimal) else order.total,
-                'deliveryInfo': delivery_info_for_response, # Nested object for response
+                'deliveryInfo': delivery_info_for_response, 
                 'status': order.status,
                 'createdAt': order.created_at.isoformat(),
-                'estimatedDelivery': order.estimated_delivery.isoformat() if order.estimated_delivery else None
+                'estimatedDelivery': order.estimated_delivery.isoformat() if order.estimated_delivery else None,
+                'displayStatus': order.display_status
             })
+        
+        # --- NEW LOGIC: Set display_status = False for all orders of this user ---
+        try:
+            # Update all orders for the current user to set display_status to False
+            # We do this after retrieving them to ensure the current request returns the 'True' ones.
+            # If you want it to return 'False' immediately, this update should happen before fetching.
+            # However, typically, you'd show them and then hide them for subsequent fetches.
+            Order.query.filter_by(user_id=user_id).update({"display_status": False})
+            db.session.commit()
+            current_app.logger.info(f"All orders for Telegram user {user_id} set to display_status=False after retrieval.")
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Error setting display_status=False for user {user_id} orders: {e}", exc_info=True)
+            # You might choose to abort here or just log and continue, depending on criticality.
+            # For now, we'll just log and return the fetched (old status) orders.
+
         return serialized_orders
-
-
     @api.expect(request_order_payload_model) # <-- Use the FLAT request model for input
     @api.marshal_with(order_model, code=201) # <-- Still marshal output with the NESTED order_model
     def post(self):
         """Create a new order and send it to IIKO."""
-        user_id = get_telegram_user_id()
+        user_id = get_telegram_user_id() # MANDATORY HEADER
         data = api.payload # This contains the flat delivery fields from the frontend
 
         # --- Validate delivery coordinates and get delivery cost ---
@@ -1067,9 +1092,11 @@ class OrderList(Resource):
         # Store new order in DB
         new_order = Order(
             id=str(uuid.uuid4()),
+            user_id=user_id, # Store the Telegram User ID
             total=final_total,
             status='pending',
             created_at=datetime.now(timezone.utc), # Use datetime.now(timezone.utc)
+            display_status=True, # Default to true for new orders
             delivery_info=delivery_info_obj # Assign the object directly
         )
         db.session.add(new_order)
@@ -1118,7 +1145,7 @@ class OrderList(Resource):
                 if not order_to_send:
                     current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending.")
                     api.abort(500, "Internal error: Could not load order for external system integration.")
-                
+                    
                 iiko_token = iiko_service.get_iiko_token()
                 if not iiko_token:
                     current_app.logger.error("Failed to get IIKO access token for order creation.")
@@ -1147,6 +1174,39 @@ class OrderList(Resource):
         ).get(new_order.id)
 
         return created_order, 201
+
+    @api.expect(order_display_status_update_model)
+    @api.marshal_with(order_model)
+    def put(self):
+        """Update the display status of an order for a specific Telegram user."""
+        user_id = get_telegram_user_id() # MANDATORY HEADER
+        data = api.payload
+        order_id = data.get('orderId')
+        display_status = data.get('displayStatus')
+
+        if order_id is None or display_status is None:
+            api.abort(400, "Both 'orderId' and 'displayStatus' are required.")
+
+        order = Order.query.filter_by(id=order_id, user_id=user_id).first()
+
+        if not order:
+            api.abort(404, f"Order with ID '{order_id}' not found for the current user.")
+
+        try:
+            order.display_status = display_status
+            db.session.commit()
+            current_app.logger.info(f"Order {order_id} display status updated to {display_status} for user {user_id}.")
+            
+            # Load the updated order with relations for marshalling
+            updated_order = db.session.query(Order).options(
+                joinedload(Order.items).joinedload(OrderItem.product),
+                joinedload(Order.delivery_info)
+            ).get(order.id)
+            return updated_order, 200
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Error updating display status for order {order_id}: {e}", exc_info=True)
+            api.abort(500, "Failed to update order display status.")
 
 ## Addon Endpoints
 @api.route('/addons')

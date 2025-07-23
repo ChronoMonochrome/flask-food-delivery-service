@@ -224,13 +224,14 @@ class DeliveryInfo(db.Model):
     def __repr__(self):
         return f"<DeliveryInfo {self.id} for Order {self.order_id}>"
 
-# --- Updated: Order Model ---
 class Order(db.Model):
     __tablename__ = 'order'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(100), nullable=False) # New field for Telegram User ID
     total = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(50), nullable=False, default='pending')
+    display_status = db.Column(db.Boolean, nullable=False, default=True) # New field: controls if the order is displayed to the user
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     estimated_delivery = db.Column(db.DateTime, nullable=True)
 
