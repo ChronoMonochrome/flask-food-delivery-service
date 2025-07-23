@@ -494,7 +494,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: D
     if not token:
         raise RuntimeError("Failed to get IIKO token for order creation.")
 
-    url = f"{IIKO_API_URL}/api/1/deliveries/create"
+    url = f"{IIKO_API_MOCK_URL}/api/1/deliveries/create"
     headers = {"Authorization": f"Bearer {token}"}
 
     payload = {
