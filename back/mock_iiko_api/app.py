@@ -184,8 +184,8 @@ def create_delivery():
         app.logger.error(f"Mock IIKO Delivery: Invalid order.id format: {order_id}. Expected non-empty string.")
         return jsonify({"error": "Invalid order.id format (expected non-empty string)"}), 400
     if external_number is not None and (not isinstance(external_number, str) or not external_number):
-           app.logger.error(f"Mock IIKO Delivery: Invalid order.externalNumber: {external_number}")
-           return jsonify({"error": "Invalid order.externalNumber (expected non-empty string or null)"}), 400
+            app.logger.error(f"Mock IIKO Delivery: Invalid order.externalNumber: {external_number}")
+            return jsonify({"error": "Invalid order.externalNumber (expected non-empty string or null)"}), 400
 
     # Validate Phone Number
     if not isinstance(phone, str) or not (8 <= len(phone) <= 40) or not phone.startswith('+'):
@@ -404,15 +404,21 @@ def create_delivery():
             return jsonify({"error": "Invalid type for 'createOrderSettings.transportToFrontTimeout' (expected number)."}), 400
 
 
-    # If all checks pass, generate a successful response
+    # If all checks pass, generate a successful response matching the real IIKO structure
     mock_order_id = str(uuid4()) # Still generate a valid UUID for the mock response
     mock_correlation_id = str(uuid4()) # Still generate a valid UUID for the mock response
     response_data = {
         "correlationId": mock_correlation_id,
-        "orderId": mock_order_id,
-        "orderStatus": "OnDelivery",
-        "timestamp": int(datetime.now().timestamp() * 1000),
-        "error": None
+        "orderInfo": {
+            "id": mock_order_id,
+            "posId": str(uuid4()), # Generate a mock posId as well
+            "externalNumber": f"WEB-{mock_order_id}",
+            "organizationId": organization_id, # Use the organizationId from the request
+            "timestamp": int(datetime.now().timestamp() * 1000),
+            "creationStatus": "InProgress", # Match the status from the real response
+            "errorInfo": None,
+            "order": None # This was null in the real response you provided
+        }
     }
     app.logger.info(f"Mock IIKO Delivery: Successfully created mock delivery order with ID: {mock_order_id}, Correlation ID: {mock_correlation_id}")
     return jsonify(response_data), 200
