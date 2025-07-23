@@ -18,3 +18,5 @@ flask-cors
 sqlalchemy_utils
 flask_migrate
 shapely
+fuzzywuzzy
+python-Levenshtein

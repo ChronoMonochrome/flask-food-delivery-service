@@ -23,6 +23,8 @@ import uuid
 import re
 import time
 
+from fuzzywuzzy import fuzz
+
 from .geojson import geojson_data
 from .yookassa_service import yookassa_service
 
@@ -269,34 +271,14 @@ addon_group_name_model = api.model('AddonGroupName', {
 # Namespace for addon-related operations
 addon_ns = api.namespace('addons', description='Addon related operations')
 
-
 # --- IIKO internal ----
-# Global/module-level helpers (or put them in a dedicated 'utils' module)
-def _parse_city_from_address(full_address: str) -> str:
-    """
-    A simple helper to parse a city from a full address string.
-    This might need more robust implementation depending on address formats.
-    """
-    # Example: "г. Москва, ул. Ленина, д. 10" -> "Москва"
-    # Example: "Афанасово 3, Деревенская, 1" -> "Афанасово 3"
-    parts = full_address.split(',')
-    if len(parts) > 0:
-        first_part = parts[0].strip()
-        if 'г.' in first_part:
-            return first_part.replace('г.', '').strip()
-        elif 'пгт.' in first_part:
-            return first_part.replace('пгт.', '').strip()
-        # If it looks like a city name followed by a number/space
-        # Or if it's just the first part and seems like a city
-        return first_part
-    return "Неизвестный Город" # Fallback
+MATCH_THRESHOLD = 90
 
-
-def _get_iiko_essential_data(iiko_token: str, client_payment_method: str):
+def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client_street_name: str):
     """
     Helper to fetch essential IIKO dynamic data: organization, terminal group,
-    selected payment type, and default city/street (first available).
-    Raises an error if critical data cannot be fetched.
+    selected payment type, and default city/street (first available, with fuzzy street matching).
+    Raises an error if critical data cannot be fetched or street matching fails.
     """
     organization_id = None
     terminal_group_id = None
@@ -347,8 +329,8 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str):
         elif client_payment_method_lower == "online":
             # For online payments, prefer 'Card' kind, but any could work if configured
             if pt_kind == "card" or pt_code == "bank":
-                 selected_iiko_payment_type = pt
-                 break
+                selected_iiko_payment_type = pt
+                break
             # Fallback for generic online (if no 'Card' kind is explicitly found for online)
             selected_iiko_payment_type = pt # Take the first one if specific logic fails
             break
@@ -359,36 +341,135 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str):
 
     current_app.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}', Code='{selected_iiko_payment_type.get('code')}'")
 
-    # 4. Fetch City and Street (first available)
+    # 4. Fetch City and Street with Fuzzy Matching
     cities_data = iiko_service.get_cities([organization_id])
     if cities_data:
         org_cities_list = next((org_data.get('items') for org_data in cities_data if org_data.get('organizationId') == organization_id), [])
         if org_cities_list:
-            selected_city_id = org_cities_list[0]['id']
-            selected_city_name = org_cities_list[0]['name']
-            current_app.logger.info(f"Fetched City: ID={selected_city_id}, Name='{selected_city_name}'")
+            # --- Prioritize "Черноголовка" city ---
+            found_chernogolovka = False
+            for city in org_cities_list:
+                if city.get('name') == "Черноголовка":
+                    selected_city_id = city['id']
+                    selected_city_name = city['name']
+                    current_app.logger.info(f"Prioritizing IIKO City: ID={selected_city_id}, Name='{selected_city_name}' (explicitly 'Черноголовка')")
+                    found_chernogolovka = True
+                    break
 
+            if not found_chernogolovka:
+                # Fallback to original logic: use the first city if "Черноголовка" is not found
+                selected_city_id = org_cities_list[0]['id']
+                selected_city_name = org_cities_list[0]['name']
+                current_app.logger.warning(
+                    f"City 'Черноголовка' not found for organization {organization_id}. "
+                    f"Falling back to first available city: ID={selected_city_id}, Name='{selected_city_name}'"
+                )
+            
+            # The rest of the street matching logic now uses the determined selected_city_id/name
             streets_data = iiko_service.get_streets_by_city(organization_id, selected_city_id)
             if streets_data:
-                selected_street_id = streets_data[0]['id']
-                selected_street_name = streets_data[0]['name']
-                current_app.logger.info(f"Fetched Street: ID={selected_street_id}, Name='{selected_street_name}'")
+                # --- Fuzzy Matching Logic for Street with Name Variations ---
+                
+                # Generate client street name variations for matching
+                client_name_lower = client_street_name.lower()
+                client_name_variations = [client_name_lower]
+                
+                if " улица" in client_name_lower:
+                    client_name_variations.append(client_name_lower.replace(" улица", ""))
+                # Also check for "улица " at the beginning (e.g., "улица Ленина")
+                if client_name_lower.startswith("улица "):
+                    # Use replace with count=1 to only remove the first occurrence
+                    client_name_variations.append(client_name_lower.replace("улица ", "", 1))
+                
+                # Use a dictionary to store the best match for each unique IIKO street.
+                # This prevents a single IIKO street from being added multiple times
+                # if different client_name_variations match it well.
+                best_matches_for_iiko_street = {} 
+                exact_match_found = None # Reset for street matching scope
+
+                for street in streets_data:
+                    iiko_street_name_lower = street['name'].lower()
+                    best_score_for_current_iiko_street = 0
+
+                    for client_var in client_name_variations:
+                        score = fuzz.ratio(client_var, iiko_street_name_lower)
+                        if score > best_score_for_current_iiko_street:
+                            best_score_for_current_iiko_street = score
+                            # If we find a 100% match for ANY variation, we can prioritize it
+                            if score == 100:
+                                exact_match_found = street
+                                # Since we found a 100% match, no need to check other variations for this street
+                                break 
+                    
+                    # If this IIKO street's best score (across all client variations) meets the threshold, store it.
+                    # Only add if it's new or better than a previously found score for the same IIKO street.
+                    if best_score_for_current_iiko_street >= MATCH_THRESHOLD:
+                        current_entry = best_matches_for_iiko_street.get(street['id'])
+                        if not current_entry or best_score_for_current_iiko_street > current_entry['score']:
+                            best_matches_for_iiko_street[street['id']] = {
+                                "score": best_score_for_current_iiko_street,
+                                "street": street
+                            }
+                
+                # Convert the dictionary values back to a list for consistent processing
+                matched_streets = list(best_matches_for_iiko_street.values())
+
+                # --- Prioritize Exact Street Match (overall best across all variations) ---
+                if exact_match_found:
+                    selected_street_id = exact_match_found['id']
+                    selected_street_name = exact_match_found['name']
+                    current_app.logger.info(
+                        f"Exact IIKO street match found for '{client_street_name}' "
+                        f"(checked variations: {', '.join(client_name_variations)}). "
+                        f"Selected street: ID={selected_street_id}, Name='{selected_street_name}' (100% similarity)."
+                    )
+                    # No error raised, proceed to the final return statement
+                else:
+                    # --- Logic for no match or multiple non-exact matches ---
+                    if not matched_streets:
+                        current_app.logger.error(
+                            f"No IIKO street matched '{client_street_name}' (tried variations: {', '.join(client_name_variations)}) "
+                            f"with over {MATCH_THRESHOLD}% similarity for organization {organization_id}, city {selected_city_name}."
+                        )
+                        raise RuntimeError(
+                            f"Could not match street '{client_street_name}' to any known IIKO streets (no match > {MATCH_THRESHOLD}%)."
+                        )
+                    elif len(matched_streets) > 1:
+                        # Multiple non-exact matches found. Log the error and raise exception.
+                        top_matches = sorted(matched_streets, key=lambda x: x['score'], reverse=True)[:3]
+
+                        formatted_match_list = []
+                        for m in top_matches:
+                            formatted_match_list.append(f"{m['street']['name']} ({m['score']}%)")
+
+                        top_matches_str = ", ".join(formatted_match_list)
+
+                        log_message = (
+                            f"Multiple IIKO streets matched '{client_street_name}' (tried variations: {', '.join(client_name_variations)}) "
+                            f"with over {MATCH_THRESHOLD}% similarity for organization {organization_id}, city {selected_city_name}. "
+                            f"Top matches: [{top_matches_str}]."
+                        )
+
+                        current_app.logger.error(log_message)
+                        raise RuntimeError(f"Multiple highly similar street names found for '{client_street_name}'. Please provide a more precise address.")
+                    else: # Exactly one non-exact match
+                        best_match_street = matched_streets[0]['street']
+                        selected_street_id = best_match_street['id']
+                        selected_street_name = best_match_street['name']
+                        current_app.logger.info(
+                            f"Matched client street '{client_street_name}' to IIKO street: "
+                            f"ID={selected_street_id}, Name='{selected_street_name}' (Score: {matched_streets[0]['score']}%) "
+                            f"(matched using variations: {', '.join(client_name_variations)})"
+                        )
             else:
-                current_app.logger.warning(f"No streets found for city '{selected_city_name}'. Using dummy street data.")
-                selected_street_id = str(uuid.uuid4()) # Dummy ID
-                selected_street_name = "Dummy Street"
+                current_app.logger.error(f"No streets found for city '{selected_city_name}' from IIKO API. Cannot match street for order.")
+                raise RuntimeError("No streets found for the selected city in IIKO. Cannot create order.")
         else:
-            current_app.logger.warning("No cities found for selected organization. Using dummy city and street data.")
-            selected_city_id = str(uuid.uuid4()) # Dummy ID
-            selected_city_name = "Dummy City"
-            selected_street_id = str(uuid.uuid4()) # Dummy ID
-            selected_street_name = "Dummy Street"
+            current_app.logger.error("No cities found for selected organization. Cannot determine address for order.")
+            raise RuntimeError("No cities found for organization in IIKO. Cannot create order.")
     else:
-        current_app.logger.warning("No cities data returned from IIKO. Using dummy city and street data.")
-        selected_city_id = str(uuid.uuid4()) # Dummy ID
-        selected_city_name = "Dummy City"
-        selected_street_id = str(uuid.uuid4()) # Dummy ID
-        selected_street_name = "Dummy Street"
+        current_app.logger.error("No cities data returned from IIKO. Cannot determine address for order.")
+        raise RuntimeError("No cities data returned from IIKO. Cannot create order.")
 
     return {
         "organization_id": organization_id,
@@ -400,8 +481,7 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str):
         "selected_street_name": selected_street_name
     }
 
-
-def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str):
+def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, client_street_name: str):
     """
     Constructs the IIKO payload and sends the order to IIKO.
     This function consolidates the common logic from OrderList.post and PaymentCallback.post.
@@ -412,7 +492,9 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         iiko_token (str): The IIKO access token.
         client_payment_method (str): The client's chosen payment method (e.g., 'cash', 'card', 'online').
                                      Used to determine IIKO payment type.
-                                     
+        client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
+                                  Used for fuzzy matching with IIKO streets.
+                                  
     Returns:
         dict: The response from the IIKO /deliveries/create API.
         
@@ -421,8 +503,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     """
     current_app.logger.info(f"Preparing to send order {order.id} to IIKO.")
 
-    # Fetch dynamic IIKO data
-    iiko_metadata = _get_iiko_essential_data(iiko_token, client_payment_method)
+    # Fetch dynamic IIKO data, now passing the client_street_name
+    iiko_metadata = _get_iiko_essential_data(iiko_token, client_payment_method, client_street_name)
     organization_id = iiko_metadata["organization_id"]
     terminal_group_id = iiko_metadata["terminal_group_id"]
     selected_iiko_payment_type = iiko_metadata["selected_iiko_payment_type"]
@@ -435,7 +517,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     # Loop through order items to build IIKO payload items
     for item in order.items:
         product_obj = item.product
-        item_unit_price_for_iiko = Decimal('0.00') # This will be the price per unit of the main item + its per-unit addons/recs
+        item_unit_price_for_iiko = Decimal('0.00') 
         product_name = None
         product_id_for_iiko = None
 
@@ -530,8 +612,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         "deliveryPoint": {
             "address": {
                 "street": {
-                    "id": selected_street_id, # Dynamically fetched
-                    "name": selected_street_name # Dynamically fetched
+                    "id": selected_street_id, # Dynamically fetched and fuzzy matched
+                    "name": selected_street_name # Dynamically fetched and fuzzy matched
                 },
                 "city": {
                     "id": selected_city_id, # Dynamically fetched
@@ -539,9 +621,9 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                 },
                 "house": house_parsed,
                 "building": building_parsed,
-                "entrance": "1",
-                "index": "123456",
-                "line1": order.delivery_info.comment,
+                "entrance": "1", # Defaulting to 1 as per original code
+                "index": "123456", # Defaulting to 123456 as per original code
+                "line1": order.delivery_info.comment, # Using comment for line1 as per original code
             },
             "coordinates": {
                 "latitude": order.delivery_info.latitude,
@@ -980,6 +1062,18 @@ class OrderList(Resource):
         if not latitude or not longitude:
             api.abort(400, "Latitude and Longitude are required for delivery.")
 
+        # Get structured address from Nominatim
+        nominatim_response = get_address_from_coordinates(latitude, longitude)
+        if not nominatim_response:
+            current_app.logger.error(f"Could not get address details from Nominatim for coordinates: {latitude}, {longitude}")
+            api.abort(500, "Could not determine detailed address from provided coordinates.")
+        
+        # Extract the street name (Nominatim uses 'road')
+        street_name_from_coords = nominatim_response.get('address', {}).get('road')
+        if not street_name_from_coords:
+            current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
+            api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
+
         point = Point(longitude, latitude)
         is_in_delivery_area = False
         for area_polygon in VALID_DELIVERY_AREAS:
@@ -998,7 +1092,6 @@ class OrderList(Resource):
             api.abort(400, "Cart is empty. Please add items before creating an order.")
 
         # Eager load cart items and their related products/addons/recommendations
-        # Here we still load CartAddon/CartRecommendation objects because CartItem has relationships for them.
         cart_with_items = db.session.query(Cart).filter_by(user_id=user_id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
@@ -1016,47 +1109,42 @@ class OrderList(Resource):
             product = None
 
             if cart_item.product_id:
-                product = cart_item.product # Product should already be loaded via joinedload
+                product = cart_item.product 
                 if not product:
                     current_app.logger.warning(f"Product with ID {cart_item.product_id} not found for cart item {cart_item.id}. Skipping.")
-                    continue # Skip this item if product is missing
+                    continue 
                 item_price += Decimal(str(product.price))
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
-                continue # Skip malformed cart items
+                continue 
 
-            # For CartAddon/CartRecommendation, you still calculate price and get IDs
             selected_addons_ids_for_order_item = []
             for cart_addon in cart_item.selected_addons:
-                addon = cart_addon.addon # Already loaded via joinedload
+                addon = cart_addon.addon 
                 if addon:
                     item_price += Decimal(str(addon.price)) * cart_addon.quantity
-                    selected_addons_ids_for_order_item.append(addon.id) # Store original addon.id
+                    selected_addons_ids_for_order_item.append(addon.id) 
                 else:
                     current_app.logger.warning(f"Selected addon with ID {cart_addon.addon_id} not found for cart item {cart_item.id}.")
 
             selected_recommendation_ids_for_order_item = []
             for cart_rec in cart_item.selected_recommendations:
-                recommendation = cart_rec.recommendation # Already loaded via joinedload
+                recommendation = cart_rec.recommendation 
                 if recommendation:
                     item_price += Decimal(str(recommendation.price))
-                    selected_recommendation_ids_for_order_item.append(recommendation.id) # Store original recommendation.id
+                    selected_recommendation_ids_for_order_item.append(recommendation.id) 
                 else:
                     current_app.logger.warning(f"Selected recommendation with ID {cart_rec.recommendation_id} not found for cart item {cart_item.id}.")
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
 
-            # Prepare for database persistence for OrderItem
             order_items_to_add.append(OrderItem(
-                product=product, # Link the actual product object
-                # custom_wok_data=cart_item.custom_wok_data, # Persist custom wok data
-                # custom_price=cart_item.custom_price,
-                # custom_name=cart_item.custom_name,
+                product=product, 
                 quantity=cart_item.quantity,
-                selected_addons_ids=selected_addons_ids_for_order_item, # Store list of IDs
-                selected_recommendation_ids=selected_recommendation_ids_for_order_item # Store list of IDs
+                selected_addons_ids=selected_addons_ids_for_order_item, 
+                selected_recommendation_ids=selected_recommendation_ids_for_order_item 
             ))
 
         # Add delivery cost to the total
@@ -1079,7 +1167,7 @@ class OrderList(Resource):
 
         # Create DeliveryInfo object from the flat incoming data
         delivery_info_obj = DeliveryInfo(
-            address=data['address'],
+            address=data['address'], # This address could be less precise than Nominatim's street name
             apartment=data.get('apartment'),
             floor=data.get('floor'),
             phone=phone,
@@ -1092,15 +1180,15 @@ class OrderList(Resource):
         # Store new order in DB
         new_order = Order(
             id=str(uuid.uuid4()),
-            user_id=user_id, # Store the Telegram User ID
+            user_id=user_id, 
             total=final_total,
             status='pending',
-            created_at=datetime.now(timezone.utc), # Use datetime.now(timezone.utc)
-            display_status=True, # Default to true for new orders
-            delivery_info=delivery_info_obj # Assign the object directly
+            created_at=datetime.now(timezone.utc), 
+            display_status=True, 
+            delivery_info=delivery_info_obj 
         )
         db.session.add(new_order)
-        db.session.flush() # Flush to get new_order.id if it's auto-generated and to link items
+        db.session.flush() 
 
         for item in order_items_to_add:
             item.order_id = new_order.id
@@ -1125,7 +1213,7 @@ class OrderList(Resource):
                 if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
                     new_order.yookassa_payment_id = yookassa_response['id']
                     new_order.confirmation_url = yookassa_response['confirmation']['confirmation_url']
-                    new_order.status = 'pending_payment' # Set status to pending payment
+                    new_order.status = 'pending_payment' 
                     current_app.logger.info(f"YuKassa payment initiated for order {new_order.id}. Confirmation URL: {new_order.confirmation_url}")
                 else:
                     new_order.status = 'payment_initiation_failed'
@@ -1134,9 +1222,6 @@ class OrderList(Resource):
                     
             else:
                 # --- IIKO Integration for non-online payments ---
-                # Load the order with all its relations for the IIKO sender function
-                # IMPORTANT: No need to load `selected_addons` or `selected_recommendations` here
-                # because OrderItem stores their IDs as JSON, not as relationships.
                 order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
                     joinedload(Order.delivery_info),
                     joinedload(Order.items).joinedload(OrderItem.product)
@@ -1151,23 +1236,25 @@ class OrderList(Resource):
                     current_app.logger.error("Failed to get IIKO access token for order creation.")
                     api.abort(500, "Failed to connect to external ordering system (IIKO).")
 
-                # Use the common helper to send to IIKO
-                # The helper will fetch Addon/Recommendation objects by ID when needed
-                _send_order_to_iiko_internal(order_to_send, iiko_token, data['paymentMethod'])
+                # Pass the extracted street name for fuzzy matching
+                _send_order_to_iiko_internal(order_to_send, iiko_token, data['paymentMethod'], street_name_from_coords)
                 new_order.status = 'sent_to_iiko'
 
             # Clear cart after successful order creation/payment initiation
             db.session.delete(cart_with_items)
 
+        except RuntimeError as re: # Catch specific RuntimeErrors from IIKO integration
+            db.session.rollback()
+            current_app.logger.error(f"IIKO integration specific error for order {new_order.id}: {re}", exc_info=True)
+            api.abort(500, f"Failed to integrate with IIKO: {str(re)}")
         except Exception as e:
-            db.session.rollback() # Rollback transaction on error
-            current_app.logger.error(f"Error during payment processing/IIKO integration for order: {e}", exc_info=True)
+            db.session.rollback()
+            current_app.logger.error(f"General error during payment processing/IIKO integration for order {new_order.id}: {e}", exc_info=True)
             api.abort(500, f"Order created internally, but payment or external integration failed: {str(e)}")
 
-        db.session.commit() # Commit all changes to the database
+        db.session.commit()
 
         # Load the created order with all relations for marshalling
-        # IMPORTANT: Again, only load relations that exist on OrderItem directly (like 'product')
         created_order = db.session.query(Order).options(
             joinedload(Order.items).joinedload(OrderItem.product),
             joinedload(Order.delivery_info)
