@@ -277,10 +277,16 @@ addon_ns = api.namespace('addons', description='Addon related operations')
 # --- IIKO internal ----
 MATCH_THRESHOLD = 90
 
+# Helper function to normalize Russian characters
+def _normalize_russian_chars(text: str) -> str:
+    """Replaces 'ё' with 'е' for consistent comparison."""
+    return text.replace('ё', 'е')
+
 # Helper function to match client street name to IIKO streets
 def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tuple[str, str]:
     """
     Performs fuzzy matching to find the best IIKO street ID and name for a given client street name.
+    Ignores differences between 'ё' and 'е'.
 
     Args:
         client_street_name (str): The street name provided by the client (from Nominatim).
@@ -298,39 +304,38 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
         current_app.logger.error(f"No IIKO streets provided for matching client street '{client_street_name}'.")
         raise RuntimeError("No IIKO streets available for matching.")
 
-    # Generate client street name variations for matching
-    client_name_lower = client_street_name.lower()
-    client_name_variations = {client_name_lower} # Use a set to avoid duplicates
+    # Normalize client street name and generate variations
+    client_name_lower_normalized = _normalize_russian_chars(client_street_name.lower())
+    client_name_variations = {client_name_lower_normalized} # Use a set to avoid duplicates
 
     # Common street type variations
-    if " улица" in client_name_lower:
-        client_name_variations.add(client_name_lower.replace(" улица", ""))
-    if client_name_lower.startswith("улица "):
-        client_name_variations.add(client_name_lower.replace("улица ", "", 1))
-    if " проспект" in client_name_lower:
-        client_name_variations.add(client_name_lower.replace(" проспект", ""))
-    if client_name_lower.startswith("проспект "):
-        client_name_variations.add(client_name_lower.replace("проспект ", "", 1))
-    if "переулок" in client_name_lower:
-        client_name_variations.add(client_name_lower.replace("переулок", "пер.")) # Common abbreviation
-    if "бульвар" in client_name_lower:
-        client_name_variations.add(client_name_lower.replace("бульвар", "б-р")) # Common abbreviation
+    if " улица" in client_name_lower_normalized:
+        client_name_variations.add(client_name_lower_normalized.replace(" улица", ""))
+    if client_name_lower_normalized.startswith("улица "):
+        client_name_variations.add(client_name_lower_normalized.replace("улица ", "", 1))
+    if " проспект" in client_name_lower_normalized:
+        client_name_variations.add(client_name_lower_normalized.replace(" проспект", ""))
+    if client_name_lower_normalized.startswith("проспект "):
+        client_name_variations.add(client_name_lower_normalized.replace("проспект ", "", 1))
+    if "переулок" in client_name_lower_normalized:
+        client_name_variations.add(client_name_lower_normalized.replace("переулок", "пер.")) # Common abbreviation
+    if "бульвар" in client_name_lower_normalized:
+        client_name_variations.add(client_name_lower_normalized.replace("бульвар", "б-р")) # Common abbreviation
 
 
     # Dictionary for number/ordinal replacements
-    # Add more as needed based on common IIKO street naming conventions
     number_replacements = {
         "1-я": "первая", "1-й": "первый", "1-го": "первого",
         "2-я": "вторая", "2-й": "второй", "2-го": "второго",
         "3-я": "третья", "3-й": "третий", "3-го": "третьего",
         "4-я": "четвертая", "4-й": "четвертый",
         "5-я": "пятая", "5-й": "пятый",
-        "8-го": "восьмого", # Example for "8-го Марта"
-        # Add more numerical/ordinal replacements here
-        "им.": "имени", # e.g., "ул. им. Ленина"
+        "8-го": "восьмого",
+        "им.": "имени",
     }
 
-    initial_variations_list = list(client_name_variations) # Convert to list to iterate and add new ones
+    # IMPORTANT: Create a list from the set to iterate over, as we'll be adding to the set
+    initial_variations_list = list(client_name_variations)
 
     for var in initial_variations_list:
         current_processed_var = var
@@ -338,15 +343,12 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
             if old_val in current_processed_var:
                 new_var = current_processed_var.replace(old_val, new_val)
                 client_name_variations.add(new_var)
-                # Also consider the case where the replacement itself introduces another variation
-                # e.g., "1-я улица" -> "первая улица" -> "первая" (if " улица" removal happens)
-                # This could get complex, for now, just add the direct replacement.
-                # If " улица" is present in the new_var, also add its version without " улица"
+                
+                # Check if the new_var itself can generate more variations (e.g., "первая улица" -> "первая")
                 if " улица" in new_var:
                     client_name_variations.add(new_var.replace(" улица", ""))
                 if new_var.startswith("улица "):
                     client_name_variations.add(new_var.replace("улица ", "", 1))
-                # For cases like "Проспект 8-го Марта"
                 if " проспект" in new_var:
                     client_name_variations.add(new_var.replace(" проспект", ""))
                 if new_var.startswith("проспект "):
@@ -358,11 +360,12 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
     exact_match_found = None
 
     for street in iiko_streets_list:
-        iiko_street_name_lower = street['name'].lower()
+        # Normalize IIKO street name before comparison
+        iiko_street_name_lower_normalized = _normalize_russian_chars(street['name'].lower())
         best_score_for_current_iiko_street = 0
 
         for client_var in client_name_variations:
-            score = fuzz.ratio(client_var, iiko_street_name_lower)
+            score = fuzz.ratio(client_var, iiko_street_name_lower_normalized)
             if score > best_score_for_current_iiko_street:
                 best_score_for_current_iiko_street = score
                 if score == 100:
@@ -385,7 +388,7 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
         selected_street_name = exact_match_found['name']
         current_app.logger.info(
             f"Exact IIKO street match found for '{client_street_name}' "
-            f"(checked variations: {', '.join(sorted(client_name_variations))}). " # Sort for consistent logging
+            f"(checked variations: {', '.join(sorted(client_name_variations))}). "
             f"Selected street: ID={selected_street_id}, Name='{selected_street_name}' (100% similarity)."
         )
         return selected_street_id, selected_street_name
@@ -511,7 +514,7 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
                     break
 
             if not found_chernogolovka:
-                # Fallback to original logic: use the first city if "Черноголовka" is not found
+                # Fallback to original logic: use the first city if "Черноголовка" is not found
                 selected_city_id = org_cities_list[0]['id']
                 selected_city_name = org_cities_list[0]['name']
                 current_app.logger.warning(
