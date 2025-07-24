@@ -1109,17 +1109,16 @@ class OrderList(Resource):
             
         # Extract the street name (Nominatim uses 'road')
         street_name_from_coords = nominatim_response.get('address', {}).get('road')
-        # NEW: Extract house_number from Nominatim
+        # Extract house_number from Nominatim
         nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
+        # Extract postcode from Nominatim
+        nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
+        
+        current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}'")
 
         if not street_name_from_coords:
             current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
             api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
-
-        # --- NEW: Extract postcode from Nominatim ---
-        nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
-        
-        current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}'")
 
         point = Point(longitude, latitude)
         is_in_delivery_area = False
@@ -1228,16 +1227,43 @@ class OrderList(Resource):
             delivery_info=delivery_info_obj
         )
         db.session.add(new_order)
-        db.session.flush()
+        db.session.flush() # Flush to get new_order.id for order_items
 
         for item in order_items_to_add:
             item.order_id = new_order.id
             db.session.add(item)
+        
+        # --- NEW: Perform early IIKO street validation for all payment methods ---
+        # Get IIKO token
+        iiko_token = iiko_service.get_iiko_token()
+        if not iiko_token:
+            current_app.logger.error("Failed to get IIKO access token for order creation.")
+            db.session.rollback() # Rollback the new order
+            api.abort(500, "Failed to connect to external ordering system (IIKO).")
+
+        try:
+            # Fetch dynamic IIKO data, specifically for street validation
+            # Pass the client's street name and payment method to get the correct IIKO metadata
+            iiko_metadata = _get_iiko_essential_data(iiko_token, data['paymentMethod'], street_name_from_coords)
+            # We specifically need selected_street_id and selected_street_name from this.
+            # If street_name_from_coords couldn't be mapped, _get_iiko_essential_data should raise an error.
+            # No need to store these here, as they're used directly in _send_order_to_iiko_internal.
+            # The important part is that if it fails, it raises an exception BEFORE payment.
+        except RuntimeError as e:
+            current_app.logger.error(f"IIKO street validation failed for order {new_order.id}: {e}", exc_info=True)
+            db.session.rollback() # Rollback the new order
+            api.abort(500, f"Delivery to the specified address is not possible (IIKO street mapping failed): {str(e)}")
+        except Exception as e:
+            current_app.logger.error(f"Unexpected error during IIKO street validation for order {new_order.id}: {e}", exc_info=True)
+            db.session.rollback()
+            api.abort(500, f"Internal error during address validation: {str(e)}")
+
 
         try:
             if data['paymentMethod'].lower() == 'online':
                 # --- ЮKassa Integration ---
                 if not yookassa_service:
+                    db.session.rollback()
                     api.abort(500, "Сервис ЮKassa не настроен.")
 
                 frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
@@ -1258,28 +1284,28 @@ class OrderList(Resource):
                 else:
                     new_order.status = 'payment_initiation_failed'
                     current_app.logger.error(f"Failed to get confirmation_url from YuKassa for order {new_order.id}. Response: {yookassa_response}")
+                    db.session.rollback() # Rollback if Yookassa initiation fails
                     api.abort(500, "Failed to initiate card payment.")
                     
             else:
                 # --- IIKO Integration for non-online payments ---
+                # We need to ensure the order object is fully loaded with its relations before sending to IIKO
+                # If you flushed before, it should already have delivery_info and items linked.
+                # However, for robustness, re-loading ensures all relationships are properly eager-loaded.
                 order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
                     joinedload(Order.delivery_info),
                     joinedload(Order.items).joinedload(OrderItem.product)
                 ).first()
 
                 if not order_to_send:
-                    current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending.")
+                    current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending after initial creation.")
+                    db.session.rollback()
                     api.abort(500, "Internal error: Could not load order for external system integration.")
                     
-                iiko_token = iiko_service.get_iiko_token()
-                if not iiko_token:
-                    current_app.logger.error("Failed to get IIKO access token for order creation.")
-                    api.abort(500, "Failed to connect to external ordering system (IIKO).")
-
-                # Pass the extracted street name, postcode, and house_number for fuzzy matching and payload construction
+                # Pass the extracted street name, postcode, and house_number
                 _send_order_to_iiko_internal(
                     order_to_send,
-                    iiko_token,
+                    iiko_token, # Use the token fetched earlier
                     data['paymentMethod'], 
                     street_name_from_coords,
                     nominatim_postcode,
@@ -1290,10 +1316,10 @@ class OrderList(Resource):
             # Clear cart after successful order creation/payment initiation
             db.session.delete(cart_with_items)
 
-        except RuntimeError as re: # Catch specific RuntimeErrors from IIKO integration
+        except RuntimeError as re: # Catch specific RuntimeErrors from IIKO integration or Yookassa
             db.session.rollback()
-            current_app.logger.error(f"IIKO integration specific error for order {new_order.id}: {re}", exc_info=True)
-            api.abort(500, f"Failed to integrate with IIKO: {str(re)}")
+            current_app.logger.error(f"External integration error for order {new_order.id}: {re}", exc_info=True)
+            api.abort(500, f"Failed to integrate with external system: {str(re)}")
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"General error during payment processing/IIKO integration for order {new_order.id}: {e}", exc_info=True)
