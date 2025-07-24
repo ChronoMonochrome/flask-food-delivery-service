@@ -239,14 +239,6 @@ def create_delivery():
             app.logger.error(f"Mock IIKO Delivery: 'order.deliveryPoint.address.{field}' is missing, invalid, or empty.")
             return jsonify({"error": f"'order.deliveryPoint.address.{field}' is missing, invalid, or empty"}), 400
 
-    # Validate optional string fields in address (if present, must be string)
-    optional_string_address_fields = ['building', 'flat', 'entrance', 'floor', 'doorphone', 'comment', 'index', 'line1']
-    for field in optional_string_address_fields:
-        if field in address and not isinstance(address[field], str):
-            app.logger.error(f"Mock IIKO Delivery: Invalid type for 'order.deliveryPoint.address.{field}' (expected string).")
-            return jsonify({"error": f"Invalid type for 'order.deliveryPoint.address.{field}' (expected string)."}), 400
-
-
     if 'coordinates' in delivery_point and (not isinstance(delivery_point['coordinates'], dict) or 'latitude' not in delivery_point['coordinates'] or 'longitude' not in delivery_point['coordinates']):
         app.logger.warning("Mock IIKO Delivery: 'order.deliveryPoint.coordinates' is present but malformed.")
     
