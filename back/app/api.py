@@ -728,7 +728,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                 "isPrepay": (client_payment_method.lower() == 'online') # Set isPrepay based on online payment
             }
         ],
-        "comment": order.delivery_info.comment if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ.",
+        "comment": f"Адрес: {order.delivery_info.address}. Комментарий: {order.delivery_info.comment}" if not USING_MOCK else f"ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ. Адрес: {order.delivery_info.address}. Комментарий: {order.delivery_info.comment}",
         "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
     }
 
