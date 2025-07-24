@@ -282,11 +282,14 @@ def _normalize_russian_chars(text: str) -> str:
     """Replaces 'ё' with 'е' for consistent comparison."""
     return text.replace('ё', 'е')
 
+
 # Helper function to match client street name to IIKO streets
 def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tuple[str, str]:
     """
     Performs fuzzy matching to find the best IIKO street ID and name for a given client street name.
     Ignores differences between 'ё' and 'е'.
+    If multiple candidates exist, selects the highest-scoring one.
+    If no candidates exist, falls back to the first street in the provided IIKO list.
 
     Args:
         client_street_name (str): The street name provided by the client (from Nominatim).
@@ -297,8 +300,7 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
         tuple[str, str]: A tuple containing (selected_street_id, selected_street_name).
 
     Raises:
-        RuntimeError: If no suitable IIKO street can be matched, or if multiple highly
-                      similar matches are found, indicating ambiguity.
+        RuntimeError: If no IIKO streets are provided for matching.
     """
     if not iiko_streets_list:
         current_app.logger.error(f"No IIKO streets provided for matching client street '{client_street_name}'.")
@@ -355,10 +357,9 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
                     client_name_variations.add(new_var.replace("проспект ", "", 1))
 
 
-    # Use a dictionary to store the best match for each unique IIKO street.
-    best_matches_for_iiko_street = {}
-    exact_match_found = None
-
+    # Use a list to store all potential matches that meet the threshold
+    potential_matches = []
+    
     for street in iiko_streets_list:
         # Normalize IIKO street name before comparison
         iiko_street_name_lower_normalized = _normalize_russian_chars(street['name'].lower())
@@ -368,67 +369,47 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
             score = fuzz.ratio(client_var, iiko_street_name_lower_normalized)
             if score > best_score_for_current_iiko_street:
                 best_score_for_current_iiko_street = score
-                if score == 100:
-                    exact_match_found = street
-                    break # Found exact match for this IIKO street, no need to check other variations
 
-        # If this IIKO street's best score (across all client variations) meets the threshold, store it.
         if best_score_for_current_iiko_street >= MATCH_THRESHOLD:
-            current_entry = best_matches_for_iiko_street.get(street['id'])
-            if not current_entry or best_score_for_current_iiko_street > current_entry['score']:
-                best_matches_for_iiko_street[street['id']] = {
-                    "score": best_score_for_current_iiko_street,
-                    "street": street
-                }
-        if exact_match_found: # If an exact match was found for ANY IIKO street, prioritize it and break outer loop
-            break
+            potential_matches.append({
+                "score": best_score_for_current_iiko_street,
+                "street": street
+            })
 
-    if exact_match_found:
-        selected_street_id = exact_match_found['id']
-        selected_street_name = exact_match_found['name']
-        current_app.logger.info(
-            f"Exact IIKO street match found for '{client_street_name}' "
-            f"(checked variations: {', '.join(sorted(client_name_variations))}). "
-            f"Selected street: ID={selected_street_id}, Name='{selected_street_name}' (100% similarity)."
-        )
-        return selected_street_id, selected_street_name
-    else:
-        matched_streets = list(best_matches_for_iiko_street.values())
-        if not matched_streets:
-            current_app.logger.error(
-                f"No IIKO street matched '{client_street_name}' (tried variations: {', '.join(sorted(client_name_variations))}) "
-                f"with over {MATCH_THRESHOLD}% similarity."
+    # Sort potential matches by score in descending order
+    potential_matches.sort(key=lambda x: x['score'], reverse=True)
+
+    if potential_matches:
+        best_match = potential_matches[0]
+        selected_street_id = best_match['street']['id']
+        selected_street_name = best_match['street']['name']
+
+        if len(potential_matches) > 1:
+            # Log a warning if there were multiple high-scoring matches, but still pick the best one
+            top_matches_str = ", ".join([f"{m['street']['name']} ({m['score']}%)" for m in potential_matches[:3]])
+            current_app.logger.warning(
+                f"Multiple IIKO streets matched '{client_street_name}' (variations: {', '.join(sorted(client_name_variations))}) "
+                f"with over {MATCH_THRESHOLD}% similarity. Picking best match: '{selected_street_name}' (Score: {best_match['score']}%). "
+                f"Top matches were: [{top_matches_str}]."
             )
-            raise RuntimeError(
-                f"Could not match street '{client_street_name}' to any known IIKO streets (no match > {MATCH_THRESHOLD}%)."
-            )
-        elif len(matched_streets) > 1:
-            # Multiple non-exact matches found. Log the error and raise exception.
-            top_matches = sorted(matched_streets, key=lambda x: x['score'], reverse=True)[:3]
-
-            formatted_match_list = []
-            for m in top_matches:
-                formatted_match_list.append(f"{m['street']['name']} ({m['score']}%)")
-
-            top_matches_str = ", ".join(formatted_match_list)
-
-            log_message = (
-                f"Multiple IIKO streets matched '{client_street_name}' (tried variations: {', '.join(sorted(client_name_variations))}) "
-                f"with over {MATCH_THRESHOLD}% similarity. Top matches: [{top_matches_str}]."
-            )
-
-            current_app.logger.error(log_message)
-            raise RuntimeError(f"Multiple highly similar street names found for '{client_street_name}'. Please provide a more precise address.")
-        else: # Exactly one non-exact match
-            best_match_street = matched_streets[0]['street']
-            selected_street_id = best_match_street['id']
-            selected_street_name = best_match_street['name']
+        else:
             current_app.logger.info(
                 f"Matched client street '{client_street_name}' to IIKO street: "
-                f"ID={selected_street_id}, Name='{selected_street_name}' (Score: {matched_streets[0]['score']}%) "
+                f"ID={selected_street_id}, Name='{selected_street_name}' (Score: {best_match['score']}%) "
                 f"(matched using variations: {', '.join(sorted(client_name_variations))})"
             )
-            return selected_street_id, selected_street_name
+        return selected_street_id, selected_street_name
+    else:
+        # Fallback: if no match is found above the threshold, pick the first IIKO street
+        fallback_street = iiko_streets_list[0]
+        selected_street_id = fallback_street['id']
+        selected_street_name = fallback_street['name']
+        current_app.logger.warning(
+            f"No IIKO street matched '{client_street_name}' (tried variations: {', '.join(sorted(client_name_variations))}) "
+            f"with over {MATCH_THRESHOLD}% similarity. Falling back to the first available IIKO street: "
+            f"ID={selected_street_id}, Name='{selected_street_name}'."
+        )
+        return selected_street_id, selected_street_name
 
 
 def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client_street_name: str):
@@ -529,6 +510,8 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
                 selected_street_id, selected_street_name = _match_iiko_street(client_street_name, streets_data)
             else:
                 current_app.logger.error(f"No streets found for city '{selected_city_name}' from IIKO API. Cannot match street for order.")
+                # IMPORTANT: If NO streets are returned by IIKO for the city, we cannot proceed,
+                # as there's no list to even pick a fallback from. This should remain an error.
                 raise RuntimeError("No streets found for the selected city in IIKO. Cannot create order.")
         else:
             current_app.logger.error("No cities found for selected organization. Cannot determine address for order.")
@@ -1181,7 +1164,8 @@ class OrderList(Resource):
 
         if not street_name_from_coords:
             current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
-            api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
+            street_name_from_coords = ""
+            #api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
 
         point = Point(longitude, latitude)
         is_in_delivery_area = False
