@@ -25,7 +25,7 @@ import time
 
 from fuzzywuzzy import fuzz
 
-from .geojson import geojson_data
+from .geojson import get_geojson_data
 from .yookassa_service import yookassa_service
 
 api_bp = Blueprint('api', __name__)
@@ -282,7 +282,6 @@ def _normalize_russian_chars(text: str) -> str:
     """Replaces 'ё' with 'е' for consistent comparison."""
     return text.replace('ё', 'е')
 
-
 # Helper function to match client street name to IIKO streets
 def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tuple[str, str]:
     """
@@ -294,7 +293,7 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
     Args:
         client_street_name (str): The street name provided by the client (from Nominatim).
         iiko_streets_list (list): A list of dictionaries, each representing an IIKO street
-                                   (e.g., [{'id': 'uuid', 'name': 'Улица Ленина'}]).
+                                  (e.g., [{'id': 'uuid', 'name': 'Улица Ленина'}]).
 
     Returns:
         tuple[str, str]: A tuple containing (selected_street_id, selected_street_name).
@@ -308,7 +307,7 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
 
     # Normalize client street name and generate variations
     client_name_lower_normalized = _normalize_russian_chars(client_street_name.lower())
-    client_name_variations = {client_name_lower_normalized} # Use a set to avoid duplicates
+    client_name_variations = {client_name_lower_normalized}
 
     # Common street type variations
     if " улица" in client_name_lower_normalized:
@@ -320,12 +319,10 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
     if client_name_lower_normalized.startswith("проспект "):
         client_name_variations.add(client_name_lower_normalized.replace("проспект ", "", 1))
     if "переулок" in client_name_lower_normalized:
-        client_name_variations.add(client_name_lower_normalized.replace("переулок", "пер.")) # Common abbreviation
+        client_name_variations.add(client_name_lower_normalized.replace("переулок", "пер."))
     if "бульвар" in client_name_lower_normalized:
-        client_name_variations.add(client_name_lower_normalized.replace("бульвар", "б-р")) # Common abbreviation
+        client_name_variations.add(client_name_lower_normalized.replace("бульвар", "б-р"))
 
-
-    # Dictionary for number/ordinal replacements
     number_replacements = {
         "1-я": "первая", "1-й": "первый", "1-го": "первого",
         "2-я": "вторая", "2-й": "второй", "2-го": "второго",
@@ -335,8 +332,6 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
         "8-го": "восьмого",
         "им.": "имени",
     }
-
-    # IMPORTANT: Create a list from the set to iterate over, as we'll be adding to the set
     initial_variations_list = list(client_name_variations)
 
     for var in initial_variations_list:
@@ -346,7 +341,6 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
                 new_var = current_processed_var.replace(old_val, new_val)
                 client_name_variations.add(new_var)
                 
-                # Check if the new_var itself can generate more variations (e.g., "первая улица" -> "первая")
                 if " улица" in new_var:
                     client_name_variations.add(new_var.replace(" улица", ""))
                 if new_var.startswith("улица "):
@@ -356,15 +350,10 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
                 if new_var.startswith("проспект "):
                     client_name_variations.add(new_var.replace("проспект ", "", 1))
 
-
-    # Use a list to store all potential matches that meet the threshold
     potential_matches = []
-    
     for street in iiko_streets_list:
-        # Normalize IIKO street name before comparison
         iiko_street_name_lower_normalized = _normalize_russian_chars(street['name'].lower())
         best_score_for_current_iiko_street = 0
-
         for client_var in client_name_variations:
             score = fuzz.ratio(client_var, iiko_street_name_lower_normalized)
             if score > best_score_for_current_iiko_street:
@@ -376,7 +365,6 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
                 "street": street
             })
 
-    # Sort potential matches by score in descending order
     potential_matches.sort(key=lambda x: x['score'], reverse=True)
 
     if potential_matches:
@@ -385,38 +373,95 @@ def _match_iiko_street(client_street_name: str, iiko_streets_list: list) -> tupl
         selected_street_name = best_match['street']['name']
 
         if len(potential_matches) > 1:
-            # Log a warning if there were multiple high-scoring matches, but still pick the best one
             top_matches_str = ", ".join([f"{m['street']['name']} ({m['score']}%)" for m in potential_matches[:3]])
             current_app.logger.warning(
-                f"Multiple IIKO streets matched '{client_street_name}' (variations: {', '.join(sorted(client_name_variations))}) "
-                f"with over {MATCH_THRESHOLD}% similarity. Picking best match: '{selected_street_name}' (Score: {best_match['score']}%). "
-                f"Top matches were: [{top_matches_str}]."
+                f"Multiple IIKO streets matched '{client_street_name}' with over {MATCH_THRESHOLD}% similarity. "
+                f"Picking best match: '{selected_street_name}' (Score: {best_match['score']}%). Top matches were: [{top_matches_str}]."
             )
         else:
             current_app.logger.info(
                 f"Matched client street '{client_street_name}' to IIKO street: "
-                f"ID={selected_street_id}, Name='{selected_street_name}' (Score: {best_match['score']}%) "
-                f"(matched using variations: {', '.join(sorted(client_name_variations))})"
+                f"ID={selected_street_id}, Name='{selected_street_name}' (Score: {best_match['score']}%)"
             )
         return selected_street_id, selected_street_name
     else:
-        # Fallback: if no match is found above the threshold, pick the first IIKO street
         fallback_street = iiko_streets_list[0]
         selected_street_id = fallback_street['id']
         selected_street_name = fallback_street['name']
         current_app.logger.warning(
-            f"No IIKO street matched '{client_street_name}' (tried variations: {', '.join(sorted(client_name_variations))}) "
-            f"with over {MATCH_THRESHOLD}% similarity. Falling back to the first available IIKO street: "
-            f"ID={selected_street_id}, Name='{selected_street_name}'."
+            f"No IIKO street matched '{client_street_name}' with over {MATCH_THRESHOLD}% similarity. "
+            f"Falling back to the first available IIKO street: ID={selected_street_id}, Name='{selected_street_name}'."
         )
         return selected_street_id, selected_street_name
 
+def _match_iiko_city(client_city_name: str, iiko_cities_list: list) -> tuple[str, str]:
+    """
+    Performs fuzzy matching to find the best IIKO city ID and name for a given client city name.
+    Handles city-specific variations like "город", "пгт.", etc.
+    """
+    if not iiko_cities_list:
+        current_app.logger.error(f"No IIKO cities provided for matching client city '{client_city_name}'.")
+        raise RuntimeError("No IIKO cities available for matching.")
 
-def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client_street_name: str):
+    client_name_lower_normalized = _normalize_russian_chars(client_city_name.lower())
+    client_name_variations = {client_name_lower_normalized}
+
+    # Common city type variations
+    city_replacements = {
+        " город": "", "г. ": "", " г ": "",
+        "поселок городского типа": "", "пгт": "", " пгт ": "",
+        "поселок": "", " п. ": "",
+        "село": "",
+        "деревня": "", "д. ": ""
+    }
+
+    initial_variations_list = list(client_name_variations)
+    for var in initial_variations_list:
+        for old_val, new_val in city_replacements.items():
+            if old_val in var:
+                client_name_variations.add(var.replace(old_val, new_val).strip())
+
+    potential_matches = []
+    for city in iiko_cities_list:
+        iiko_city_name_lower_normalized = _normalize_russian_chars(city['name'].lower())
+        best_score_for_current_iiko_city = 0
+        for client_var in client_name_variations:
+            score = fuzz.ratio(client_var, iiko_city_name_lower_normalized)
+            if score > best_score_for_current_iiko_city:
+                best_score_for_current_iiko_city = score
+
+        if best_score_for_current_iiko_city >= MATCH_THRESHOLD:
+            potential_matches.append({
+                "score": best_score_for_current_iiko_city,
+                "city": city
+            })
+    
+    potential_matches.sort(key=lambda x: x['score'], reverse=True)
+
+    if potential_matches:
+        best_match = potential_matches[0]
+        selected_city_id = best_match['city']['id']
+        selected_city_name = best_match['city']['name']
+        current_app.logger.info(
+            f"Fuzzy matched client city '{client_city_name}' to IIKO city: "
+            f"ID={selected_city_id}, Name='{selected_city_name}' (Score: {best_match['score']}%)"
+        )
+        return selected_city_id, selected_city_name
+    else:
+        fallback_city = iiko_cities_list[0]
+        selected_city_id = fallback_city['id']
+        selected_city_name = fallback_city['name']
+        current_app.logger.warning(
+            f"No IIKO city matched '{client_city_name}' with over {MATCH_THRESHOLD}% similarity. "
+            f"Falling back to the first available IIKO city: ID={selected_city_id}, Name='{selected_city_name}'."
+        )
+        return selected_city_id, selected_city_name
+
+def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client_street_name: str, client_city_name: str):
     """
     Helper to fetch essential IIKO dynamic data: organization, terminal group,
-    selected payment type, and default city/street (first available, with fuzzy street matching).
-    Raises an error if critical data cannot be fetched or street matching fails.
+    selected payment type, and default city/street (with fuzzy matching).
+    Raises an error if critical data cannot be fetched or matching fails.
     """
     organization_id = None
     terminal_group_id = None
@@ -445,12 +490,12 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
         raise RuntimeError("Could not determine terminal group ID for external order.")
 
     # 3. Fetch Payment Types and select based on client method
+    # CORRECTED: Reverted to the original logic which handles a flat list of payment types.
     iiko_payment_types = iiko_service.get_payment_types([organization_id], iiko_token)
     if not iiko_payment_types:
         current_app.logger.error(f"No payment types found for organization {organization_id} from IIKO API.")
         raise RuntimeError("Could not determine payment types for external order.")
 
-    # Logic to select payment type (as per your OrderList.post)
     client_payment_method_lower = client_payment_method.lower()
     for pt in iiko_payment_types:
         pt_kind = pt.get('paymentTypeKind', '').lower()
@@ -465,61 +510,55 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
             selected_iiko_payment_type = pt
             break
         elif client_payment_method_lower == "online":
-            # For online payments, prefer 'Card' kind, but any could work if configured
             if pt_kind == "card" or pt_code == "bank":
                 selected_iiko_payment_type = pt
                 break
-            # Fallback for generic online (if no 'Card' kind is explicitly found for online)
-            selected_iiko_payment_type = pt # Take the first one if specific logic fails
+            selected_iiko_payment_type = pt
             break
 
     if not selected_iiko_payment_type:
         current_app.logger.warning(f"Could not find a specific IIKO payment type for client method '{client_payment_method_lower}'. Using the first available payment type as fallback.")
-        selected_iiko_payment_type = iiko_payment_types[0] # Fallback to first available
+        selected_iiko_payment_type = iiko_payment_types[0]
 
     current_app.logger.info(f"Using IIKO Payment Type: ID='{selected_iiko_payment_type.get('id')}', Name='{selected_iiko_payment_type.get('name')}', Kind='{selected_iiko_payment_type.get('paymentTypeKind')}', Code='{selected_iiko_payment_type.get('code')}'")
 
     # 4. Fetch City and Street with Fuzzy Matching
     cities_data = iiko_service.get_cities([organization_id])
-    if cities_data:
-        org_cities_list = next((org_data.get('items') for org_data in cities_data if org_data.get('organizationId') == organization_id), [])
-        if org_cities_list:
-            # --- Prioritize "Черноголовка" city ---
-            found_chernogolovka = False
-            for city in org_cities_list:
-                if city.get('name') == "Черноголовка":
-                    selected_city_id = city['id']
-                    selected_city_name = city['name']
-                    current_app.logger.info(f"Prioritizing IIKO City: ID={selected_city_id}, Name='{selected_city_name}' (explicitly 'Черноголовка')")
-                    found_chernogolovka = True
-                    break
-
-            if not found_chernogolovka:
-                # Fallback to original logic: use the first city if "Черноголовка" is not found
-                selected_city_id = org_cities_list[0]['id']
-                selected_city_name = org_cities_list[0]['name']
-                current_app.logger.warning(
-                    f"City 'Черноголовка' not found for organization {organization_id}. "
-                    f"Falling back to first available city: ID={selected_city_id}, Name='{selected_city_name}'"
-                )
-                
-            # Fetch streets for the selected city
-            streets_data = iiko_service.get_streets_by_city(organization_id, selected_city_id)
-            if streets_data:
-                # --- Call the new helper function for street matching ---
-                selected_street_id, selected_street_name = _match_iiko_street(client_street_name, streets_data)
-            else:
-                current_app.logger.error(f"No streets found for city '{selected_city_name}' from IIKO API. Cannot match street for order.")
-                # IMPORTANT: If NO streets are returned by IIKO for the city, we cannot proceed,
-                # as there's no list to even pick a fallback from. This should remain an error.
-                raise RuntimeError("No streets found for the selected city in IIKO. Cannot create order.")
-        else:
-            current_app.logger.error("No cities found for selected organization. Cannot determine address for order.")
-            raise RuntimeError("No cities found for organization in IIKO. Cannot create order.")
-    else:
+    if not cities_data:
         current_app.logger.error("No cities data returned from IIKO. Cannot determine address for order.")
         raise RuntimeError("No cities data returned from IIKO. Cannot create order.")
 
+    org_cities_list = next((org_data.get('items') for org_data in cities_data if org_data.get('organizationId') == organization_id), [])
+    if not org_cities_list:
+        current_app.logger.error("No cities found for selected organization. Cannot determine address for order.")
+        raise RuntimeError("No cities found for organization in IIKO. Cannot create order.")
+
+    # find "Черноголовка" city
+    found_chernogolovka = False
+    for city in org_cities_list:
+        if city.get('name') == "Черноголовка":
+            selected_city_id = city['id']
+            selected_city_name = city['name']
+            current_app.logger.info(f"Prioritizing IIKO City: ID={selected_city_id}, Name='{selected_city_name}' (explicitly 'Черноголовка')")
+            found_chernogolovka = True
+            break
+    
+    # use the new fuzzy matching function
+    if client_city_name:
+        selected_city_id, selected_city_name = _match_iiko_city(client_city_name, org_cities_list)
+    elif not found_chernogolovka:
+        current_app.logger.warning("No city name from Nominatim and no 'Черноголовка' found. Using the first available city as fallback.")
+        selected_city_id = org_cities_list[0]['id']
+        selected_city_name = org_cities_list[0]['name']
+
+    # 5. Fetch streets for the selected city and perform detailed fuzzy matching
+    streets_data = iiko_service.get_streets_by_city(organization_id, selected_city_id)
+    if not streets_data:
+        current_app.logger.error(f"No streets found for city '{selected_city_name}' from IIKO API. Cannot match street for order.")
+        raise RuntimeError("No streets found for the selected city in IIKO. Cannot create order.")
+
+    selected_street_id, selected_street_name = _match_iiko_street(client_street_name, streets_data)
+    
     return {
         "organization_id": organization_id,
         "terminal_group_id": terminal_group_id,
@@ -530,23 +569,24 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
         "selected_street_name": selected_street_name
     }
 
-def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str, 
-                                 client_street_name: str, nominatim_postcode: str, nominatim_house_number: str):
+def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str,
+                                 client_street_name: str, nominatim_postcode: str, nominatim_house_number: str,
+                                 client_city_name: str):
     """
     Constructs the IIKO payload and sends the order to IIKO.
-    This function consolidates the common logic from OrderList.post and PaymentCallback.post.
     
     Args:
         order (Order): The SQLAlchemy Order object, must be loaded with its delivery_info and items.
-                        OrderItem.product should be loaded. Addons/Recommendations will be fetched by ID.
+                       OrderItem.product should be loaded. Addons/Recommendations will be fetched by ID.
         iiko_token (str): The IIKO access token.
         client_payment_method (str): The client's chosen payment method (e.g., 'cash', 'card', 'online').
                                      Used to determine IIKO payment type.
         client_street_name (str): The street name extracted from the client's coordinates (Nominatim 'road').
-                                 Used for fuzzy matching with IIKO streets.
+                                  Used for fuzzy matching with IIKO streets.
         nominatim_postcode (str): The postal code extracted from Nominatim.
         nominatim_house_number (str): The house number extracted from Nominatim (e.g., '9', '2/1').
-                                 
+        client_city_name (str): The city name extracted from Nominatim.
+    
     Returns:
         dict: The response from the IIKO /deliveries/create API.
         
@@ -555,8 +595,12 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     """
     current_app.logger.info(f"Preparing to send order {order.id} to IIKO.")
 
-    # Fetch dynamic IIKO data, now passing the client_street_name
-    iiko_metadata = _get_iiko_essential_data(iiko_token, client_payment_method, client_street_name)
+    # Fetch dynamic IIKO data, including fuzzy-matched city and street
+    iiko_address_metadata = _get_iiko_essential_data(iiko_token, client_payment_method, client_street_name, client_city_name)
+
+    # Combine metadata
+    iiko_metadata = {**iiko_address_metadata}
+
     organization_id = iiko_metadata["organization_id"]
     terminal_group_id = iiko_metadata["terminal_group_id"]
     selected_iiko_payment_type = iiko_metadata["selected_iiko_payment_type"]
@@ -641,7 +685,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
             "productCode": delivery_product.iiko_product_id,
             "name": delivery_product.name,
             "amount": 1,
-            "price": float(delivery_product.price), # Using price from product table
+            "price": 0.0,
             "modifiers": [],
             "comboId": None,
             "positionId": str(uuid.uuid4())
@@ -690,8 +734,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                     "id": selected_city_id, # Dynamically fetched
                     "name": selected_city_name # Dynamically fetched
                 },
-                "house": iiko_house_final,   # UPDATED
-                "building": iiko_building,   # UPDATED
+                "house": iiko_house_final,  # UPDATED
+                "building": iiko_building,  # UPDATED
                 "entrance": "1", # Defaulting to 1 as per original code
                 "index": nominatim_postcode, # UPDATED: Use Nominatim postcode
                 "line1": order.delivery_info.comment, # Using comment for line1 as per original code
@@ -716,13 +760,13 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     }
 
     current_app.logger.info(f"Sending order {order.id} to IIKO with payload (excluding full items for brevity): "
-                             f"Org: {organization_id}, TermGroup: {terminal_group_id}, "
-                             f"Phone: {iiko_order_data_for_payload['phone']}, "
-                             f"Address: {iiko_order_data_for_payload['deliveryPoint']['address']['street']['name']}, "
-                             f"House: '{iiko_order_data_for_payload['deliveryPoint']['address']['house']}', "
-                             f"Building: '{iiko_order_data_for_payload['deliveryPoint']['address']['building']}', "
-                             f"Index: '{iiko_order_data_for_payload['deliveryPoint']['address']['index']}', "
-                             f"Items count: {len(iiko_order_data_for_payload['items'])}")
+                            f"Org: {organization_id}, TermGroup: {terminal_group_id}, "
+                            f"Phone: {iiko_order_data_for_payload['phone']}, "
+                            f"Address: {iiko_order_data_for_payload['deliveryPoint']['address']['street']['name']}, "
+                            f"House: '{iiko_order_data_for_payload['deliveryPoint']['address']['house']}', "
+                            f"Building: '{iiko_order_data_for_payload['deliveryPoint']['address']['building']}', "
+                            f"Index: '{iiko_order_data_for_payload['deliveryPoint']['address']['index']}', "
+                            f"Items count: {len(iiko_order_data_for_payload['items'])}")
 
     iiko_response = iiko_service.create_delivery_order(
         organization_id=organization_id,
@@ -1130,16 +1174,12 @@ class OrderList(Resource):
             # For now, we'll just log and return the fetched (old status) orders.
 
         return serialized_orders
-    @api.expect(request_order_payload_model) # <-- Use the FLAT request model for input
-    @api.marshal_with(order_model, code=201) # <-- Still marshal output with the NESTED order_model
+    @api.expect(request_order_payload_model)
+    @api.marshal_with(order_model, code=201)
     def post(self):
         """Create a new order and send it to IIKO."""
-        user_id = get_telegram_user_id() # MANDATORY HEADER
-        data = api.payload # This contains the flat delivery fields from the frontend
-
-        # --- Validate delivery coordinates and get delivery cost ---
-        load_delivery_areas() # Ensure areas are loaded
-        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK
+        user_id = get_telegram_user_id()
+        data = api.payload
 
         latitude = data.get('latitude')
         longitude = data.get('longitude')
@@ -1147,44 +1187,49 @@ class OrderList(Resource):
         if not latitude or not longitude:
             api.abort(400, "Latitude and Longitude are required for delivery.")
 
-        # Get structured address from Nominatim
+        point = Point(longitude, latitude)
+
+        # The helper function now returns an integer (the area number).
+        delivery_area_number = get_delivery_area_by_point(point)
+        
+        if delivery_area_number is None:
+            current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside a valid delivery area.")
+            api.abort(404, "The provided coordinates are outside our valid delivery areas.")
+
+        # Get the cached delivery data with the new mappings
+        try:
+            delivery_data = _get_delivery_data()
+            delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
+            free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
+        except RuntimeError as e:
+            current_app.logger.error(f"Failed to load delivery data: {e}")
+            api.abort(503, "Failed to load delivery data. Please try again later.")
+
+        # Use the area number to get the price and threshold from the mappings
+        delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
+        free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
+        
+        # We no longer have a direct 'delivery_price_exceptions' dict from the handler's perspective,
+        # as the GeoJSON data structures were simplified for caching.
+        # If this data is needed, _get_delivery_data would need to be refactored again to handle it.
+        delivery_price_exceptions = {} 
+
         nominatim_response = get_address_from_coordinates(latitude, longitude)
         if not nominatim_response:
             current_app.logger.error(f"Could not get address details from Nominatim for coordinates: {latitude}, {longitude}")
             api.abort(500, "Could not determine detailed address from provided coordinates.")
             
-        # Extract the street name (Nominatim uses 'road')
-        street_name_from_coords = nominatim_response.get('address', {}).get('road')
-        # Extract house_number from Nominatim
+        street_name_from_coords = nominatim_response.get('address', {}).get('road') or ""
         nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
-        # Extract postcode from Nominatim
         nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
-        
-        current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}'")
+        nominatim_city = nominatim_response.get('address', {}).get('city') or nominatim_response.get('address', {}).get('town') or nominatim_response.get('address', {}).get('village')
 
-        if not street_name_from_coords:
-            current_app.logger.error(f"No 'road' (street name) found in Nominatim response for {latitude}, {longitude}. Full response: {nominatim_response}")
-            street_name_from_coords = ""
-            #api.abort(400, "Could not extract street name from provided coordinates. Please ensure the location is valid.")
+        current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}', City='{nominatim_city}'")
 
-        point = Point(longitude, latitude)
-        is_in_delivery_area = False
-        for area_polygon in VALID_DELIVERY_AREAS:
-            if area_polygon.contains(point):
-                is_in_delivery_area = True
-                break
+        delivery_cost = Decimal('0.00')
+        calculated_total = Decimal('0.00')
+        order_items_to_add = []
 
-        if not is_in_delivery_area:
-            api.abort(404, "The provided coordinates are outside our valid delivery areas.")
-
-        delivery_cost = DELIVERY_COST_MOCK # Use the mock delivery cost
-
-        # --- Retrieve items from the user's cart ---
-        cart = get_or_create_cart(user_id) # Assuming get_or_create_cart is defined
-        if not cart.items:
-            api.abort(400, "Cart is empty. Please add items before creating an order.")
-
-        # Eager load cart items and their related products/addons/recommendations
         cart_with_items = db.session.query(Cart).filter_by(user_id=user_id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
@@ -1194,15 +1239,12 @@ class OrderList(Resource):
         if not cart_with_items or not cart_with_items.items:
             api.abort(400, "Cart is empty or could not load cart items.")
 
-        calculated_total = Decimal('0.00')
-        order_items_to_add = [] # For DB persistence
-
         for cart_item in cart_with_items.items:
             item_price = Decimal('0.00')
             product = None
 
             if cart_item.product_id:
-                product = cart_item.product # Already loaded by joinedload
+                product = cart_item.product
                 if not product:
                     current_app.logger.warning(f"Product with ID {cart_item.product_id} not found for cart item {cart_item.id}. Skipping.")
                     continue
@@ -1213,44 +1255,35 @@ class OrderList(Resource):
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue
 
-            selected_addons_ids_for_order_item = []
             for cart_addon in cart_item.selected_addons:
-                addon = cart_addon.addon # Already loaded by joinedload
+                addon = cart_addon.addon
                 if addon:
                     item_price += Decimal(str(addon.price)) * cart_addon.quantity
-                    selected_addons_ids_for_order_item.append(addon.id)
-                else:
-                    current_app.logger.warning(f"Selected addon with ID {cart_addon.addon_id} not found for cart item {cart_item.id}.")
-
-            selected_recommendation_ids_for_order_item = []
             for cart_rec in cart_item.selected_recommendations:
-                recommendation = cart_rec.recommendation # Already loaded by joinedload
+                recommendation = cart_rec.recommendation
                 if recommendation:
                     item_price += Decimal(str(recommendation.price))
-                    selected_recommendation_ids_for_order_item.append(recommendation.id)
-                else:
-                    current_app.logger.warning(f"Selected recommendation with ID {cart_rec.recommendation_id} not found for cart item {cart_item.id}.")
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
-
+            
             order_items_to_add.append(OrderItem(
                 product=product,
                 quantity=cart_item.quantity,
-                selected_addons_ids=selected_addons_ids_for_order_item,
-                selected_recommendation_ids=selected_recommendation_ids_for_order_item
+                selected_addons_ids=[ca.addon.id for ca in cart_item.selected_addons if ca.addon],
+                selected_recommendation_ids=[cr.recommendation.id for cr in cart_item.selected_recommendations if cr.recommendation]
             ))
 
-        # Add delivery cost to the total
+        if calculated_total < free_delivery_threshold:
+            delivery_cost = delivery_price_base
+            
         final_total = calculated_total + delivery_cost
-        current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, with delivery: {final_total}")
+        current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, delivery cost: {delivery_cost}, final total: {final_total}")
 
-        # Determine phone and comment based on mock setting
         phone = data['phone'] if not USING_MOCK else '+79999999999'
         comment = data.get('comment') if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
 
-        # Create DeliveryInfo object from the flat incoming data
         delivery_info_obj = DeliveryInfo(
-            address=data['address'], # This address could be less precise than Nominatim's street name
+            address=data['address'],
             apartment=data.get('apartment'),
             floor=data.get('floor'),
             phone=phone,
@@ -1258,12 +1291,12 @@ class OrderList(Resource):
             comment=comment,
             latitude=data['latitude'],
             longitude=data['longitude'],
-            postcode=nominatim_postcode, # NEW: Save Nominatim postcode to DB
-            street_name=street_name_from_coords, # NEW: Save Nominatim street name to DB
-            house_number=nominatim_house_number # NEW: Save Nominatim house number to DB
+            postcode=nominatim_postcode,
+            city_name=street_name_from_coords,
+            street_name=nominatim_city,
+            house_number=nominatim_house_number
         )
 
-        # Store new order in DB
         new_order = Order(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -1274,48 +1307,38 @@ class OrderList(Resource):
             delivery_info=delivery_info_obj
         )
         db.session.add(new_order)
-        db.session.flush() # Flush to get new_order.id for order_items
+        db.session.flush()
 
         for item in order_items_to_add:
             item.order_id = new_order.id
             db.session.add(item)
-        
-        # --- NEW: Perform early IIKO street validation for all payment methods ---
-        # Get IIKO token
+            
         iiko_token = iiko_service.get_iiko_token()
         if not iiko_token:
             current_app.logger.error("Failed to get IIKO access token for order creation.")
-            db.session.rollback() # Rollback the new order
+            db.session.rollback()
             api.abort(500, "Failed to connect to external ordering system (IIKO).")
 
         try:
-            # Fetch dynamic IIKO data, specifically for street validation
-            # Pass the client's street name and payment method to get the correct IIKO metadata
-            iiko_metadata = _get_iiko_essential_data(iiko_token, data['paymentMethod'], street_name_from_coords)
-            # We specifically need selected_street_id and selected_street_name from this.
-            # If street_name_from_coords couldn't be mapped, _get_iiko_essential_data should raise an error.
-            # No need to store these here, as they're used directly in _send_order_to_iiko_internal.
-            # The important part is that if it fails, it raises an exception BEFORE payment.
+            _get_iiko_essential_data(iiko_token, data['paymentMethod'], street_name_from_coords, nominatim_city)
         except RuntimeError as e:
-            current_app.logger.error(f"IIKO street validation failed for order {new_order.id}: {e}", exc_info=True)
-            db.session.rollback() # Rollback the new order
-            api.abort(500, f"Delivery to the specified address is not possible (IIKO street mapping failed): {str(e)}")
+            current_app.logger.error(f"IIKO address validation failed for order {new_order.id}: {e}", exc_info=True)
+            db.session.rollback()
+            api.abort(500, f"Delivery to the specified address is not possible: {str(e)}")
         except Exception as e:
-            current_app.logger.error(f"Unexpected error during IIKO street validation for order {new_order.id}: {e}", exc_info=True)
+            current_app.logger.error(f"Unexpected error during IIKO address validation for order {new_order.id}: {e}", exc_info=True)
             db.session.rollback()
             api.abort(500, f"Internal error during address validation: {str(e)}")
 
-
         try:
             if data['paymentMethod'].lower() == 'online':
-                # --- ЮKassa Integration ---
                 if not yookassa_service:
                     db.session.rollback()
                     api.abort(500, "Сервис ЮKassa не настроен.")
 
                 frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
-
                 payment_description = f"Заказ #{new_order.id} из {new_order.delivery_info.address}"
+
                 yookassa_response = yookassa_service.create_payment(
                     amount=new_order.total,
                     description=payment_description,
@@ -1331,14 +1354,10 @@ class OrderList(Resource):
                 else:
                     new_order.status = 'payment_initiation_failed'
                     current_app.logger.error(f"Failed to get confirmation_url from YuKassa for order {new_order.id}. Response: {yookassa_response}")
-                    db.session.rollback() # Rollback if Yookassa initiation fails
+                    db.session.rollback()
                     api.abort(500, "Failed to initiate card payment.")
                     
             else:
-                # --- IIKO Integration for non-online payments ---
-                # We need to ensure the order object is fully loaded with its relations before sending to IIKO
-                # If you flushed before, it should already have delivery_info and items linked.
-                # However, for robustness, re-loading ensures all relationships are properly eager-loaded.
                 order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
                     joinedload(Order.delivery_info),
                     joinedload(Order.items).joinedload(OrderItem.product)
@@ -1349,21 +1368,20 @@ class OrderList(Resource):
                     db.session.rollback()
                     api.abort(500, "Internal error: Could not load order for external system integration.")
                     
-                # Pass the extracted street name, postcode, and house_number
                 _send_order_to_iiko_internal(
                     order_to_send,
-                    iiko_token, # Use the token fetched earlier
+                    iiko_token,
                     data['paymentMethod'], 
                     street_name_from_coords,
                     nominatim_postcode,
-                    nominatim_house_number
+                    nominatim_house_number,
+                    nominatim_city
                 )
                 new_order.status = 'sent_to_iiko'
 
-            # Clear cart after successful order creation/payment initiation
             db.session.delete(cart_with_items)
 
-        except RuntimeError as re: # Catch specific RuntimeErrors from IIKO integration or Yookassa
+        except RuntimeError as re:
             db.session.rollback()
             current_app.logger.error(f"External integration error for order {new_order.id}: {re}", exc_info=True)
             api.abort(500, f"Failed to integrate with external system: {str(re)}")
@@ -1374,7 +1392,6 @@ class OrderList(Resource):
 
         db.session.commit()
 
-        # Load the created order with all relations for marshalling
         created_order = db.session.query(Order).options(
             joinedload(Order.items).joinedload(OrderItem.product),
             joinedload(Order.delivery_info)
@@ -1883,53 +1900,99 @@ def get_address_from_coordinates(latitude, longitude):
             print("No response content available.")
         return None
 
-# Cache for memoization
+# --- Delivery Data Loading and Caching ---
 _delivery_areas_cache = {}
 _last_geojson_hash = None
 
-def load_delivery_areas():
-    global VALID_DELIVERY_AREAS
-    global _delivery_areas_cache
-    global _last_geojson_hash
+def load_geojson_polygon(geojson_geometry):
+    """
+    Converts a GeoJSON geometry object into a Shapely Polygon.
+    This assumes a closed loop of coordinates even for LineString.
+    """
+    if geojson_geometry['type'] == 'LineString' or geojson_geometry['type'] == 'Polygon':
+        coords = geojson_geometry['coordinates']
+        if geojson_geometry['type'] == 'Polygon':
+            coords = coords[0]
+            
+        return Polygon([(coord[0], coord[1]) for coord in coords])
+    return None
 
-    # Calculate a hash of the current geojson_data to use as a cache key
-    # Use json.dumps with sort_keys to ensure consistent hashing
+def _get_delivery_data():
+    """
+    Loads delivery areas, prices, and thresholds from the delivery_data module,
+    using a cache with hashing to avoid re-processing if the data hasn't changed.
+    """
+    global _delivery_areas_cache, _last_geojson_hash
+
+    geojson_data = get_geojson_data()
     current_geojson_hash = hash(json.dumps(geojson_data, sort_keys=True))
 
-    if current_geojson_hash == _last_geojson_hash:
-        print("Using memoized delivery areas.")
-        VALID_DELIVERY_AREAS = _delivery_areas_cache[current_geojson_hash]
-        return
+    if _last_geojson_hash == current_geojson_hash:
+        current_app.logger.debug("Delivery data hash unchanged, using cached data.")
+        return _delivery_areas_cache
 
-    # If the geojson_data has changed or it's the first run, reload
-    print("Loading delivery areas...")
-    VALID_DELIVERY_AREAS = [] # Clear previous loads
+    current_app.logger.info("Delivery data hash changed or cache is empty. Reloading delivery data.")
 
-    if geojson_data and geojson_data.get("type") == "FeatureCollection":
-        for feature in geojson_data.get("features", []):
-            geometry_type = feature.get("geometry", {}).get("type")
-            geometry_coords = feature.get("geometry", {}).get("coordinates")
+    try:
+        new_delivery_areas = []
+        delivery_price_mapping = {}
+        free_delivery_threshold_mapping = {}
 
-            if geometry_type == "Polygon":
-                # Polygon coordinates are usually [exterior_ring, interior_ring1, ...]
-                # We assume only one exterior ring for simplicity here.
-                polygon_coords_shapely = [tuple(coord) for coord in geometry_coords[0]]
-                VALID_DELIVERY_AREAS.append(Polygon(polygon_coords_shapely))
-            elif geometry_type == "LineString":
-                linestring_points_shapely = [tuple(coord) for coord in geometry_coords]
-                # Note: For LineString as a boundary, Shapely's Polygon will close it.
-                # Be careful if your LineString isn't intended to form a closed polygon.
-                VALID_DELIVERY_AREAS.append(Polygon(linestring_points_shapely))
-            else:
-                print(f"Warning: Skipping unsupported geometry type: {geometry_type}")
-        print(f"Loaded {len(VALID_DELIVERY_AREAS)} delivery areas from geojson")
-        
-        # Store the newly loaded areas in the cache
-        _delivery_areas_cache[current_geojson_hash] = VALID_DELIVERY_AREAS
+        for feature in geojson_data['features']:
+            properties = feature.get('properties', {})
+            geojson_geometry = feature.get('geometry')
+            
+            area_number = properties.get('area_number')
+            delivery_price_base = properties.get('delivery_price_base')
+            free_delivery_threshold = properties.get('free_delivery_threshold')
+            
+            if area_number is not None and delivery_price_base is not None and free_delivery_threshold is not None:
+                polygon = load_geojson_polygon(geojson_geometry)
+                if polygon and polygon.is_valid:
+                    new_delivery_areas.append({
+                        'polygon': polygon,
+                        'area_number': area_number,
+                        'delivery_price_base': delivery_price_base,
+                        'free_delivery_threshold': free_delivery_threshold
+                    })
+                    # Populate the mappings for easy lookup
+                    delivery_price_mapping[area_number] = delivery_price_base
+                    free_delivery_threshold_mapping[area_number] = free_delivery_threshold
+
+        _delivery_areas_cache = {
+            'DELIVERY_AREAS': new_delivery_areas,
+            'DELIVERY_PRICE_MAPPING': delivery_price_mapping,
+            'FREE_DELIVERY_THRESHOLD_MAPPING': free_delivery_threshold_mapping
+        }
         _last_geojson_hash = current_geojson_hash
-    else:
-        print(f"Error: Expected FeatureCollection from geojson, got {geojson_data.get('type') if geojson_data else 'None/Invalid'}")
+        current_app.logger.info(f"Delivery data reloaded successfully. {len(new_delivery_areas)} areas loaded.")
 
+    except Exception as e:
+        current_app.logger.error(f"Error loading delivery data from module: {e}")
+        _delivery_areas_cache = {}
+        _last_geojson_hash = None
+        raise RuntimeError(f"Error loading delivery data: {e}")
+
+    return _delivery_areas_cache
+
+def get_delivery_area_by_point(point):
+    """
+    Finds the delivery area number for a given point.
+    
+    Args:
+        point (shapely.geometry.Point): The point to check.
+        
+    Returns:
+        int or None: The area_number if the point is within a polygon, otherwise None.
+    """
+    delivery_data = _get_delivery_data()
+    DELIVERY_AREAS = delivery_data.get('DELIVERY_AREAS', [])
+    
+    for area in DELIVERY_AREAS:
+        if area['polygon'].contains(point):
+            return area['area_number']
+            
+    return None
 
 # Define the model for the detailed address components (nested inside Nominatim response)
 address_details_model = api.model('AddressDetails', {
@@ -1979,48 +2042,61 @@ map_query_parser.add_argument('longitude', type=float, help='Longitude of the lo
 
 @api.route('/map')
 class MapResource(Resource):
-    @api.expect(map_query_parser) # Document input parameters
-    @api.marshal_with(map_output_model) # Define an output model for successful responses
+    @api.expect(map_query_parser)
+    @api.marshal_with(map_output_model)
     def get(self):
-        load_delivery_areas()
-        global VALID_DELIVERY_AREAS, DELIVERY_COST_MOCK
-
+        """
+        Checks if coordinates are within a delivery area and returns the base delivery cost
+        and address details from Nominatim.
+        """
         args = map_query_parser.parse_args(request)
         latitude = args['latitude']
         longitude = args['longitude']
 
         point = Point(longitude, latitude)
 
-        if not VALID_DELIVERY_AREAS:
-            api.abort(503, "Delivery areas not loaded. Please try again later.")
+        # Get the area number (an integer), which is hashable.
+        delivery_area_number = get_delivery_area_by_point(point)
 
-        is_in_delivery_area = False
-        for area_polygon in VALID_DELIVERY_AREAS:
-            if area_polygon.contains(point):
-                is_in_delivery_area = True
-                break
-
-        if not is_in_delivery_area:
-            # For a 404, we provide a message and no nominatim_details or cost
+        if delivery_area_number is None:
+            current_app.logger.info(f"Coordinates {latitude}, {longitude} are outside valid delivery areas.")
             return {
                 "nominatim_details": None,
                 "delivery_cost": None,
                 "message": "Coordinates are outside our valid delivery areas."
             }, 404
+        
+        # Now that we have the area number, we can look up the price.
+        try:
+            delivery_data = _get_delivery_data()
+            delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
+            base_delivery_cost = delivery_price_mapping.get(delivery_area_number)
 
-        # Delay to respect Nominatim usage policy if this is part of a real system
-        time.sleep(0.5) # Minimum recommended delay between requests
+            if base_delivery_cost is None:
+                current_app.logger.error(f"Delivery price not found for area number: {delivery_area_number}.")
+                api.abort(500, "Internal error: Delivery price configuration is missing for this area.")
 
-        # Call the function to get the full Nominatim response
+        except RuntimeError as e:
+            current_app.logger.error(f"Failed to load delivery data: {e}")
+            api.abort(503, "Failed to load delivery data. Please try again later.")
+
+        # Delay to respect Nominatim usage policy
+        time.sleep(0.5)
+
         full_nominatim_response = get_address_from_coordinates(latitude, longitude)
+
+        # Create a user-friendly name for the delivery area from the number
+        delivery_area_name = f"Area {delivery_area_number}"
 
         if full_nominatim_response:
             return {
-                "nominatim_details": full_nominatim_response, # This will be marshaled by nominatim_response_model
-                "delivery_cost": DELIVERY_COST_MOCK
+                "nominatim_details": full_nominatim_response,
+                "delivery_cost": float(base_delivery_cost),
+                "message": f"Coordinates are in the '{delivery_area_name}' delivery area."
             }, 200
         else:
-            api.abort(500, "Coordinates are within a valid delivery area, but Nominatim lookup failed.")
+            current_app.logger.error(f"Nominatim lookup failed for coordinates: {latitude}, {longitude}.")
+            api.abort(500, "Coordinates are within a valid delivery area, but address lookup failed.")
 
 # Define response models if you want to explicitly document the output structure
 # For simplicity, we'll return raw JSON, but it's good practice to define models
@@ -2328,9 +2404,10 @@ class PaymentCallback(Resource):
                             order,
                             iiko_token,
                             'online', # For successful Yookassa payment, it's always online
-                            order.delivery_info.street_name, # NEW: Pass street_name from DB
+                            str(order.delivery_info.street_name), # NEW: Pass street_name from DB
                             order.delivery_info.postcode,       # NEW: Pass postcode from DB
-                            order.delivery_info.house_number # NEW: Pass house_number from DB
+                            order.delivery_info.house_number, # NEW: Pass house_number from DB
+                            str(order.delivery_info.city_name)
                         )
                         order.status = 'sent_to_iiko'
                         current_app.logger.info(f"Заказ {order.id} успешно отправлен в IIKO через вебхук.")

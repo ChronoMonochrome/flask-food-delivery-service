@@ -221,6 +221,7 @@ class DeliveryInfo(db.Model):
     latitude = db.Column(db.Float, nullable=False)
     longitude = db.Column(db.Float, nullable=False)
     postcode = db.Column(db.String(20), nullable=True) # Added postcode
+    city_name = db.Column(db.String(255), nullable=True) # NEW FIELD
     street_name = db.Column(db.String(255), nullable=True) # NEW FIELD
     house_number = db.Column(db.String(50), nullable=True) # NEW FIELD
 
