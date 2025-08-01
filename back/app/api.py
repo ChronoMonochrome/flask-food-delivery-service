@@ -1174,6 +1174,7 @@ class OrderList(Resource):
             # For now, we'll just log and return the fetched (old status) orders.
 
         return serialized_orders
+
     @api.expect(request_order_payload_model)
     @api.marshal_with(order_model, code=201)
     def post(self):
@@ -1196,11 +1197,11 @@ class OrderList(Resource):
             current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside a valid delivery area.")
             api.abort(404, "The provided coordinates are outside our valid delivery areas.")
 
-        # Get the cached delivery data with the new mappings
         try:
             delivery_data = _get_delivery_data()
             delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
             free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
+            delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {}) # NEW: Get exceptions mapping
         except RuntimeError as e:
             current_app.logger.error(f"Failed to load delivery data: {e}")
             api.abort(503, "Failed to load delivery data. Please try again later.")
@@ -1209,10 +1210,8 @@ class OrderList(Resource):
         delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
         free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
         
-        # We no longer have a direct 'delivery_price_exceptions' dict from the handler's perspective,
-        # as the GeoJSON data structures were simplified for caching.
-        # If this data is needed, _get_delivery_data would need to be refactored again to handle it.
-        delivery_price_exceptions = {} 
+        # Get the exceptions for this specific area
+        delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         nominatim_response = get_address_from_coordinates(latitude, longitude)
         if not nominatim_response:
@@ -1225,6 +1224,13 @@ class OrderList(Resource):
         nominatim_city = nominatim_response.get('address', {}).get('city') or nominatim_response.get('address', {}).get('town') or nominatim_response.get('address', {}).get('village')
 
         current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}', City='{nominatim_city}'")
+
+        # NEW: Check for price exceptions based on the city
+        if nominatim_city:
+            exception_price = delivery_price_exceptions.get(nominatim_city)
+            if exception_price is not None:
+                delivery_price_base = Decimal(str(exception_price))
+                current_app.logger.info(f"Applying delivery price exception for city '{nominatim_city}': {delivery_price_base}")
 
         delivery_cost = Decimal('0.00')
         calculated_total = Decimal('0.00')
@@ -1939,6 +1945,7 @@ def _get_delivery_data():
         new_delivery_areas = []
         delivery_price_mapping = {}
         free_delivery_threshold_mapping = {}
+        delivery_price_exceptions_mapping = {} # NEW: Mapping for price exceptions
 
         for feature in geojson_data['features']:
             properties = feature.get('properties', {})
@@ -1947,6 +1954,8 @@ def _get_delivery_data():
             area_number = properties.get('area_number')
             delivery_price_base = properties.get('delivery_price_base')
             free_delivery_threshold = properties.get('free_delivery_threshold')
+            # NEW: Get the exceptions dictionary
+            delivery_price_exceptions = properties.get('delivery_price_exceptions', {})
             
             if area_number is not None and delivery_price_base is not None and free_delivery_threshold is not None:
                 polygon = load_geojson_polygon(geojson_geometry)
@@ -1955,16 +1964,21 @@ def _get_delivery_data():
                         'polygon': polygon,
                         'area_number': area_number,
                         'delivery_price_base': delivery_price_base,
-                        'free_delivery_threshold': free_delivery_threshold
+                        'free_delivery_threshold': free_delivery_threshold,
+                        # NEW: Store the exceptions dictionary
+                        'delivery_price_exceptions': delivery_price_exceptions
                     })
                     # Populate the mappings for easy lookup
                     delivery_price_mapping[area_number] = delivery_price_base
                     free_delivery_threshold_mapping[area_number] = free_delivery_threshold
+                    # NEW: Populate the exceptions mapping
+                    delivery_price_exceptions_mapping[area_number] = delivery_price_exceptions
 
         _delivery_areas_cache = {
             'DELIVERY_AREAS': new_delivery_areas,
             'DELIVERY_PRICE_MAPPING': delivery_price_mapping,
-            'FREE_DELIVERY_THRESHOLD_MAPPING': free_delivery_threshold_mapping
+            'FREE_DELIVERY_THRESHOLD_MAPPING': free_delivery_threshold_mapping,
+            'DELIVERY_PRICE_EXCEPTIONS_MAPPING': delivery_price_exceptions_mapping # NEW: Add to cache
         }
         _last_geojson_hash = current_geojson_hash
         current_app.logger.info(f"Delivery data reloaded successfully. {len(new_delivery_areas)} areas loaded.")
@@ -1976,6 +1990,7 @@ def _get_delivery_data():
         raise RuntimeError(f"Error loading delivery data: {e}")
 
     return _delivery_areas_cache
+
 
 def get_delivery_area_by_point(point):
     """
