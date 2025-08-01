@@ -1343,7 +1343,9 @@ class OrderList(Resource):
                     amount=new_order.total,
                     description=payment_description,
                     order_id=new_order.id,
-                    return_url=frontend_return_url
+                    return_url=frontend_return_url,
+                    user_full_name=data.get("client_name", "client_name"),
+                    user_phone_number=phone
                 )
 
                 if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
