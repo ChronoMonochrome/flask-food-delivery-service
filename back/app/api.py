@@ -2063,16 +2063,16 @@ class MapResource(Resource):
     @api.marshal_with(map_output_model)
     def get(self):
         """
-        Checks if coordinates are within a delivery area and returns the base delivery cost
+        Checks if coordinates are within a delivery area and returns the calculated delivery cost
         and address details from Nominatim.
         """
         args = map_query_parser.parse_args(request)
         latitude = args['latitude']
         longitude = args['longitude']
+        order_price = Decimal(str(args['order_price']))  # Use Decimal for accurate calculations
 
         point = Point(longitude, latitude)
 
-        # Get the area number (an integer), which is hashable.
         delivery_area_number = get_delivery_area_by_point(point)
 
         if delivery_area_number is None:
@@ -2083,32 +2083,51 @@ class MapResource(Resource):
                 "message": "Coordinates are outside our valid delivery areas."
             }, 404
         
-        # Now that we have the area number, we can look up the price.
         try:
             delivery_data = _get_delivery_data()
             delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
-            base_delivery_cost = delivery_price_mapping.get(delivery_area_number)
+            free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
+            delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {})
 
-            if base_delivery_cost is None:
-                current_app.logger.error(f"Delivery price not found for area number: {delivery_area_number}.")
-                api.abort(500, "Internal error: Delivery price configuration is missing for this area.")
+            # Get the base price, threshold, and exceptions for this area
+            delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
+            free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
+            delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         except RuntimeError as e:
             current_app.logger.error(f"Failed to load delivery data: {e}")
             api.abort(503, "Failed to load delivery data. Please try again later.")
 
-        # Delay to respect Nominatim usage policy
         time.sleep(0.5)
 
         full_nominatim_response = get_address_from_coordinates(latitude, longitude)
+        
+        nominatim_city = None
+        if full_nominatim_response:
+            nominatim_city = (
+                full_nominatim_response.get('address', {}).get('city') or
+                full_nominatim_response.get('address', {}).get('town') or
+                full_nominatim_response.get('address', {}).get('village')
+            )
 
-        # Create a user-friendly name for the delivery area from the number
+        # Apply delivery price exceptions based on the city, if applicable
+        if nominatim_city:
+            exception_price = delivery_price_exceptions.get(nominatim_city)
+            if exception_price is not None:
+                delivery_price_base = Decimal(str(exception_price))
+                current_app.logger.info(f"Applying delivery price exception for city '{nominatim_city}': {delivery_price_base}")
+
+        # Calculate final delivery cost based on the order price and threshold
+        final_delivery_cost = Decimal('0.00')
+        if order_price < free_delivery_threshold:
+            final_delivery_cost = delivery_price_base
+            
         delivery_area_name = f"Area {delivery_area_number}"
 
         if full_nominatim_response:
             return {
                 "nominatim_details": full_nominatim_response,
-                "delivery_cost": float(base_delivery_cost),
+                "delivery_cost": float(final_delivery_cost),
                 "message": f"Coordinates are in the '{delivery_area_name}' delivery area."
             }, 200
         else:
