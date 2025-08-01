@@ -49,7 +49,7 @@ class YookassaService:
             current_app.logger.error(f"An unexpected error occurred with Yookassa API: {e}")
             raise
 
-    def create_payment(self, amount, description, order_id, return_url):
+    def create_payment(self, amount, description, order_id, return_url, user_full_name, user_phone_number):
         # ЮKassa ожидает сумму в виде строки с двумя знаками после запятой
         amount_str = f"{amount:.2f}"
 
@@ -79,7 +79,8 @@ class YookassaService:
             },
             "receipt": { # Пример данных для чека (может потребоваться более детальная настройка)
                 "customer": {
-                    "email": "customer@example.com" # Замените на реальный email пользователя (TODO)
+                    "full_name": user_full_name,
+                    "phone": user_phone_number,
                 },
                 "items": [
                     {
