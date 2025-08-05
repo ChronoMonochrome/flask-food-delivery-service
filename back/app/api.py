@@ -8,7 +8,7 @@ from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
     WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID,
-    WOK_CATEGORY_NAME, DELIVERY_100_PRODUCT_ID
+    WOK_CATEGORY_NAME, DELIVERY_PRODUCT_IDS
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from app.iiko_service import USING_MOCK
@@ -571,7 +571,7 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
 
 def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str,
                                  client_street_name: str, nominatim_postcode: str, nominatim_house_number: str,
-                                 client_city_name: str):
+                                 client_city_name: str, delivery_area_number: int, is_free_delivery: bool):
     """
     Constructs the IIKO payload and sends the order to IIKO.
     
@@ -586,6 +586,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         nominatim_postcode (str): The postal code extracted from Nominatim.
         nominatim_house_number (str): The house number extracted from Nominatim (e.g., '9', '2/1').
         client_city_name (str): The city name extracted from Nominatim.
+        delivery_area_number (int): IIKO delivery area number.
+        is_free_delivery (bool): Is the delivery free
     
     Returns:
         dict: The response from the IIKO /deliveries/create API.
@@ -677,21 +679,22 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         })
 
     # Add Delivery Product as an item
-    delivery_product = Product.query.get(DELIVERY_100_PRODUCT_ID)
-    if delivery_product:
+    delivery_item_id = DELIVERY_PRODUCT_IDS[delivery_area_number]
+    delivery_product = Product.query.get(delivery_item_id)
+    if delivery_product and not is_free_delivery:
         iiko_order_items.append({
             "type": "Product",
             "productId": delivery_product.iiko_product_id,
             "productCode": delivery_product.iiko_product_id,
             "name": delivery_product.name,
             "amount": 1,
-            "price": 0.0,
+            "price": float(delivery_product.price),
             "modifiers": [],
             "comboId": None,
             "positionId": str(uuid.uuid4())
         })
-    else:
-        current_app.logger.warning(f"Delivery product with ID {DELIVERY_100_PRODUCT_ID} not found. Delivery item not added to IIKO payload.")
+    elif not delivery_product:
+        current_app.logger.warning(f"Delivery product with ID {delivery_item_id} not found. Delivery item not added to IIKO payload.")
 
 
     # --- NEW / MODIFIED LOGIC FOR HOUSE, BUILDING, AND INDEX ---
@@ -1283,6 +1286,7 @@ class OrderList(Resource):
             delivery_cost = delivery_price_base
             
         final_total = calculated_total + delivery_cost
+        is_delivery_free = (delivery_cost == 0)
         current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, delivery cost: {delivery_cost}, final total: {final_total}")
 
         phone = data['phone'] if not USING_MOCK else '+79999999999'
@@ -1300,7 +1304,8 @@ class OrderList(Resource):
             postcode=nominatim_postcode,
             city_name=street_name_from_coords,
             street_name=nominatim_city,
-            house_number=nominatim_house_number
+            house_number=nominatim_house_number,
+            delivery_price=delivery_cost
         )
 
         new_order = Order(
@@ -1383,7 +1388,9 @@ class OrderList(Resource):
                     street_name_from_coords,
                     nominatim_postcode,
                     nominatim_house_number,
-                    nominatim_city
+                    nominatim_city,
+                    delivery_area_number,
+                    is_delivery_free
                 )
                 new_order.status = 'sent_to_iiko'
 
@@ -1925,9 +1932,47 @@ def load_geojson_polygon(geojson_geometry):
         return Polygon([(coord[0], coord[1]) for coord in coords])
     return None
 
+def _parse_delivery_description(description):
+    """
+    Parses a product description string to extract delivery-related information.
+    The values are returned as integers.
+    """
+    # Initialize defaults
+    threshold = None
+    price_base = None
+    exceptions = {}
+
+    # Regex for threshold and base price: "от {threshold} рублей; доставка {price} рублей"
+    base_match = re.search(r"от (\d+) рублей; доставка (\d+) рублей", description)
+    if base_match:
+        threshold = int(base_match.group(1))
+        price_base = int(base_match.group(2))
+
+    # Regex for exceptions, which may contain a comma-separated list of locations
+    exceptions_match = re.search(r"\*Исключение: (.+)", description)
+    if exceptions_match:
+        exceptions_str = exceptions_match.group(1)
+        # This new regex captures the comma-separated locations and the single price for them
+        list_exception_match = re.search(r"(.+?)\s*-\s*доставка\s*(\d+)\s*рублей", exceptions_str)
+        if list_exception_match:
+            locations_str = list_exception_match.group(1)
+            exception_price = int(list_exception_match.group(2))
+            
+            # Split the locations by comma and add each one to the dictionary
+            for location in locations_str.split(','):
+                location_name = location.strip()
+                if location_name:
+                    exceptions[location_name] = exception_price
+
+    return {
+        'free_delivery_threshold': threshold,
+        'delivery_price_base': price_base,
+        'delivery_price_exceptions': exceptions
+    }
+
 def _get_delivery_data():
     """
-    Loads delivery areas, prices, and thresholds from the delivery_data module,
+    Loads delivery areas, prices, and thresholds from the GeoJSON data and product descriptions,
     using a cache with hashing to avoid re-processing if the data hasn't changed.
     """
     global _delivery_areas_cache, _last_geojson_hash
@@ -1945,19 +1990,40 @@ def _get_delivery_data():
         new_delivery_areas = []
         delivery_price_mapping = {}
         free_delivery_threshold_mapping = {}
-        delivery_price_exceptions_mapping = {} # NEW: Mapping for price exceptions
+        delivery_price_exceptions_mapping = {}
 
         for feature in geojson_data['features']:
             properties = feature.get('properties', {})
             geojson_geometry = feature.get('geometry')
             
             area_number = properties.get('area_number')
-            delivery_price_base = properties.get('delivery_price_base')
-            free_delivery_threshold = properties.get('free_delivery_threshold')
-            # NEW: Get the exceptions dictionary
-            delivery_price_exceptions = properties.get('delivery_price_exceptions', {})
+
+            if area_number is None:
+                continue
+
+            # --- START: NEW LOGIC TO RETRIEVE DATA FROM PRODUCT DESCRIPTION ---
+            delivery_item_id = DELIVERY_PRODUCT_IDS.get(area_number)
+            if not delivery_item_id:
+                current_app.logger.warning(f"No product ID found for delivery area {area_number}. Skipping.")
+                continue
+
+            delivery_product = Product.query.get(delivery_item_id)
+            if not delivery_product or not delivery_product.description:
+                current_app.logger.warning(f"Product {delivery_item_id} or its description is missing. Skipping area {area_number}.")
+                continue
             
-            if area_number is not None and delivery_price_base is not None and free_delivery_threshold is not None:
+            parsed_data = _parse_delivery_description(delivery_product.description)
+
+            delivery_price_base = parsed_data['delivery_price_base']
+            free_delivery_threshold = parsed_data['free_delivery_threshold']
+            delivery_price_exceptions = parsed_data['delivery_price_exceptions']
+
+            if not all([delivery_price_base, free_delivery_threshold]):
+                 current_app.logger.warning(f"Could not parse delivery details from product description for area {area_number}. Skipping.")
+                 continue
+            # --- END: NEW LOGIC ---
+
+            if geojson_geometry:
                 polygon = load_geojson_polygon(geojson_geometry)
                 if polygon and polygon.is_valid:
                     new_delivery_areas.append({
@@ -1965,32 +2031,29 @@ def _get_delivery_data():
                         'area_number': area_number,
                         'delivery_price_base': delivery_price_base,
                         'free_delivery_threshold': free_delivery_threshold,
-                        # NEW: Store the exceptions dictionary
                         'delivery_price_exceptions': delivery_price_exceptions
                     })
                     # Populate the mappings for easy lookup
                     delivery_price_mapping[area_number] = delivery_price_base
                     free_delivery_threshold_mapping[area_number] = free_delivery_threshold
-                    # NEW: Populate the exceptions mapping
                     delivery_price_exceptions_mapping[area_number] = delivery_price_exceptions
 
         _delivery_areas_cache = {
             'DELIVERY_AREAS': new_delivery_areas,
             'DELIVERY_PRICE_MAPPING': delivery_price_mapping,
             'FREE_DELIVERY_THRESHOLD_MAPPING': free_delivery_threshold_mapping,
-            'DELIVERY_PRICE_EXCEPTIONS_MAPPING': delivery_price_exceptions_mapping # NEW: Add to cache
+            'DELIVERY_PRICE_EXCEPTIONS_MAPPING': delivery_price_exceptions_mapping
         }
         _last_geojson_hash = current_geojson_hash
         current_app.logger.info(f"Delivery data reloaded successfully. {len(new_delivery_areas)} areas loaded.")
 
     except Exception as e:
-        current_app.logger.error(f"Error loading delivery data from module: {e}")
+        current_app.logger.error(f"Error loading delivery data: {e}")
         _delivery_areas_cache = {}
         _last_geojson_hash = None
         raise RuntimeError(f"Error loading delivery data: {e}")
 
     return _delivery_areas_cache
-
 
 def get_delivery_area_by_point(point):
     """
@@ -2443,7 +2506,9 @@ class PaymentCallback(Resource):
                             str(order.delivery_info.street_name), # NEW: Pass street_name from DB
                             order.delivery_info.postcode,       # NEW: Pass postcode from DB
                             order.delivery_info.house_number, # NEW: Pass house_number from DB
-                            str(order.delivery_info.city_name)
+                            str(order.delivery_info.city_name),
+                            get_delivery_area_by_point(Point(order.delivery_info.longitude, order.delivery_info.latitude)),
+                            order.delivery_info.delivery_price == 0
                         )
                         order.status = 'sent_to_iiko'
                         current_app.logger.info(f"Заказ {order.id} успешно отправлен в IIKO через вебхук.")

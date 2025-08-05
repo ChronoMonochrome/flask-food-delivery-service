@@ -20,7 +20,20 @@ SAUCES_CATEGORY_NAME = "Соусы"
 WOK_CATEGORY_NAME = "Wok"
 WOK_PRODUCT_CONSTRUCTOR_ID = "859b7336-83a8-4fa0-80c9-62681ffeb8e4"
 WOK_BUILDER_PRODUCT_ID = "wok-builder"
-DELIVERY_100_PRODUCT_ID = "2d36623b-0e2d-4cf1-bd9a-196fe13da4d7"
+DELIVERY_PRODUCT_IDS = {
+    1: "a9ba8a27-0d9a-49f1-b8ab-57af0de9d84b",
+    2: "3bdbd3d4-cfae-4f9d-883b-e3e05f2576a7",
+    3: "f3e9b3f4-8ab1-409e-aa4e-2824be02fbc1",
+    4: "3e698306-46a7-40af-a820-031f9c3f9197",
+    5: "780ee745-a87a-490a-90f0-5c7a2ab4ca70",
+    6: "23f6c922-9b68-4589-a664-512712d13d37",
+    7: "23f6c922-9b68-4589-a664-512712d13d37",
+    8: "d43e2e8b-5140-464a-9ee8-127680177ec4",
+    9: "be36d86d-d447-4735-be66-6bc7e33f0230",
+    10: "5ba23690-0c32-4948-a7d3-1872bc3bea38",
+    11: "8889c5ef-54a3-40e6-b030-dd1826369573",
+    12: "28e1b10f-5634-478c-aa0d-676ea32b9952"
+}
 
 class Category(db.Model):
     __tablename__ = 'category'
@@ -224,6 +237,7 @@ class DeliveryInfo(db.Model):
     city_name = db.Column(db.String(255), nullable=True) # NEW FIELD
     street_name = db.Column(db.String(255), nullable=True) # NEW FIELD
     house_number = db.Column(db.String(50), nullable=True) # NEW FIELD
+    delivery_price = db.Column(db.Numeric(10, 2), nullable=False) # Use Numeric for currency
 
     def __repr__(self):
         return f"<DeliveryInfo {self.id} for Order {self.order_id}>"
