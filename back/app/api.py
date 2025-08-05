@@ -1356,7 +1356,8 @@ class OrderList(Resource):
                     order_id=new_order.id,
                     return_url=frontend_return_url,
                     user_full_name=data.get("client_name", "client_name"),
-                    user_phone_number=phone
+                    user_phone_number=phone,
+                    user_email=data.get("email", "customer@example.ru")
                 )
 
                 if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
