@@ -7,9 +7,7 @@ geojson_data = {
                 "area_number": 1,
                 "delivery_price_base": 150,
                 "free_delivery_threshold": 700,
-                "delivery_price_exceptions": {
-                    "Берегово": 150
-                }
+                "delivery_price_exceptions": {}
             },
             "geometry": {
                 "coordinates": [
@@ -313,7 +311,7 @@ geojson_data = {
             "properties": {
                 "area_number": 12,
                 "delivery_price_base": 1100,
-                "free_delivery_threshold": 9500,
+                "free_delivery_threshold": 5500,
                 "delivery_price_exceptions": {}
             },
             "geometry": {
