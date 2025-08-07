@@ -2311,16 +2311,16 @@ def handle_exception(e):
         })
         response.status_code = e.code
         return response
-    
-    current_app.logger.error(f"An unhandled error occurred: {e}", exc_info=True)
-    response = jsonify({
-        'message': 'An unexpected error occurred. Please try again later.',
-        'status': InternalServerError.code,
-        'error_type': 'InternalServerError',
-        'details': str(e) if current_app.debug else None
-    })
-    response.status_code = InternalServerError.code
-    return response
+    else: # This else block is critical
+        current_app.logger.error(f"An unhandled error occurred: {e}", exc_info=True)
+        response = jsonify({
+            'message': 'An unexpected error occurred. Please try again later.',
+            'status': InternalServerError.code,
+            'error_type': 'InternalServerError',
+            'details': str(e) if current_app.debug else None
+        })
+        response.status_code = InternalServerError.code
+        return response
     
 # --- Define a simple SQLAlchemy Model for the Alembic Version Table ---
 # We don't need to add this to db.init_app or db.create_all; it's just for querying.
