@@ -15,13 +15,21 @@ export const wokApi = createApi({
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
     prepareHeaders: (headers) => {
-      const initData = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
+      let telegramUserId = '123'
 
-      if (initData) {
-        headers.set('X-Telegram-Init-Data', initData)
+      if (
+          window.Telegram &&
+          window.Telegram.WebApp &&
+          window.Telegram.WebApp.initDataUnsafe &&
+          window.Telegram.WebApp.initDataUnsafe.user
+      ) {
+        telegramUserId = window.Telegram.WebApp.initDataUnsafe.user.id
       }
-      return headers;
-    },
+
+      headers.set('X-Telegram-User-ID', telegramUserId)
+
+      return headers
+    }
   }),
   tagTypes: ['WokAddons'],
   endpoints: (builder) => ({
