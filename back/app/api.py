@@ -1189,6 +1189,7 @@ class OrderList(Resource):
         longitude = data.get('longitude')
 
         if not latitude or not longitude:
+            current_app.logger.error('Latitude and Longitude are required for delivery.')
             api.abort(400, "Latitude and Longitude are required for delivery.")
 
         point = Point(longitude, latitude)
@@ -1246,6 +1247,7 @@ class OrderList(Resource):
         ).first()
 
         if not cart_with_items or not cart_with_items.items:
+            current_app.logger.error(f'Cart user_id={user_id} is empty or could not load cart items.')
             api.abort(400, "Cart is empty or could not load cart items.")
 
         for cart_item in cart_with_items.items:
@@ -1481,6 +1483,7 @@ class CartResource(Resource):
     def get(self):
         """Get the current user's cart"""
         user_id = get_telegram_user_id()
+        current_app.logger.info(f"/cart user_id={user_id}")
         cart = get_or_create_cart(user_id)
 
         # Eager load related data for cart items
@@ -1631,6 +1634,7 @@ class AddToCartResource(Resource):
     def post(self):
         """Add an item to the cart or increment quantity if it exists."""
         user_id = get_telegram_user_id()
+        current_app.logger.info(f"/cart/add user_id={user_id}")
         data = api.payload
         
         product_id = data.get('productId')
@@ -1790,6 +1794,7 @@ class UpdateCartItemResource(Resource):
     def put(self):
         """Update the quantity of a specific item in the cart."""
         user_id = get_telegram_user_id()
+        current_app.logger.info(f"/cart/update user_id={user_id}")
         data = api.payload
         item_id = data.get('itemId')
         new_quantity = data.get('quantity')
@@ -1825,6 +1830,7 @@ class RemoveFromCartResource(Resource):
     def delete(self):
         """Remove a specific item from the cart."""
         user_id = get_telegram_user_id()
+        current_app.logger.info(f"/cart/remove user_id={user_id}")
         data = api.payload
         item_id = data.get('itemId')
 
@@ -1848,6 +1854,7 @@ class ClearCartResource(Resource):
     def delete(self):
         """Clear all items from the cart."""
         user_id = get_telegram_user_id()
+        current_app.logger.info(f"/cart/clear user_id={user_id}")
         cart = get_or_create_cart(user_id)
         # Delete all cart items associated with this cart
         CartItem.query.filter_by(cart_id=cart.id).delete()
