@@ -3,25 +3,30 @@ import { CartProvider } from './context/CartContext';
 import { CategorySlider } from './components/CategorySlider';
 import { ProductCard } from './components/ProductCard';
 import { ProductDetail } from './components/ProductDetail';
-import { WokBuilder } from './components/WokBuilder';
 import { Cart } from './components/Cart';
 import { Checkout } from './components/Checkout';
 import { OrderSuccess } from './components/OrderSuccess';
 import { MyOrders } from './components/MyOrders';
 import { BottomNav } from './components/BottomNav';
-import { LoadingSpinner } from './components/LoadingSpinner';
-import { ErrorMessage } from './components/ErrorMessage';
 import { Phone } from 'lucide-react';
 import { useGetCategoriesQuery, useGetProductsQuery } from './store/api';
 import { mapApiCategoryToCategory, mapApiProductToProduct } from './utils/mappers';
 import { Product } from './types';
+import {ErrorMessage} from "./shared/ui/ErrorMessage.tsx";
+import {LoadingSpinner} from "./shared/ui/LoadingSpinner.tsx";
 
 type Page = 'home' | 'product' | 'wok-builder' | 'cart' | 'checkout' | 'success' | 'orders';
+
+function WokBuilder(props: { product: Product, onBack: () => void }) {
+  return null;
+}
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+
 
   // Загружаем категории
   const { 

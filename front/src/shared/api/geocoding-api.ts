@@ -16,12 +16,11 @@ export const geocodingApi = createApi({
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
     prepareHeaders: (headers) => {
-      let telegramUserId = '123';
-      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
-          telegramUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
-      }
+      const initData = window.Telegram?.WebApp?.initDataUnsafe?.user?.id
 
-      headers.set('X-Telegram-User-ID', telegramUserId);
+      if (initData) {
+        headers.set('X-Telegram-Init-Data', initData)
+      }
       return headers;
     },
   }),

@@ -21,7 +21,6 @@ import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 export const HomePage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [userTg, setUserTg] = useState<any | null>(null); // Use 'any' or define a specific type for Telegram user
-  const [debug, setDebug] = useState(""); // Initial message
 
   const {
     data: apiCategories,
