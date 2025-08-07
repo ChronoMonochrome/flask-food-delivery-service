@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Box,
-  Container,
-  Typography,
-  AppBar,
-  Toolbar,
+import { 
+  Box, 
+  Container, 
+  Typography, 
+  AppBar, 
+  Toolbar, 
   IconButton,
   Grid,
   Paper
@@ -136,8 +136,8 @@ export const HomePage: React.FC = () => {
               </Typography>
             </Box>
           </Box>
-          <IconButton
-            sx={{
+          <IconButton 
+            sx={{ 
               backgroundColor: 'background.paper',
               border: '1px solid #4B5563',
               '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' }
@@ -168,30 +168,30 @@ export const HomePage: React.FC = () => {
             <Typography variant="h5" component="h2" fontWeight="bold" color="text.primary" mb={3}>
               {categories.find(c => c.id === selectedCategory)?.name}
             </Typography>
-
+            
             {productsLoading ? (
               <LoadingSpinner />
             ) : productsError ? (
               <ErrorMessage message="Ошибка загрузки товаров" />
             ) : (
-              <Grid
-                container
-                spacing={3}
-                sx={{
-                  justifyContent: 'flex-start',
-                  alignItems: 'stretch'
+              <Grid 
+                container 
+                spacing={3} 
+                sx={{ 
+                  justifyContent: { xs: 'center', sm: 'flex-start' },
+                  alignItems: 'stretch',
                 }}
               >
                 {products.map((product) => (
-                  <Grid
-                    item
+                  <Grid 
+                    item 
                     xs={12}
                     sm={6}
                     md={6}
                     lg={4}
                     xl={3}
                     key={product.id}
-                    sx={{
+                    sx={{ 
                       display: 'flex',
                       justifyContent: 'center',
                       alignItems: 'stretch',
