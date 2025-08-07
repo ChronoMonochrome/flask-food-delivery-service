@@ -2286,10 +2286,13 @@ class StreetsResource(Resource):
             current_app.logger.error(f"Error fetching streets: {e}", exc_info=True)
             api.abort(500, f"Error fetching streets from IIKO: {e}")
 
+import traceback
+
 # Error handling for the API blueprint
 @api_bp.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, HTTPException):
+        # Handle known HTTP exceptions
         response = jsonify({
             'message': e.description,
             'status': e.code,
@@ -2297,16 +2300,25 @@ def handle_exception(e):
         })
         response.status_code = e.code
         return response
-    else: # This else block is critical
-        current_app.logger.error(f"An unhandled error occurred: {e}", exc_info=True)
-        response = jsonify({
-            'message': 'An unexpected error occurred. Please try again later.',
-            'status': InternalServerError.code,
-            'error_type': 'InternalServerError',
-            'details': str(e) if current_app.debug else None
-        })
-        response.status_code = InternalServerError.code
-        return response
+    
+    # Handle all other, unexpected exceptions
+    # Capture the full backtrace as a string
+    backtrace_str = traceback.format_exc()
+    
+    # Log the error for internal records (even if you can't access them directly)
+    current_app.logger.error(
+        f"An unhandled error occurred: {e}",
+        exc_info=True
+    )
+    
+    response = jsonify({
+        'message': 'An unexpected error occurred. Please try again later.',
+        'status': InternalServerError.code,
+        'error_type': 'InternalServerError',
+        'details': backtrace_str  # This is the key change
+    })
+    response.status_code = InternalServerError.code
+    return response
     
 # --- Define a simple SQLAlchemy Model for the Alembic Version Table ---
 # We don't need to add this to db.init_app or db.create_all; it's just for querying.
