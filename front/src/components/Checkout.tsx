@@ -25,7 +25,7 @@ export const Checkout: React.FC<CheckoutProps> = ({ onBack, onOrderComplete }) =
     // Simulate order processing
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    clearCart();
+    //clearCart();
     onOrderComplete();
     setIsSubmitting(false);
   };
