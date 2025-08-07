@@ -8,7 +8,10 @@ export const api = createApi({
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
     prepareHeaders: (headers) => {
-      headers.set('X-Telegram-User-ID', '123');
+      let telegramUserId = '123';
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
+          telegramUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
+      }
       return headers;
     },
   }),
