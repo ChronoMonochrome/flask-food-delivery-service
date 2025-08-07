@@ -1194,7 +1194,6 @@ class OrderList(Resource):
 
         point = Point(longitude, latitude)
 
-        # The helper function now returns an integer (the area number).
         delivery_area_number = get_delivery_area_by_point(point)
         
         if delivery_area_number is None:
@@ -1205,16 +1204,14 @@ class OrderList(Resource):
             delivery_data = _get_delivery_data()
             delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
             free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
-            delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {}) # NEW: Get exceptions mapping
+            delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {})
         except RuntimeError as e:
             current_app.logger.error(f"Failed to load delivery data: {e}")
             api.abort(503, "Failed to load delivery data. Please try again later.")
 
-        # Use the area number to get the price and threshold from the mappings
         delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
         free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
         
-        # Get the exceptions for this specific area
         delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         nominatim_response = get_address_from_coordinates(latitude, longitude)
@@ -1229,7 +1226,6 @@ class OrderList(Resource):
 
         current_app.logger.info(f"Nominatim details: Road='{street_name_from_coords}', HouseNumber='{nominatim_house_number}', Postcode='{nominatim_postcode}', City='{nominatim_city}'")
 
-        # NEW: Check for price exceptions based on the city
         if nominatim_city:
             exception_price = delivery_price_exceptions.get(nominatim_city)
             if exception_price is not None:
@@ -1304,8 +1300,8 @@ class OrderList(Resource):
             latitude=data['latitude'],
             longitude=data['longitude'],
             postcode=nominatim_postcode,
-            city_name=street_name_from_coords,
-            street_name=nominatim_city,
+            city_name=nominatim_city,  # Corrected
+            street_name=street_name_from_coords, # Corrected
             house_number=nominatim_house_number,
             delivery_price=delivery_cost
         )
@@ -1343,70 +1339,60 @@ class OrderList(Resource):
             db.session.rollback()
             api.abort(500, f"Internal error during address validation: {str(e)}")
 
-        try:
-            if data['paymentMethod'].lower() == 'online':
-                if not yookassa_service:
-                    db.session.rollback()
-                    api.abort(500, "Сервис ЮKassa не настроен.")
+        if data['paymentMethod'].lower() == 'online':
+            if not yookassa_service:
+                db.session.rollback()
+                api.abort(500, "Сервис ЮKassa не настроен.")
 
-                frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
-                payment_description = f"Заказ #{new_order.id} из {new_order.delivery_info.address}"
+            frontend_return_url = current_app.config.get('FRONTEND_ORDER_RETURN_URL', 'https://your-frontend-domain.com/order-status')
+            payment_description = f"Заказ #{new_order.id} из {new_order.delivery_info.address}"
 
-                yookassa_response = yookassa_service.create_payment(
-                    amount=new_order.total,
-                    description=payment_description,
-                    order_id=new_order.id,
-                    return_url=frontend_return_url,
-                    user_full_name=data.get("client_name", "client_name"),
-                    user_phone_number=phone,
-                    user_email=data.get("email", "customer@example.ru")
-                )
+            yookassa_response = yookassa_service.create_payment(
+                amount=new_order.total,
+                description=payment_description,
+                order_id=new_order.id,
+                return_url=frontend_return_url,
+                user_full_name=data.get("client_name", "client_name"),
+                user_phone_number=phone,
+                user_email=data.get("email", "customer@example.ru")
+            )
 
-                if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
-                    new_order.yookassa_payment_id = yookassa_response['id']
-                    new_order.confirmation_url = yookassa_response['confirmation']['confirmation_url']
-                    new_order.status = 'pending_payment'
-                    current_app.logger.info(f"YuKassa payment initiated for order {new_order.id}. Confirmation URL: {new_order.confirmation_url}")
-                else:
-                    new_order.status = 'payment_initiation_failed'
-                    current_app.logger.error(f"Failed to get confirmation_url from YuKassa for order {new_order.id}. Response: {yookassa_response}")
-                    db.session.rollback()
-                    api.abort(500, "Failed to initiate card payment.")
-                    
+            if yookassa_response and yookassa_response.get('confirmation', {}).get('confirmation_url'):
+                new_order.yookassa_payment_id = yookassa_response['id']
+                new_order.confirmation_url = yookassa_response['confirmation']['confirmation_url']
+                new_order.status = 'pending_payment'
+                current_app.logger.info(f"YuKassa payment initiated for order {new_order.id}. Confirmation URL: {new_order.confirmation_url}")
             else:
-                order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
-                    joinedload(Order.delivery_info),
-                    joinedload(Order.items).joinedload(OrderItem.product)
-                ).first()
+                new_order.status = 'payment_initiation_failed'
+                current_app.logger.error(f"Failed to get confirmation_url from YuKassa for order {new_order.id}. Response: {yookassa_response}")
+                db.session.rollback()
+                api.abort(500, "Failed to initiate card payment.")
+                
+        else:
+            order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
+                joinedload(Order.delivery_info),
+                joinedload(Order.items).joinedload(OrderItem.product)
+            ).first()
 
-                if not order_to_send:
-                    current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending after initial creation.")
-                    db.session.rollback()
-                    api.abort(500, "Internal error: Could not load order for external system integration.")
-                    
-                _send_order_to_iiko_internal(
-                    order_to_send,
-                    iiko_token,
-                    data['paymentMethod'], 
-                    street_name_from_coords,
-                    nominatim_postcode,
-                    nominatim_house_number,
-                    nominatim_city,
-                    delivery_area_number,
-                    is_delivery_free
-                )
-                new_order.status = 'sent_to_iiko'
+            if not order_to_send:
+                current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending after initial creation.")
+                db.session.rollback()
+                api.abort(500, "Internal error: Could not load order for external system integration.")
+                
+            _send_order_to_iiko_internal(
+                order_to_send,
+                iiko_token,
+                data['paymentMethod'],
+                street_name_from_coords,
+                nominatim_postcode,
+                nominatim_house_number,
+                nominatim_city,
+                delivery_area_number,
+                is_delivery_free
+            )
+            new_order.status = 'sent_to_iiko'
 
-            db.session.delete(cart_with_items)
-
-        except RuntimeError as re:
-            db.session.rollback()
-            current_app.logger.error(f"External integration error for order {new_order.id}: {re}", exc_info=True)
-            api.abort(500, f"Failed to integrate with external system: {str(re)}")
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"General error during payment processing/IIKO integration for order {new_order.id}: {e}", exc_info=True)
-            api.abort(500, f"Order created internally, but payment or external integration failed: {str(e)}")
+        db.session.delete(cart_with_items)
 
         db.session.commit()
 
