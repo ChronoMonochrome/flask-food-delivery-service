@@ -26,8 +26,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const currentQuantity = useProductQuantity(product.id);
   const { isLoading: globalLoading } = useBackendCartSelector();
   const { addToCart, updateQuantity } = useCartOperations();
-
-  console.log('ProductCard', product);
   
   // Стабильное локальное состояние с защитой от сброса
   const [displayQuantity, setDisplayQuantity] = useState(currentQuantity);
@@ -136,42 +134,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       }}
     >
       {/* Контейнер изображения - адаптивный */}
-        <Box
-            sx={{
-                position: 'relative',
-                width: '100%',
-                height: { xs: 200, sm: 180 },
-                overflow: 'hidden',
-                backgroundColor: '#374151',
-            }}
-        >
-            {/* Background blur */}
-            <Box
-                sx={{
-                    position: 'absolute',
-                    width: '100%',
-                    height: '100%',
-                    backgroundImage: `url(${product.image})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    filter: 'blur(8px)',
-                    transform: 'scale(1.1)',
-                    zIndex: 1,
-                }}
-            />
-            {/* Main image */}
-            <CardMedia
-                component="img"
-                image={product.image}
-                alt={product.name || 'Товар'}
-                sx={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain',
-                    zIndex: 2,
-                }}
-            />
+      <Box 
+        sx={{ 
+          position: 'relative',
+          width: '100%',
+          height: { xs: 200, sm: 180 }, // Адаптивная высота изображения
+          flexShrink: 0,
+          overflow: 'hidden',
+          backgroundColor: '#374151'
+        }}
+      >
+        <CardMedia
+          component="img"
+          image={product.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400'}
+          alt={product.name || 'Товар'}
+          sx={{ 
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            transition: 'transform 0.3s ease',
+          }}
+          onError={(e) => {
+            e.currentTarget.src = 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=400';
+          }}
+        />
         
         {/* Кнопка добавления или управления количеством - фиксированный контейнер */}
         <Box
@@ -220,8 +206,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
                 borderRadius: 2,
                 padding: '6px',
                 boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                  position: 'relative', // ✅ важно
-                  zIndex: 10,
               }}
             >
               <IconButton
@@ -297,26 +281,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         </Box>
         
         {/* Описание - адаптивная высота */}
-          <Box sx={{ height: '58px', mb: 2 }}>
-              <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{
-                      fontSize: '0.875rem',           // ≈ 14px
-                      lineHeight: 1.4,
-                      display: '-webkit-box',
-                      WebkitLineClamp: 3,             // ← 3 строки
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      height: '100%',
-                  }}
-              >
-                  {(product.description && product.description.trim())
-                      ? product.description
-                      : 'Вкусное блюдо от наших поваров. Приготовлено из качественных ингредиентов с любовью.'}
-              </Typography>
-          </Box>
+        <Box sx={{ height: { xs: 90, sm: 84 }, mb: 2 }}>
+          <Typography 
+            variant="body2" 
+            color="text.secondary"
+            sx={{
+              fontSize: { xs: '0.9rem', sm: '0.875rem' },
+              lineHeight: 1.4,
+              display: '-webkit-box',
+              WebkitLineClamp: { xs: 4, sm: 4 },
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              height: '100%'
+            }}
+          >
+            {(product.description && product.description.trim()) 
+              ? product.description 
+              : 'Вкусное блюдо от наших поваров. Приготовлено из качественных ингредиентов с любовью.'
+            }
+          </Typography>
+        </Box>
         
         {/* Вес - фиксированная высота */}
         <Box sx={{ height: 32, display: 'flex', justifyContent: 'center', alignItems: 'center', mb: 1 }}>
@@ -334,7 +318,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               }}
             />
           ) : (
-              <></>
+            <Box sx={{ height: 26 }} />
           )}
         </Box>
         
@@ -356,55 +340,55 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           </Typography>
           
           {/* Дополнительные кнопки управления количеством внизу карточки */}
-          {/*{buttonState.showQuantityControls && !product.isCustomizable && !buttonState.isDisabled && (*/}
-          {/*  <ButtonGroup size="small" variant="outlined">*/}
-          {/*    <IconButton*/}
-          {/*      onClick={(e) => handleQuantityChange(e, displayQuantity - 1)}*/}
-          {/*      disabled={buttonState.isDisabled || !buttonState.canDecrease}*/}
-          {/*      sx={{*/}
-          {/*        backgroundColor: 'rgba(58, 58, 55, 1)',*/}
-          {/*        border: '1px solid #6B7280',*/}
-          {/*        color: 'text.secondary',*/}
-          {/*        width: 34,*/}
-          {/*        height: 34,*/}
-          {/*        '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },*/}
-          {/*        '&:disabled': { color: 'rgba(255, 255, 255, 0.3)' },*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Remove fontSize="small" />*/}
-          {/*    </IconButton>*/}
-          {/*    <Box*/}
-          {/*      display="flex"*/}
-          {/*      alignItems="center"*/}
-          {/*      justifyContent="center"*/}
-          {/*      sx={{*/}
-          {/*        minWidth: 42,*/}
-          {/*        backgroundColor: 'background.paper',*/}
-          {/*        border: '1px solid #6B7280',*/}
-          {/*        borderLeft: 'none',*/}
-          {/*        borderRight: 'none',*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Typography variant="body2" fontWeight="bold" color="text.primary">*/}
-          {/*        {displayQuantity}*/}
-          {/*      </Typography>*/}
-          {/*    </Box>*/}
-          {/*    <IconButton*/}
-          {/*      onClick={(e) => handleQuantityChange(e, displayQuantity + 1)}*/}
-          {/*      disabled={buttonState.isDisabled}*/}
-          {/*      sx={{*/}
-          {/*        backgroundColor: 'primary.main',*/}
-          {/*        color: 'white',*/}
-          {/*        width: 34,*/}
-          {/*        height: 34,*/}
-          {/*        '&:hover': { backgroundColor: 'secondary.main' },*/}
-          {/*        '&:disabled': { backgroundColor: 'rgba(234, 181, 69, 0.5)' },*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <Add fontSize="small" />*/}
-          {/*    </IconButton>*/}
-          {/*  </ButtonGroup>*/}
-          {/*)}*/}
+          {buttonState.showQuantityControls && !product.isCustomizable && !buttonState.isDisabled && (
+            <ButtonGroup size="small" variant="outlined">
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity - 1)}
+                disabled={buttonState.isDisabled || !buttonState.canDecrease}
+                sx={{
+                  backgroundColor: 'rgba(58, 58, 55, 1)',
+                  border: '1px solid #6B7280',
+                  color: 'text.secondary',
+                  width: 34,
+                  height: 34,
+                  '&:hover': { backgroundColor: 'rgba(107, 114, 128, 0.1)' },
+                  '&:disabled': { color: 'rgba(255, 255, 255, 0.3)' },
+                }}
+              >
+                <Remove fontSize="small" />
+              </IconButton>
+              <Box
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                sx={{
+                  minWidth: 42,
+                  backgroundColor: 'background.paper',
+                  border: '1px solid #6B7280',
+                  borderLeft: 'none',
+                  borderRight: 'none',
+                }}
+              >
+                <Typography variant="body2" fontWeight="bold" color="text.primary">
+                  {displayQuantity}
+                </Typography>
+              </Box>
+              <IconButton
+                onClick={(e) => handleQuantityChange(e, displayQuantity + 1)}
+                disabled={buttonState.isDisabled}
+                sx={{
+                  backgroundColor: 'primary.main',
+                  color: 'white',
+                  width: 34,
+                  height: 34,
+                  '&:hover': { backgroundColor: 'secondary.main' },
+                  '&:disabled': { backgroundColor: 'rgba(234, 181, 69, 0.5)' },
+                }}
+              >
+                <Add fontSize="small" />
+              </IconButton>
+            </ButtonGroup>
+          )}
         </Box>
       </CardContent>
     </Card>

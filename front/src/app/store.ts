@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { api } from '../shared/api';
+import { api } from '../store/api';
 import { backendCartSlice } from '../entities/cart';
 import { cartApi } from '../shared/api/cart-api';
 import { wokApi } from '../shared/api/wok-api';

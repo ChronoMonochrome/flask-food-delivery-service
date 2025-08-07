@@ -49,26 +49,6 @@ export interface CartItem {
   customWok?: WokCustomization;
 }
 
-export interface DeliveryInfo {
-  address: string;
-  coordinates?: [number, number];
-  phone: string;
-  paymentMethod: 'cash' | 'card' | 'online';
-  comment: string;
-  apartment: string;
-  floor: string;
-}
-
-export interface Order {
-  id: string;
-  items: CartItem[];
-  total: number;
-  deliveryInfo: DeliveryInfo;
-  status: 'pending' | 'preparing' | 'delivering' | 'delivered' | 'cancelled';
-  createdAt: Date;
-  estimatedDelivery?: Date;
-}
-
 export interface WokBase {
   id: string;
   name: string;

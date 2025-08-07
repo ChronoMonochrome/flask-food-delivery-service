@@ -1,3 +1,4 @@
+// front/src/shared/api/cart-api.ts
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 const BASE_URL = import.meta.env.VITE_APP_API_URL;
@@ -68,7 +69,7 @@ export const cartApi = createApi({
       query: () => '/cart',
       providesTags: ['Cart'],
     }),
-    
+
     addToCart: builder.mutation<BackendCart, AddToCartRequest>({
       query: (body) => ({
         url: '/cart/add',
@@ -77,7 +78,7 @@ export const cartApi = createApi({
       }),
       invalidatesTags: ['Cart'],
     }),
-    
+
     updateCartItem: builder.mutation<BackendCart, UpdateCartItemRequest>({
       query: (body) => ({
         url: '/cart/update',
@@ -86,7 +87,7 @@ export const cartApi = createApi({
       }),
       invalidatesTags: ['Cart'],
     }),
-    
+
     removeFromCart: builder.mutation<BackendCart, RemoveFromCartRequest>({
       query: (body) => ({
         url: '/cart/remove',
@@ -95,12 +96,17 @@ export const cartApi = createApi({
       }),
       invalidatesTags: ['Cart'],
     }),
-    
+
     clearCart: builder.mutation<void, void>({
       query: () => ({
         url: '/cart/clear',
         method: 'DELETE',
       }),
+      // FIX: Add transformResponse to explicitly return undefined for a void response
+      // This helps RTK Query properly handle cases where the backend might send
+      // a 200 OK with an empty body, which could otherwise be interpreted
+      // in a way that causes the 'invalidatesTags' error.
+      transformResponse: () => undefined,
       invalidatesTags: ['Cart'],
     }),
   }),

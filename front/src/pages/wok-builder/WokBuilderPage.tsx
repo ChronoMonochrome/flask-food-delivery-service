@@ -27,7 +27,7 @@ import { ErrorMessage } from '../../shared/ui/ErrorMessage';
 
 type Step = 'base' | 'meat' | 'toppings' | 'sauces' | 'summary';
 
-const steps = ['Основа', 'Мясо', 'Начинки', 'Соусы'];
+const steps = ['Основа', 'Мясо', 'Начинки', 'Соусы', 'Готово'];
 
 export const WokBuilderPage: React.FC = () => {
   const dispatch = useDispatch();
