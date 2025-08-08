@@ -129,6 +129,7 @@ delivery_info_model_new = api.model('DeliveryInfoNew', {
     'latitude': fields.Float(required=True, description='Latitude for delivery'),
     'longitude': fields.Float(required=True, description='Longitude for delivery'),
     'postcode': fields.String(description='Postal code', allow_null=True), # Existing new field
+    'city_name': fields.String(description='City name from geocoding', allow_null=True), # NEW FIELD
     'street_name': fields.String(description='Street name from geocoding', allow_null=True), # NEW FIELD
     'house_number': fields.String(description='House number from geocoding', allow_null=True) # NEW FIELD
 })
@@ -1145,7 +1146,11 @@ class OrderList(Resource):
                     'paymentMethod': delivery_info_obj.payment_method,
                     'comment': delivery_info_obj.comment,
                     'latitude': delivery_info_obj.latitude,
-                    'longitude': delivery_info_obj.longitude
+                    'longitude': delivery_info_obj.longitude,
+                    'postcode': delivery_info_obj.postcode,
+                    'city_name': delivery_info_obj.city_name,
+                    'street_name': delivery_info_obj.street_name,
+                    'house_number': delivery_info_obj.house_number
                 }, delivery_info_model_new)
 
 
