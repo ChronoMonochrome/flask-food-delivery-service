@@ -135,7 +135,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
         },
       }}
     >
-      {/* Контейнер изображения - адаптивный */}
+      {/* Контейнер изображения - адаптивный а */}
         <Box
             sx={{
                 position: 'relative',
