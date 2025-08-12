@@ -270,14 +270,19 @@ class Order(db.Model):
         return f"<Order {self.id}>"
 
 class OrderItem(db.Model):
-    __tablename__ = 'order_item' # Explicitly define table name
+    __tablename__ = 'order_item'
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     order_id = db.Column(db.String(36), db.ForeignKey('order.id'), nullable=False)
-    product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=False) # Links to Product.id
+    product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=True) # Changed to nullable=True for custom wok items
     quantity = db.Column(db.Integer, nullable=False)
 
-    # Store IDs of selected addons/recommendations as JSON arrays
-    selected_addons_ids = db.Column(JSON, nullable=True, default=[]) # Default to empty list
-    selected_recommendation_ids = db.Column(JSON, nullable=True, default=[]) # Default to empty list
+    # Store a list of dictionaries with addon/recommendation ID and quantity
+    selected_addons_data = db.Column(JSON, nullable=True, default=[]) 
+    selected_recommendation_data = db.Column(JSON, nullable=True, default=[])
+
+    # New field for custom wok data
+    custom_wok_data = db.Column(JSON, nullable=True)
+    custom_price = db.Column(db.Numeric(10, 2), nullable=True)
+    custom_name = db.Column(db.String(255), nullable=True)
 
     product = db.relationship('Product') # Link to the actual product
