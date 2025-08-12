@@ -82,6 +82,19 @@ recommendation_model = api.model('Recommendation', {
     'image': fields.String(description='Recommendation image URL', allow_null=True)
 })
 
+
+# New models for selected addons/recommendations with quantity
+selected_addon_with_quantity_model = api.model('SelectedAddonWithQuantity', {
+    'addon': fields.Nested(addon_model, description='Addon details'),
+    'quantity': fields.Integer(required=True, description='Quantity of this selected addon')
+})
+
+selected_recommendation_with_quantity_model = api.model('SelectedRecommendationWithQuantity', {
+    'recommendation': fields.Nested(recommendation_model, description='Recommendation details'),
+    'quantity': fields.Integer(required=True, description='Quantity of this selected recommendation')
+})
+
+
 nutrition_model = api.model('Nutrition', {
     'calories': fields.Float(description='Energy in kcal', allow_null=False, default=0.0),
     'carbs': fields.Float(description='Carbohydrates in grams', allow_null=False, default=0.0),
