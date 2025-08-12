@@ -633,35 +633,37 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
             continue
 
         iiko_modifiers = []
-        # Fetch addons using the IDs stored in `selected_addons_ids`
-        for addon_id in item.selected_addons_ids:
-            addon = Addon.query.get(addon_id) # Query Addon object
+        # Fetch addons using the IDs and quantities stored in `selected_addons_data`
+        for addon_data in item.selected_addons_data:
+            addon = Addon.query.get(addon_data['id']) # Query Addon object by ID
             if addon:
-                item_unit_price_for_iiko += Decimal(str(addon.price)) # Add addon price to unit price
+                addon_quantity = addon_data['quantity'] # Get specific quantity for this addon
+                item_unit_price_for_iiko += Decimal(str(addon.price)) * addon_quantity # Add addon price multiplied by its quantity
                 iiko_modifiers.append({
-                    "productId": addon.iiko_addon_id, # This field is for IIKO's specific product ID for the addon
+                    "productId": addon.iiko_addon_id,
                     "type": "Product",
-                    "amount": item.quantity, # Modifier amount should reflect the quantity of the parent item
+                    "amount": addon_quantity,  # Corrected: Use the specific addon quantity
                     "name": addon.name,
-                    "price": float(addon.price) # Price of the modifier itself
+                    "price": float(addon.price) # Price of the modifier itself (per unit)
                 })
             else:
-                current_app.logger.warning(f"Addon with ID {addon_id} not found for order item {item.id}.")
+                current_app.logger.warning(f"Addon with ID {addon_data['id']} not found for order item {item.id}.")
 
-        # Fetch recommendations using the IDs stored in `selected_recommendation_ids`
-        for rec_id in item.selected_recommendation_ids:
-            recommendation = Recommendation.query.get(rec_id) # Query Recommendation object
+        # Fetch recommendations using the IDs and quantities stored in `selected_recommendation_data`
+        for rec_data in item.selected_recommendation_data:
+            recommendation = Recommendation.query.get(rec_data['id']) # Query Recommendation object by ID
             if recommendation and recommendation.price:
-                item_unit_price_for_iiko += Decimal(str(recommendation.price)) # Add recommendation price to unit price
+                rec_quantity = rec_data['quantity'] # Get specific quantity for this recommendation
+                item_unit_price_for_iiko += Decimal(str(recommendation.price)) * rec_quantity # Add recommendation price multiplied by its quantity
                 iiko_modifiers.append({
                     "productId": recommendation.iiko_recommendation_id,
                     "type": "Product",
-                    "amount": item.quantity, # Assuming recommendation amount reflects parent item quantity
+                    "amount": rec_quantity,  # Corrected: Use the specific recommendation quantity
                     "name": recommendation.name,
-                    "price": float(recommendation.price)
+                    "price": float(recommendation.price) # Price of the modifier itself (per unit)
                 })
             else:
-                current_app.logger.warning(f"Recommendation with ID {rec_id} not found for order item {item.id}.")
+                current_app.logger.warning(f"Recommendation with ID {rec_data['id']} not found for order item {item.id}.")
 
         iiko_order_items.append({
             "type": "Product",
@@ -669,7 +671,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
             "productCode": product_id_for_iiko, # Often same as productId for simple products
             "name": product_name,
             "amount": item.quantity,
-            "price": float(item_unit_price_for_iiko), # Unit price of the item including its selected modifiers
+            "price": float(item_unit_price_for_iiko), # Unit price of the item including its selected modifiers (total for one parent item)
             "modifiers": iiko_modifiers,
             "comboId": None,
             "positionId": str(uuid.uuid4()) # Unique for each position in IIKO
@@ -1259,26 +1261,37 @@ class OrderList(Resource):
                 item_price += Decimal(str(product.price))
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
+                product_name = cart_item.custom_name if cart_item.custom_name else "Custom Wok" # Ensure custom_name is passed
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue
 
+            addon_list_for_order = []
             for cart_addon in cart_item.selected_addons:
                 addon = cart_addon.addon
                 if addon:
-                    item_price += Decimal(str(addon.price)) * cart_addon.quantity
+                    addon_quantity = cart_addon.quantity # Grab the quantity from the cart item
+                    item_price += Decimal(str(addon.price)) * addon_quantity
+                    addon_list_for_order.append({"id": addon.id, "quantity": addon_quantity})
+
+            rec_list_for_order = []
             for cart_rec in cart_item.selected_recommendations:
                 recommendation = cart_rec.recommendation
                 if recommendation:
-                    item_price += Decimal(str(recommendation.price))
+                    rec_quantity = cart_rec.quantity # Get quantity from the cart item
+                    item_price += Decimal(str(recommendation.price)) * rec_quantity
+                    rec_list_for_order.append({"id": recommendation.id, "quantity": rec_quantity})
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
             
             order_items_to_add.append(OrderItem(
                 product=product,
                 quantity=cart_item.quantity,
-                selected_addons_ids=[ca.addon.id for ca in cart_item.selected_addons if ca.addon],
-                selected_recommendation_ids=[cr.recommendation.id for cr in cart_item.selected_recommendations if cr.recommendation]
+                selected_addons_data=addon_list_for_order, # New attribute
+                selected_recommendation_data=rec_list_for_order, # New attribute
+                custom_wok_data=cart_item.custom_wok_data, # Pass custom wok data
+                custom_price=cart_item.custom_price, # Pass custom price
+                custom_name=cart_item.custom_name # Pass custom name
             ))
 
         if calculated_total < free_delivery_threshold:
@@ -2477,6 +2490,8 @@ class PaymentCallback(Resource):
 
 
             # Load the order with its delivery_info and product for OrderItems.
+            # No change needed here for addons/recommendations as they are now parsed from JSON fields
+            # within _send_order_to_iiko_internal
             order = db.session.query(Order).filter_by(id=order_id).options(
                 joinedload(Order.delivery_info),
                 joinedload(Order.items).joinedload(OrderItem.product)
@@ -2511,7 +2526,7 @@ class PaymentCallback(Resource):
                             iiko_token,
                             'online', # For successful Yookassa payment, it's always online
                             str(order.delivery_info.street_name), # NEW: Pass street_name from DB
-                            order.delivery_info.postcode,       # NEW: Pass postcode from DB
+                            order.delivery_info.postcode,         # NEW: Pass postcode from DB
                             order.delivery_info.house_number, # NEW: Pass house_number from DB
                             str(order.delivery_info.city_name),
                             get_delivery_area_by_point(Point(order.delivery_info.longitude, order.delivery_info.latitude)),
