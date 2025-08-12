@@ -747,7 +747,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
     iiko_order_uuid = integer_to_uuid_like_string(order.id)
 
     iiko_order_data_for_payload = {
-        "id": iiko_order_uuid, # Ensure UUID is string
+        #"id": iiko_order_uuid, # don't send ID to IIKO
         "externalNumber": f"WEB-{str(order.id)}",
         "orderServiceType": "DeliveryByCourier",
         "phone": order.delivery_info.phone,
