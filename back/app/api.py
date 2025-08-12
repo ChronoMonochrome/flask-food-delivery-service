@@ -148,10 +148,13 @@ delivery_info_model_new = api.model('DeliveryInfoNew', {
 })
 
 order_item_model = api.model('OrderItem', {
-    'product': fields.Nested(product_model, description='Product details'),
+    'product': fields.Nested(product_model, description='Product details', allow_null=True),
     'quantity': fields.Integer(required=True, description='Quantity of the product'),
-    'selectedAddons': fields.List(fields.Nested(addon_model), description='Selected addons for this product item', default=[]),
-    'selectedRecommendations': fields.List(fields.Nested(recommendation_model), description='Selected recommendations for this product item', default=[])
+    'selectedAddons': fields.List(fields.Nested(selected_addon_with_quantity_model), description='Selected addons for this product item', default=[]), # Updated to use new model
+    'selectedRecommendations': fields.List(fields.Nested(selected_recommendation_with_quantity_model), description='Selected recommendations for this product item', default=[]), # Updated to use new model
+    'customWokData': fields.Raw(attribute='custom_wok_data', description='Custom Wok data if applicable', allow_null=True),
+    'customPrice': fields.Float(attribute='custom_price', description='Custom price for wok if applicable', allow_null=True),
+    'customName': fields.String(attribute='custom_name', description='Custom name for wok if applicable', allow_null=True),
 })
 
 order_model = api.model('Order', {
