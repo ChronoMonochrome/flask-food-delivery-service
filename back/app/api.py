@@ -1082,16 +1082,9 @@ class OrderList(Resource):
 
         # Retrieve orders for the given telegram_user_id and display_status=True
         # We fetch them first to serialize them before updating their display_status
-        orders_to_display = Order.query.filter_by(user_id=user_id).options(
+        orders_to_display = Order.query.filter_by(user_id=user_id, display_status=True).options(
             joinedload(Order.items)
-            .joinedload(OrderItem.product)
-            .joinedload(Product.available_addons)
-            .joinedload(ProductAddon.addon), 
-            joinedload(Order.items)
-            .joinedload(OrderItem.product)
-            .joinedload(Product.recommendations)
-            .joinedload(ProductRecommendation.recommendation), 
-            joinedload(Order.delivery_info) 
+            .joinedload(OrderItem.product) # Load the main product for the order item
         ).all()
 
         serialized_orders = []
@@ -1099,38 +1092,68 @@ class OrderList(Resource):
             items_data = []
             for item in order.items:
                 product_obj = item.product
+                
+                # Handle custom wok items where product_obj might be None
+                if product_obj is None and item.custom_wok_data:
+                    marshaled_product_in_order_item = None # No product to marshal for custom wok
+                else:
+                    # Marshal product details
+                    product_marshaled_data = {
+                        'id': str(product_obj.id),
+                        'name': product_obj.name,
+                        'description': product_obj.description,
+                        'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
+                        'image': product_obj.image,
+                        'categoryId': str(product_obj.main_category_id),  
+                        'iikoCategoryId': str(product_obj.categoryId),  
+                        'nutrition': product_obj.nutrition,  
+                        'ingredients': product_obj.ingredients,  
+                        'availableAddons': [api.marshal(pa.addon, addon_model) for pa in product_obj.available_addons if pa.addon],
+                        'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in product_obj.recommendations if pr.recommendation],
+                        'isCustomizable': product_obj.is_customizable
+                    }
+                    marshaled_product_in_order_item = api.marshal(product_marshaled_data, product_model)
 
-                fetched_addons = []
-                if item.selected_addons_ids:
-                    addons_from_db = Addon.query.filter(Addon.id.in_(item.selected_addons_ids)).all()
-                    fetched_addons = [api.marshal(addon, addon_model) for addon in addons_from_db]
+                fetched_addons_with_quantity = []
+                if item.selected_addons_data:
+                    # Extract IDs to query addons efficiently in a single batch
+                    addon_ids = [data['id'] for data in item.selected_addons_data]
+                    if addon_ids:
+                        addons_from_db = Addon.query.filter(Addon.id.in_(tuple(addon_ids))).all()
+                        addon_map = {addon.id: addon for addon in addons_from_db} # Map for quick lookup
+                        
+                        for addon_data in item.selected_addons_data:
+                            addon_obj = addon_map.get(addon_data['id'])
+                            if addon_obj:
+                                fetched_addons_with_quantity.append(api.marshal({
+                                    'addon': addon_obj,
+                                    'quantity': addon_data['quantity']
+                                }, selected_addon_with_quantity_model))
 
-                fetched_recommendations = []
-                if item.selected_recommendation_ids:
-                    recs_from_db = Recommendation.query.filter(Recommendation.id.in_(item.selected_recommendation_ids)).all()
-                    fetched_recommendations = [api.marshal(rec, recommendation_model) for rec in recs_from_db]
+                fetched_recommendations_with_quantity = []
+                if item.selected_recommendation_data:
+                    # Extract IDs to query recommendations efficiently in a single batch
+                    rec_ids = [data['id'] for data in item.selected_recommendation_data]
+                    if rec_ids:
+                        recs_from_db = Recommendation.query.filter(Recommendation.id.in_(tuple(rec_ids))).all()
+                        rec_map = {rec.id: rec for rec in recs_from_db} # Map for quick lookup
 
-                product_marshaled = {
-                    'id': str(product_obj.id),
-                    'name': product_obj.name,
-                    'description': product_obj.description,
-                    'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
-                    'image': product_obj.image,
-                    'categoryId': str(product_obj.main_category_id), 
-                    'iikoCategoryId': str(product_obj.categoryId), 
-                    'nutrition': product_obj.nutrition, 
-                    'ingredients': product_obj.ingredients, 
-                    'availableAddons': [api.marshal(pa.addon, addon_model) for pa in product_obj.available_addons if pa.addon],
-                    'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in product_obj.recommendations if pr.recommendation],
-                    'isCustomizable': product_obj.is_customizable
-                }
-                marshaled_product_in_order_item = api.marshal(product_marshaled, product_model)
+                        for rec_data in item.selected_recommendation_data:
+                            rec_obj = rec_map.get(rec_data['id'])
+                            if rec_obj:
+                                fetched_recommendations_with_quantity.append(api.marshal({
+                                    'recommendation': rec_obj,
+                                    'quantity': rec_data['quantity']
+                                }, selected_recommendation_with_quantity_model))
 
                 items_data.append({
                     'product': marshaled_product_in_order_item,
                     'quantity': item.quantity,
-                    'selectedAddons': fetched_addons,
-                    'selectedRecommendations': fetched_recommendations
+                    'selectedAddons': fetched_addons_with_quantity,
+                    'selectedRecommendations': fetched_recommendations_with_quantity,
+                    'customWokData': item.custom_wok_data,
+                    'customPrice': float(item.custom_price) if item.custom_price is not None else None,
+                    'customName': item.custom_name,
                 })
 
             delivery_info_obj = order.delivery_info
@@ -1148,19 +1171,22 @@ class OrderList(Resource):
                     'postcode': delivery_info_obj.postcode,
                     'city_name': delivery_info_obj.city_name,
                     'street_name': delivery_info_obj.street_name,
-                    'house_number': delivery_info_obj.house_number
+                    'house_number': delivery_info_obj.house_number,
+                    'delivery_price': float(delivery_info_obj.delivery_price) if delivery_info_obj.delivery_price is not None else None,
                 }, delivery_info_model_new)
 
 
             serialized_orders.append({
                 'id': str(order.id),
-                'userId': order.user_id,
+                'userId': order.user_id, # Changed 'telegramUserId' to 'userId' for consistency with model
                 'items': items_data,
                 'total': float(order.total) if isinstance(order.total, Decimal) else order.total,
-                'deliveryInfo': delivery_info_for_response, 
+                'deliveryInfo': delivery_info_for_response,  
                 'status': order.status,
                 'createdAt': order.created_at.isoformat(),
                 'estimatedDelivery': order.estimated_delivery.isoformat() if order.estimated_delivery else None,
+                'paymentUrl': order.confirmation_url, # Mapped to paymentUrl
+                'yookassaPaymentId': order.yookassa_payment_id, # Mapped to yookassaPaymentId
                 'displayStatus': order.display_status
             })
         
@@ -1170,7 +1196,7 @@ class OrderList(Resource):
             # We do this after retrieving them to ensure the current request returns the 'True' ones.
             # If you want it to return 'False' immediately, this update should happen before fetching.
             # However, typically, you'd show them and then hide them for subsequent fetches.
-            Order.query.filter_by(user_id=user_id).update({"display_status": False})
+            db.session.query(Order).filter_by(user_id=user_id, display_status=True).update({"display_status": False})
             db.session.commit()
             current_app.logger.info(f"All orders for Telegram user {user_id} set to display_status=False after retrieval.")
         except Exception as e:
