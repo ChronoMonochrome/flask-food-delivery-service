@@ -219,11 +219,11 @@ class CartRecommendation(db.Model):
 
 # --- New: DeliveryInfo Model ---
 class DeliveryInfo(db.Model):
-    __tablename__ = 'delivery_info'
+    __tablename__ = 'delivery_info_new'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     # One-to-one relationship with Order:
-    order_id = db.Column(db.String(36), db.ForeignKey('order.id'), unique=True, nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('order_new.id'), unique=True, nullable=False)
 
     address = db.Column(db.String(255), nullable=False)
     apartment = db.Column(db.String(50), nullable=True)
@@ -242,11 +242,10 @@ class DeliveryInfo(db.Model):
     def __repr__(self):
         return f"<DeliveryInfo {self.id} for Order {self.order_id}>"
 
-
 class Order(db.Model):
-    __tablename__ = 'order'
+    __tablename__ = 'order_new'
 
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.String(100), nullable=False) # New field for Telegram User ID
     total = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(50), nullable=False, default='pending')
@@ -259,20 +258,20 @@ class Order(db.Model):
     confirmation_url = db.Column(db.String(500), nullable=True) # URL для перенаправления пользователя для оплаты
 
     # Relationship to OrderItem (one-to-many)
-    items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
+    items = db.relationship('OrderItem', backref='order_new', lazy=True, cascade="all, delete-orphan")
     
     # Relationship to DeliveryInfo (one-to-one)
     # `uselist=False` indicates a one-to-one relationship
     # `cascade="all, delete-orphan"` ensures DeliveryInfo is managed with the Order
-    delivery_info = db.relationship('DeliveryInfo', backref='order', uselist=False, lazy=True, cascade="all, delete-orphan")
+    delivery_info = db.relationship('DeliveryInfo', backref='order_new', uselist=False, lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Order {self.id}>"
 
 class OrderItem(db.Model):
-    __tablename__ = 'order_item'
+    __tablename__ = 'order_new_item'
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    order_id = db.Column(db.String(36), db.ForeignKey('order.id'), nullable=False)
+    order_new_id = db.Column(db.Integer, db.ForeignKey('order_new.id'), nullable=False)
     product_id = db.Column(db.String(36), db.ForeignKey('product.id'), nullable=True) # Changed to nullable=True for custom wok items
     quantity = db.Column(db.Integer, nullable=False)
 

@@ -585,6 +585,15 @@ def _get_iiko_essential_data(iiko_token: str, client_payment_method: str, client
         "selected_street_id": selected_street_id,
         "selected_street_name": selected_street_name
     }
+    
+def integer_to_uuid_like_string(integer_id):
+    """
+    Converts an integer ID into a deterministic UUID-like string.
+    
+    Example: integer_id = 2 -> "00000000-0000-0000-0000-000000000002"
+    """
+    hex_id = f'{integer_id:032x}' # Format as a 32-digit hex string
+    return f"{hex_id[:8]}-{hex_id[8:12]}-{hex_id[12:16]}-{hex_id[16:20]}-{hex_id[20:]}"
 
 def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_method: str,
                                  client_street_name: str, nominatim_postcode: str, nominatim_house_number: str,
@@ -735,9 +744,10 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         else: # If no house number from Nominatim, just use the apartment as house
             iiko_house_final = f"кв. {client_apartment_part_for_display}"
 
+    iiko_order_uuid = integer_to_uuid_like_string(order.id)
 
     iiko_order_data_for_payload = {
-        "id": str(order.id), # Ensure UUID is string
+        "id": iiko_order_uuid, # Ensure UUID is string
         "externalNumber": f"WEB-{str(order.id)}",
         "orderServiceType": "DeliveryByCourier",
         "phone": order.delivery_info.phone,
@@ -777,7 +787,7 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
         "completeBefore": (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
     }
 
-    current_app.logger.info(f"Sending order {order.id} to IIKO with payload (excluding full items for brevity): "
+    current_app.logger.info(f"Sending order {iiko_order_uuid} to IIKO with payload (excluding full items for brevity): "
                             f"Org: {organization_id}, TermGroup: {terminal_group_id}, "
                             f"Phone: {iiko_order_data_for_payload['phone']}, "
                             f"Address: {iiko_order_data_for_payload['deliveryPoint']['address']['street']['name']}, "
@@ -1238,9 +1248,8 @@ class OrderList(Resource):
             api.abort(400, "Latitude and Longitude are required for delivery.")
 
         point = Point(longitude, latitude)
-
         delivery_area_number = get_delivery_area_by_point(point)
-        
+
         if delivery_area_number is None:
             current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside a valid delivery area.")
             api.abort(404, "The provided coordinates are outside our valid delivery areas.")
@@ -1256,14 +1265,13 @@ class OrderList(Resource):
 
         delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
         free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
-        
         delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         nominatim_response = get_address_from_coordinates(latitude, longitude)
         if not nominatim_response:
             current_app.logger.error(f"Could not get address details from Nominatim for coordinates: {latitude}, {longitude}")
             api.abort(500, "Could not determine detailed address from provided coordinates.")
-            
+        
         street_name_from_coords = nominatim_response.get('address', {}).get('road') or ""
         nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
         nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
@@ -1279,7 +1287,6 @@ class OrderList(Resource):
 
         delivery_cost = Decimal('0.00')
         calculated_total = Decimal('0.00')
-        order_items_to_add = []
 
         cart_with_items = db.session.query(Cart).filter_by(user_id=user_id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
@@ -1291,6 +1298,34 @@ class OrderList(Resource):
             current_app.logger.error(f'Cart user_id={user_id} is empty or could not load cart items.')
             api.abort(400, "Cart is empty or could not load cart items.")
 
+        # Create the new Order and its relationships. This is the key change.
+        delivery_info_obj = DeliveryInfo(
+            address=data['address'],
+            apartment=data.get('apartment'),
+            floor=data.get('floor'),
+            phone=data['phone'] if not USING_MOCK else '+79999999999',
+            payment_method=data['paymentMethod'],
+            comment=data.get('comment') if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ.",
+            latitude=data['latitude'],
+            longitude=data['longitude'],
+            postcode=nominatim_postcode,
+            city_name=nominatim_city,
+            street_name=street_name_from_coords,
+            house_number=nominatim_house_number,
+            delivery_price=delivery_cost
+        )
+
+        new_order = Order(
+            user_id=user_id,
+            total=Decimal('0.00'),  # Initialize to 0, will be updated after calculating items
+            status='pending',
+            created_at=datetime.now(timezone.utc),
+            display_status=True,
+            delivery_info=delivery_info_obj,
+            items=[] # Start with an empty list for the relationship
+        )
+        db.session.add(new_order)
+        
         for cart_item in cart_with_items.items:
             item_price = Decimal('0.00')
             product = None
@@ -1303,7 +1338,6 @@ class OrderList(Resource):
                 item_price += Decimal(str(product.price))
             elif cart_item.custom_wok_data:
                 item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
-                product_name = cart_item.custom_name if cart_item.custom_name else "Custom Wok" # Ensure custom_name is passed
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue
@@ -1312,7 +1346,7 @@ class OrderList(Resource):
             for cart_addon in cart_item.selected_addons:
                 addon = cart_addon.addon
                 if addon:
-                    addon_quantity = cart_addon.quantity # Grab the quantity from the cart item
+                    addon_quantity = cart_addon.quantity
                     item_price += Decimal(str(addon.price)) * addon_quantity
                     addon_list_for_order.append({"id": addon.id, "quantity": addon_quantity})
 
@@ -1320,63 +1354,34 @@ class OrderList(Resource):
             for cart_rec in cart_item.selected_recommendations:
                 recommendation = cart_rec.recommendation
                 if recommendation:
-                    rec_quantity = cart_rec.quantity # Get quantity from the cart item
+                    rec_quantity = cart_rec.quantity
                     item_price += Decimal(str(recommendation.price)) * rec_quantity
                     rec_list_for_order.append({"id": recommendation.id, "quantity": rec_quantity})
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
             
-            order_items_to_add.append(OrderItem(
+            # Create OrderItem and append to the relationship
+            new_order.items.append(OrderItem(
                 product=product,
                 quantity=cart_item.quantity,
-                selected_addons_data=addon_list_for_order, # New attribute
-                selected_recommendation_data=rec_list_for_order, # New attribute
-                custom_wok_data=cart_item.custom_wok_data, # Pass custom wok data
-                custom_price=cart_item.custom_price, # Pass custom price
-                custom_name=cart_item.custom_name # Pass custom name
+                selected_addons_data=addon_list_for_order,
+                selected_recommendation_data=rec_list_for_order,
+                custom_wok_data=cart_item.custom_wok_data,
+                custom_price=cart_item.custom_price,
+                custom_name=cart_item.custom_name
             ))
 
+        # Finalize calculations and update the new_order object
         if calculated_total < free_delivery_threshold:
             delivery_cost = delivery_price_base
-            
-        final_total = calculated_total + delivery_cost
+        new_order.total = calculated_total + delivery_cost
+        new_order.delivery_info.delivery_price = delivery_cost
+        
         is_delivery_free = (delivery_cost == 0)
-        current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, delivery cost: {delivery_cost}, final total: {final_total}")
+        current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, delivery cost: {delivery_cost}, final total: {new_order.total}")
 
-        phone = data['phone'] if not USING_MOCK else '+79999999999'
-        comment = data.get('comment') if not USING_MOCK else "ТЕСТОВЫЙ ЗАКАЗ. НЕ ОБРАБАТЫВАТЬ."
-
-        delivery_info_obj = DeliveryInfo(
-            address=data['address'],
-            apartment=data.get('apartment'),
-            floor=data.get('floor'),
-            phone=phone,
-            payment_method=data['paymentMethod'],
-            comment=comment,
-            latitude=data['latitude'],
-            longitude=data['longitude'],
-            postcode=nominatim_postcode,
-            city_name=nominatim_city,  # Corrected
-            street_name=street_name_from_coords, # Corrected
-            house_number=nominatim_house_number,
-            delivery_price=delivery_cost
-        )
-
-        new_order = Order(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            total=final_total,
-            status='pending',
-            created_at=datetime.now(timezone.utc),
-            display_status=True,
-            delivery_info=delivery_info_obj
-        )
-        db.session.add(new_order)
+        # Now, you can safely flush the session to get the new_order.id
         db.session.flush()
-
-        for item in order_items_to_add:
-            item.order_id = new_order.id
-            db.session.add(item)
             
         iiko_token = iiko_service.get_iiko_token()
         if not iiko_token:
