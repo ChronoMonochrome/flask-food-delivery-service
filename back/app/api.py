@@ -634,10 +634,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
 
         iiko_modifiers = []
         # Fetch addons using the IDs stored in `selected_addons_ids`
-        # Query Addon object
         for addon_id in item.selected_addons_ids:
-            addon = Addon(addon_id, f"Addon {addon_id}", 10.0, f"iiko_addon_{addon_id}") # Dummy Addon
-            # addon = Addon.query.get(addon_id)
+            addon = Addon.query.get(addon_id) # Query Addon object
             if addon:
                 item_unit_price_for_iiko += Decimal(str(addon.price)) # Add addon price to unit price
                 iiko_modifiers.append({
@@ -651,10 +649,8 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
                 current_app.logger.warning(f"Addon with ID {addon_id} not found for order item {item.id}.")
 
         # Fetch recommendations using the IDs stored in `selected_recommendation_ids`
-        # Query Recommendation object
         for rec_id in item.selected_recommendation_ids:
-            recommendation = Recommendation(rec_id, f"Rec {rec_id}", 5.0, f"iiko_rec_{rec_id}") # Dummy Rec
-            # recommendation = Recommendation.query.get(rec_id)
+            recommendation = Recommendation.query.get(rec_id) # Query Recommendation object
             if recommendation and recommendation.price:
                 item_unit_price_for_iiko += Decimal(str(recommendation.price)) # Add recommendation price to unit price
                 iiko_modifiers.append({
