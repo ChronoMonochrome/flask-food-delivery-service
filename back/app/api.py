@@ -1095,7 +1095,7 @@ class OrderList(Resource):
 
         # Retrieve orders for the given telegram_user_id and display_status=True
         # We fetch them first to serialize them before updating their display_status
-        orders_to_display = Order.query.filter_by(user_id=user_id, display_status=True).options(
+        orders_to_display = Order.query.filter_by(user_id=user_id).options(
             joinedload(Order.items)
             .joinedload(OrderItem.product) # Load the main product for the order item
         ).all()
