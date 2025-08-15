@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import { useDispatch } from 'react-redux';
 import {
   Box,
@@ -23,6 +23,8 @@ import {
 } from '@mui/icons-material';
 import { navigationActions } from '../../features/navigation';
 import { BottomNav } from '../../widgets/bottom-nav/BottomNav';
+import {useGetOrdersQuery} from "../../shared/api/orderApi.ts";
+
 
 // Mock data для заказов
 const mockOrders = [
@@ -103,22 +105,30 @@ const getStatusText = (status: string) => {
   }
 };
 
-const formatDate = (date: Date) => {
-  return date.toLocaleDateString('ru-RU', {
+const formatDate = (date: string | Date) => {
+  const d = date instanceof Date ? date : new Date(date)
+  return d.toLocaleDateString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
-  });
-};
+  })
+}
 
 export const MyOrdersPage: React.FC = () => {
   const dispatch = useDispatch();
 
+  const { data, error, isLoading } = useGetOrdersQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  })
+
+  console.log(12331231231,data)
+
   const handleBack = () => {
     dispatch(navigationActions.navigateToPage('home'));
   };
+
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', pb: 10 }}>
@@ -135,42 +145,50 @@ export const MyOrdersPage: React.FC = () => {
 
       <Container maxWidth="md" sx={{ py: 3 }}>
         <Stack spacing={2}>
-          {mockOrders.map((order) => (
-            <Card key={order.id} sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
+          {data?.map((order) => (
+            <Card key={order?.id} sx={{ backgroundColor: 'background.paper', border: '1px solid #4B5563' }}>
               <CardContent>
                 <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                   <Box display="flex" alignItems="center" gap={1}>
-                    {getStatusIcon(order.status)}
+                    {getStatusIcon(order?.status)}
                     <Typography variant="h6" fontWeight="bold" color="text.primary">
-                      Заказ #{order.id}
+                      Заказ #{order?.id}
                     </Typography>
                   </Box>
                   <Typography variant="body2" color="text.secondary">
-                    {formatDate(order.createdAt)}
+                    {formatDate(order?.createdAt)}
                   </Typography>
                 </Box>
 
                 <Box mb={3}>
-                  <Box display="flex" justifyContent="space-between" mb={1}>
-                    <Typography variant="body2" color="text.secondary">Статус:</Typography>
-                    <Typography variant="body2" fontWeight="medium" color="text.primary">
-                      {getStatusText(order.status)}
-                    </Typography>
-                  </Box>
-                  
-                  {order.estimatedDelivery && order.status === 'delivering' && (
-                    <Box display="flex" justifyContent="space-between" mb={1}>
-                      <Typography variant="body2" color="text.secondary">Ожидаемое время:</Typography>
-                      <Typography variant="body2" fontWeight="medium" color="primary.main">
-                        {formatDate(order.estimatedDelivery)}
-                      </Typography>
-                    </Box>
-                  )}
-                  
+                {/*  <Box display="flex" justifyContent="space-between" mb={1}>*/}
+                {/*    <Typography variant="body2" color="text.secondary">Статус:</Typography>*/}
+                {/*    <Typography variant="body2" fontWeight="medium" color="text.primary">*/}
+                {/*      {getStatusText(order.status)}*/}
+                {/*    </Typography>*/}
+                {/*  </Box>*/}
+
+                  {/*{order.estimatedDelivery && order.status === 'delivering' && (*/}
+                  {/*  <Box display="flex" justifyContent="space-between" mb={1}>*/}
+                  {/*    <Typography variant="body2" color="text.secondary">Ожидаемое время:</Typography>*/}
+                  {/*    <Typography variant="body2" fontWeight="medium" color="primary.main">*/}
+                  {/*      {formatDate(order.estimatedDelivery)}*/}
+                  {/*    </Typography>*/}
+                  {/*  </Box>*/}
+                  {/*)}*/}
+
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2" color="text.secondary">Адрес:</Typography>
                     <Typography variant="body2" fontWeight="medium" color="text.primary" sx={{ textAlign: 'right', flex: 1, ml: 1 }}>
-                      {order.deliveryInfo.address}
+                      {[
+                        order?.deliveryInfo?.city_name && `г. ${order.deliveryInfo.city_name}`,
+                        order?.deliveryInfo?.street_name && `ул. ${order.deliveryInfo.street_name}`,
+                        order?.deliveryInfo?.house_number && `д. ${order.deliveryInfo.house_number}`,
+                        order?.deliveryInfo?.apartment && `кв. ${order.deliveryInfo.apartment}`
+                      ]
+                          .filter(Boolean) // убираем пустые
+                          .join(', ')}
+                      {/*{ order?.deliveryInfo?.address}*/}
                     </Typography>
                   </Box>
                 </Box>
@@ -180,37 +198,44 @@ export const MyOrdersPage: React.FC = () => {
                     Состав заказа:
                   </Typography>
                   <Stack spacing={1}>
-                    {order.items.map((item, index) => (
+                    {order?.items?.map((item, index) => (
                       <Box key={index}>
                         <Box display="flex" justifyContent="space-between">
                           <Typography variant="body2" color="text.secondary">
-                            {item.product.name} × {item.quantity}
+                            {item?.product?.name} × {item.quantity}
                           </Typography>
                           <Typography variant="body2" fontWeight="medium" color="text.primary">
-                            ₽{((item.product.price + 
-                              item.selectedAddons.reduce((sum, addon) => sum + addon.price, 0) +
-                              item.selectedRecommendations.reduce((sum, rec) => sum + rec.price, 0)
-                            ) * item.quantity).toLocaleString()}
+                            {(
+                                item?.product?.price +
+                                item?.selectedAddons?.reduce(
+                                    (sum, addon) => sum + (addon?.addon?.price || 0) * (addon?.quantity || 0),
+                                    0
+                                )
+                            ).toLocaleString('ru-RU')} ₽
                           </Typography>
                         </Box>
-                        {item.selectedAddons.length > 0 && (
-                          <Typography variant="caption" color="primary.main" sx={{ ml: 1 }}>
-                            + {item.selectedAddons.map(addon => addon.name).join(', ')}
-                          </Typography>
-                        )}
-                        {item.selectedRecommendations.length > 0 && (
-                          <Typography variant="caption" color="success.main" sx={{ ml: 1, display: 'block' }}>
-                            + {item.selectedRecommendations.map(rec => rec.name).join(', ')}
-                          </Typography>
+                        {item?.selectedAddons?.length > 0 && (
+                        <Box sx={{ ml: 1 }}>
+                          {item?.selectedAddons?.map((addon, i) => (
+                              <Typography
+                                  key={i}
+                                  variant="caption"
+                                  color="primary.main"
+                                  display="block"
+                              >
+                                + {addon.addon.name} × {addon.quantity}
+                              </Typography>
+                          ))}
+                        </Box>
                         )}
                       </Box>
                     ))}
                   </Stack>
-                  
+
                   <Box sx={{ borderTop: '1px solid #4B5563', pt: 1, mt: 2 }}>
                     <Box display="flex" justifyContent="space-between">
                       <Typography variant="h6" fontWeight="bold" color="text.primary">Итого:</Typography>
-                      <Typography variant="h6" fontWeight="bold" color="primary.main">₽{order.total.toLocaleString()}</Typography>
+                      <Typography variant="h6" fontWeight="bold" color="primary.main">₽{order?.total?.toLocaleString()}</Typography>
                     </Box>
                   </Box>
                 </Box>

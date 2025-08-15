@@ -34,7 +34,7 @@ export const CategorySlider: React.FC<CategorySliderProps> = ({
           <Chip
             key={category.id}
             label={
-              <Box display="flex" flexDirection="column" alignItems="center" py={0.5}>
+              <Box  display="flex" flexDirection="column" alignItems="center" py={0.5}>
                 <Typography 
                   variant="h6" 
                   component="div" 
@@ -54,7 +54,10 @@ export const CategorySlider: React.FC<CategorySliderProps> = ({
                     textAlign: 'center', 
                     lineHeight: 1.1,
                     fontWeight: selectedCategory === category.id ? 600 : 400,
-                    transition: 'font-weight 0.2s ease'
+                    transition: 'font-weight 0.2s ease',
+                      display: "inline-block", /* чтобы span мог переноситься */
+                      whiteSpace: "normal",   /* разрешить перенос */
+                      wordBreak: "break-word",
                   }}
                 >
                   {category.name}
@@ -64,8 +67,10 @@ export const CategorySlider: React.FC<CategorySliderProps> = ({
             onClick={() => onCategorySelect(category.id)}
             variant={selectedCategory === category.id ? 'filled' : 'outlined'}
             sx={{
-              minWidth: 70,
+             width: 80,
+                minWidth: 80,
               height: 80,
+                p: 0.5,
               borderRadius: 1.5, // Уменьшенные скругления
               border: selectedCategory === category.id ? 'none' : '1px solid #4B5563',
               backgroundColor: selectedCategory === category.id 

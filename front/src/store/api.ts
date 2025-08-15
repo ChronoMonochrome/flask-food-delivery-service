@@ -5,7 +5,7 @@ import { ApiCategory, ApiProduct, GetProductsRequest } from '../types/api';
 // Keep Order for the GET /orders/:id/status endpoint.
 import { Order } from '../types';
 
-const BASE_URL = '/api';
+const BASE_URL = import.meta.env.VITE_APP_API_URL;
 
 // Define the precise payload structure the backend expects for POST /api/orders
 // This corresponds to your backend's request_order_payload_model

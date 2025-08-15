@@ -264,7 +264,8 @@ export const CartPage: React.FC = () => {
                             sx={{
                               minWidth: 60,
                               backgroundColor: 'background.paper',
-                              border: '1px solid #6B7280',
+                              borderRadius: "10px",
+                              mx: 1
                             }}
                         >
                           <Typography variant="h6" fontWeight="bold" color="text.primary">

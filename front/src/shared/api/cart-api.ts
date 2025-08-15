@@ -59,7 +59,7 @@ export const cartApi = createApi({
   baseQuery: fetchBaseQuery({
     baseUrl: BASE_URL,
     prepareHeaders: (headers) => {
-      let telegramUserId = ''
+      let telegramUserId = '123'
 
       if (
           window.Telegram &&

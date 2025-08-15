@@ -116,7 +116,7 @@ export const WokBuilderPage: React.FC = () => {
 
       const customProduct = {
         ...selectedProduct,
-        name: `WOK ${selectedBase.name}`,
+        name: `Собери свою коробочку`,
         description: `${selectedBase.name} с ${[...selectedMeats, ...selectedToppings, ...selectedSauces].map(item => item.name.toLowerCase()).join(', ')}`,
         price: getTotalPrice(),
         recommendations: selectedProduct.recommendations || []
