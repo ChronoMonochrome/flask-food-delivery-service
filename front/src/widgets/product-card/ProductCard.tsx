@@ -140,7 +140,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             sx={{
                 position: 'relative',
                 width: '100%',
-                height: { xs: 200, sm: 180 },
+                height: "180px",
                 overflow: 'hidden',
                 backgroundColor: '#374151',
             }}
@@ -162,7 +162,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             {/* Main image */}
             <CardMedia
                 component="img"
-                image={product.image}
+                image={product.image || '/img.png'}
                 alt={product.name || 'Товар'}
                 sx={{
                     position: 'relative',

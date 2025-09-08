@@ -206,6 +206,7 @@ export const LeafletMapPicker: React.FC<LeafletMapPickerProps> = ({
             zoom={13}
             style={{ height: '100%', width: '100%' }}
             scrollWheelZoom={true}
+            attributionControl={false}
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -220,6 +221,16 @@ export const LeafletMapPicker: React.FC<LeafletMapPickerProps> = ({
             />
           </MapContainer>
         </Box>
+
+        <Typography
+            variant="caption"
+            color="text.secondary"
+            mt={1}
+            display="block"
+            align="right"
+        >
+          © OpenStreetMap contributors
+        </Typography>
         
         <Typography variant="caption" color="text.secondary" mt={1} display="block">
           Координаты: {selectedCoordinates[0].toFixed(6)}, {selectedCoordinates[1].toFixed(6)}

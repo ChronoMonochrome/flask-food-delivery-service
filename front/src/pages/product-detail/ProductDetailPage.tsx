@@ -164,7 +164,7 @@ export const ProductDetailPage: React.FC = () => {
       <Box position="relative">
         <Box
           component="img"
-          src={selectedProduct.image}
+          src={selectedProduct.image || '/img.png'}
           alt={selectedProduct.name}
           sx={{
             width: '100%',

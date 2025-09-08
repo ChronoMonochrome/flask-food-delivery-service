@@ -191,7 +191,7 @@ export const CartPage: React.FC = () => {
                     <Box display="flex" alignItems="center" gap={2}>
                       <Box
                           component="img"
-                          src={item.image || "https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200"}
+                          src={item.image || '/img.png'}
                           alt="Товар"
                           sx={{ width: 64, height: 64, borderRadius: 3, objectFit: 'cover' }}
                       />
@@ -326,7 +326,7 @@ export const CartPage: React.FC = () => {
                         <Box display="flex" alignItems="center" gap={2}>
                           <Box
                             component="img"
-                            src={recommendation.image}
+                            src={recommendation.image || '/img.png'}
                             alt={recommendation.name}
                             sx={{ width: 48, height: 48, borderRadius: 2, objectFit: 'cover' }}
                           />
