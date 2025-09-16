@@ -12,14 +12,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
         [
             InlineKeyboardButton(
-                text="Open My Web App",
+                text="Открыть приложение",
                 web_app=WebAppInfo(url=WEB_APP_URL)
             )
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Welcome! Click the button below to open my web app:",
+        'Добро пожаловать в кафе "Мандарин"!\nНажмите на кнопку, чтобы открыть приложение',
         reply_markup=reply_markup
     )
 
