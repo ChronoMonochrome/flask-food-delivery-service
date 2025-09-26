@@ -40,22 +40,37 @@ export const HomePage: React.FC = () => {
   const categories = apiCategories ? apiCategories.map(mapApiCategoryToCategory) : [];
   let products = apiProducts ? apiProducts.map(mapApiProductToProduct) : [];
 
+
+
   // Добавляем конструктор WOK для категории WOK
   if (selectedCategory === 'f7ec3fe3-4cea-4ee1-9b9b-cb98463355c7') {
-    // Создаем товар-конструктор на основе данных с бэкенда
+    // id продукта, который надо удалить
+    const removeId = '859b7336-83a8-4fa0-80c9-62681ffeb8e4';
+
+    // находим продукт
+    const removedProduct = products.find((p) => p.id === removeId);
+
+    // фильтруем массив, убираем найденный продукт
+    products = products.filter((p) => p.id !== removeId);
+
+    // создаём товар-конструктор
     const wokBuilderProduct = {
       id: 'wok-builder',
       name: 'Собери свою коробочку',
-      description: 'Создай свой уникальный WOK! Выбери основу, добавь мясо и начинки по вкусу',
+      description:
+          'Создай свой уникальный WOK! Выбери основу, добавь мясо и начинки по вкусу',
       price: 210, // Базовая цена, будет пересчитана в конструкторе
-      image: 'https://images.pexels.com/photos/1640774/pexels-photo-1640774.jpeg?auto=compress&cs=tinysrgb&w=400',
+      image:
+          removedProduct?.image ??
+          '/img.png',
       categoryId: selectedCategory,
       weight: 330,
-      nutrition: { calories: 250, protein: 8, fat: 5, carbs: 45 },
       ingredients: ['основа', 'овощи', 'соус'],
       isCustomizable: true,
-      recommendations: []
+      recommendations: [],
     };
+
+    // вставляем конструктор в начало
     products = [wokBuilderProduct, ...products];
   }
 
@@ -135,7 +150,11 @@ export const HomePage: React.FC = () => {
               </Typography>
             </Box>
           </Box>
-          <IconButton 
+          <IconButton
+              component="a"
+              href="https://t.me/BlackheimS"
+              target="_blank"
+              rel="noopener noreferrer"
             sx={{ 
               backgroundColor: 'background.paper',
               border: '1px solid #4B5563',

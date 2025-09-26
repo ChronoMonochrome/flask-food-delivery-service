@@ -228,7 +228,7 @@ export const WokBuilderPage: React.FC = () => {
                     <CardContent sx={{ textAlign: 'center', p: 2 }}>
                       <Box
                         component="img"
-                        src={base.image || 'https://images.pexels.com/photos/723198/pexels-photo-723198.jpeg?auto=compress&cs=tinysrgb&w=200'}
+                        src={base.image || '/img.png'}
                         alt={base.name}
                         sx={{ width: '100%', height: 80, objectFit: 'cover', borderRadius: 2, mb: 1 }}
                       />
@@ -255,7 +255,7 @@ export const WokBuilderPage: React.FC = () => {
             <Typography variant="body1" color="text.secondary" mb={3}>
               Выбери мясо по своему вкусу (можно несколько видов)
             </Typography>
-            <Stack spacing={2}>
+            <Stack sx={{marginBottom:"120px"}} spacing={2}>
               {meats.map((meat) => (
                 <Button
                   key={meat.id}
@@ -278,7 +278,7 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={meat.image || 'https://images.pexels.com/photos/616354/pexels-photo-616354.jpeg?auto=compress&cs=tinysrgb&w=200'}
+                      src={meat.image || '/img.png'}
                       alt={meat.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
@@ -304,7 +304,7 @@ export const WokBuilderPage: React.FC = () => {
             <Typography variant="body1" color="text.secondary" mb={3}>
               Добавь начинку по вкусу
             </Typography>
-            <Stack spacing={2}>
+            <Stack sx={{marginBottom:"120px"}} spacing={2}>
               {toppings.map((topping) => (
                 <Button
                   key={topping.id}
@@ -327,7 +327,7 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={topping.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'}
+                      src={topping.image || '/img.png'}
                       alt={topping.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
@@ -353,7 +353,7 @@ export const WokBuilderPage: React.FC = () => {
             <Typography variant="body1" color="text.secondary" mb={3}>
               Выбери дополнительный соус
             </Typography>
-            <Stack spacing={2}>
+            <Stack sx={{marginBottom:"120px"}} spacing={2}>
               {sauces.map((sauce) => (
                 <Button
                   key={sauce.id}
@@ -376,7 +376,7 @@ export const WokBuilderPage: React.FC = () => {
                   <Box display="flex" alignItems="center" width="100%">
                     <Box
                       component="img"
-                      src={sauce.image || 'https://images.pexels.com/photos/1640777/pexels-photo-1640777.jpeg?auto=compress&cs=tinysrgb&w=200'}
+                      src={sauce.image || '/img.png'}
                       alt={sauce.name}
                       sx={{ width: 48, height: 48, borderRadius: 2, mr: 2, objectFit: 'cover' }}
                     />
