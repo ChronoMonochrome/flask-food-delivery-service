@@ -12,7 +12,7 @@ from app.models import (
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from app.iiko_service import USING_MOCK
-from sqlalchemy import distinct # Import distinct for unique values
+from sqlalchemy import desc, distinct
 from sqlalchemy.orm import joinedload
 from decimal import Decimal
 from datetime import datetime,  timedelta, timezone
@@ -1117,6 +1117,8 @@ class OrderList(Resource):
         orders_to_display = Order.query.filter_by(user_id=user_id).options(
             joinedload(Order.items)
             .joinedload(OrderItem.product) # Load the main product for the order item
+        ).order_by(
+            desc(Order.created_at) # ADDED: Sort by created_at in descending order
         ).all()
 
         serialized_orders = []
