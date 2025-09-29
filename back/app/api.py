@@ -7,12 +7,12 @@ from werkzeug.exceptions import HTTPException, InternalServerError
 from app.models import (
     db, DeliveryInfo, MainCategory, Category, Product, ProductAddon, Addon, Recommendation,
     Order, OrderItem, ProductRecommendation, Cart, CartItem, CartAddon, CartRecommendation,
-    WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID, WOK_BUILDER_PRODUCT_ID,
-    WOK_CATEGORY_NAME, DELIVERY_PRODUCT_IDS
+    DRINKS_CATEGORY_NAME, WokBase, WokMeat, WokTopping, WokSauce, WOK_PRODUCT_CONSTRUCTOR_ID,
+    WOK_BUILDER_PRODUCT_ID, WOK_CATEGORY_NAME, DELIVERY_PRODUCT_IDS
 )
 from app import iiko_service # Assuming this is your IIKO integration service
 from app.iiko_service import USING_MOCK
-from sqlalchemy import distinct # Import distinct for unique values
+from sqlalchemy import desc, distinct
 from sqlalchemy.orm import joinedload
 from decimal import Decimal
 from datetime import datetime,  timedelta, timezone
@@ -940,6 +940,7 @@ class CategoryList(Resource):
         """Get all categories"""
         # Define the prefixes to exclude
         EXCLUDED_PREFIXES = ["Доставка", "Рекомендованные", "Добавки", "Соусы"]
+        ADD_TO_THE_END_PREFIXES = [DRINKS_CATEGORY_NAME]
 
         # Fetch all categories from the database, ordered by display_order
         all_categories = MainCategory.query.order_by(MainCategory.display_order).all()
@@ -948,8 +949,13 @@ class CategoryList(Resource):
         filtered_categories = []
         for category in all_categories:
             # Check if the category name starts with any of the excluded prefixes
-            if not any(category.name.startswith(prefix) for prefix in EXCLUDED_PREFIXES):
+            if not any(category.name.startswith(prefix) for prefix in (EXCLUDED_PREFIXES + ADD_TO_THE_END_PREFIXES)):
                 filtered_categories.append(category)
+
+        for category in all_categories:
+            if any(category.name.startswith(prefix) for prefix in ADD_TO_THE_END_PREFIXES):
+                filtered_categories.append(category)
+
         marshaled_categories = api.marshal(filtered_categories, main_category_model)
         return jsonify(marshaled_categories)
 
@@ -1111,6 +1117,8 @@ class OrderList(Resource):
         orders_to_display = Order.query.filter_by(user_id=user_id).options(
             joinedload(Order.items)
             .joinedload(OrderItem.product) # Load the main product for the order item
+        ).order_by(
+            desc(Order.created_at) # ADDED: Sort by created_at in descending order
         ).all()
 
         serialized_orders = []
