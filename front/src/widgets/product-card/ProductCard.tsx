@@ -187,30 +187,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           }}
         >
           {!buttonState.showQuantityControls ? (
-            <IconButton
-              onClick={handleAddToCart}
-              disabled={buttonState.isDisabled}
-              sx={{
-                background: 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)',
-                color: 'white',
-                width: 40,
-                height: 40,
-                pointerEvents: 'auto',
-                zIndex: 10,
-                boxShadow: '0 4px 12px rgba(234, 181, 69, 0.4)',
-                '&:hover': {
-                  background: 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)',
-                  transform: 'scale(1.1)',
-                  boxShadow: '0 6px 16px rgba(234, 181, 69, 0.5)',
-                },
-                '&:disabled': {
-                  background: 'rgba(234, 181, 69, 0.5)',
-                  color: 'rgba(255, 255, 255, 0.5)',
-                },
-              }}
-            >
-              <Add fontSize="medium" />
-            </IconButton>
+              <Button
+                  onClick={handleAddToCart}
+                  disabled={buttonState.isDisabled}
+                  sx={{
+                      background: 'linear-gradient(45deg, #EAB545 30%, #F59E0B 90%)',
+                      color: 'white',
+                      px: 3, // горизонтальные отступы
+                      py: 1, // вертикальные отступы
+                      pointerEvents: 'auto',
+                      zIndex: 10,
+                      boxShadow: '0 4px 12px rgba(234, 181, 69, 0.4)',
+                      '&:hover': {
+                          background: 'linear-gradient(45deg, #F59E0B 30%, #EAB545 90%)',
+                          transform: 'scale(1.05)',
+                          boxShadow: '0 6px 16px rgba(234, 181, 69, 0.5)',
+                      },
+                      '&:disabled': {
+                          background: 'rgba(234, 181, 69, 0.5)',
+                          color: 'rgba(255, 255, 255, 0.5)',
+                      },
+                  }}
+              >
+                  В корзину
+              </Button>
           ) : (
             <Box
               sx={{
