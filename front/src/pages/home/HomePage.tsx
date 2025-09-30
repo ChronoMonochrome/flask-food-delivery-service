@@ -37,7 +37,11 @@ export const HomePage: React.FC = () => {
     { skip: !selectedCategory }
   );
 
-  const categories = apiCategories ? apiCategories.map(mapApiCategoryToCategory) : [];
+  const categories = apiCategories
+      ? apiCategories
+          .map(mapApiCategoryToCategory)
+          .filter((category) => category.id !== 'b438c4cc-bf6c-49ef-adc5-bf4974f15225')
+      : []
   let products = apiProducts ? apiProducts.map(mapApiProductToProduct) : [];
 
 
