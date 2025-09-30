@@ -158,6 +158,7 @@ export const CheckoutPage: React.FC = () => {
                       variant="outlined"
                       required
                       fullWidth
+                      onClick={() => setIsMapOpen(true)}
                       InputProps={{
                         readOnly: true,
                         sx: {
