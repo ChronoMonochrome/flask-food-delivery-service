@@ -949,11 +949,11 @@ class CategoryList(Resource):
         filtered_categories = []
         for category in all_categories:
             # Check if the category name starts with any of the excluded prefixes
-            if not any(category.name.startswith(prefix) for prefix in (EXCLUDED_PREFIXES + ADD_TO_THE_END_PREFIXES)):
+            if not any(category.name.find(prefix) >= 0 for prefix in (EXCLUDED_PREFIXES + ADD_TO_THE_END_PREFIXES)):
                 filtered_categories.append(category)
 
         for category in all_categories:
-            if any(category.name.startswith(prefix) for prefix in ADD_TO_THE_END_PREFIXES):
+            if any(category.name.find(prefix) >= 0 for prefix in ADD_TO_THE_END_PREFIXES):
                 filtered_categories.append(category)
 
         marshaled_categories = api.marshal(filtered_categories, main_category_model)
