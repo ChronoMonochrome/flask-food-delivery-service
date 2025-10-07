@@ -93,10 +93,7 @@ def get_main_category_name(original_category_name):
        "Пицца/Кальцоне" in original_category_name or \
        "Пицца/Чикаго" in original_category_name:
         return "Пицца"
-    if "Добавки/Мясо" in original_category_name or \
-       "Добавки/ Мясо" in original_category_name or \
-       "Добавки/Сыр" in original_category_name or \
-       "Добавки/Рыба и морепродукты" in original_category_name:
+    if "Добавки" in original_category_name:
         return "Добавки"
     if "Хачапури по-аджарски" in original_category_name:
         return "Хачапури"

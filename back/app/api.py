@@ -962,8 +962,7 @@ class CategoryList(Resource):
 import re
 from sqlalchemy import or_
 from collections import defaultdict
-# Define the categories that require manual addon construction
-MANUAL_ADDON_CATEGORIES = {"Паста", "Пицца"}
+
 ## /products Endpoint
 # ----------------------------------------------------------------------
 @api.route('/products')
@@ -989,11 +988,14 @@ class ProductList(Resource):
         products = query.all()
 
         # --- OPTIMIZATION: PRE-FETCH ALL POTENTIAL ADDON PRODUCTS ONCE ---
-        like_clauses = [Category.name.like(f"%{category_name}%Добавки%") for category_name in MANUAL_ADDON_CATEGORIES]
+        # FIX (List Unpacking): Convert list of tuples/rows to list of strings
+        main_category_names = [name for name, in db.session.query(MainCategory.name).all()]
+        like_clauses = [Category.name.like(f"%{category_name}%Добавки%") for category_name in main_category_names]
 
         target_category_ids = [
             str(c.id) for c in Category.query.filter(or_(*like_clauses)).all()
         ]
+        current_app.logger.info(f"target_category_ids = {target_category_ids}")
 
         addon_products_by_category = {}
         if target_category_ids:
@@ -1072,19 +1074,25 @@ class ProductList(Resource):
 
             # --- CUSTOM ADDON LOGIC (Fixed) ---
             # FIX 3: Change 'product.category.name' to 'product.original_category.name'
-            current_category_name = product.original_category.name if product.original_category else None
             # Use main_category for the top-level check
             category_name = product.original_category.name if product.original_category else None
-            #current_app.logger.info(f"any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES) = {any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES)}, category_name={category_name}")
 
-            if any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES):
+            # FIX (One-line and TypeError): Convert list of tuples/rows to list of strings
+            main_category_names = [name for name, in db.session.query(MainCategory.name).all()]
+
+            # The line being fixed from the prompt:
+            current_app.logger.info(f"any(cat in category_name for cat in main_category_names) = {any(cat in category_name for cat in main_category_names)}, category_name={category_name}")
+
+            if any(cat in category_name for cat in main_category_names):
                 # Get the pre-fetched list of addon products for this category
                 category_id = None
+                # FIX 4: Use product.main_category.name, as this is more likely the intended logic
                 category = Category.query.filter(Category.name.like(f"%{product.main_category.name}%Добавки%")).first()
+
                 if category:
-                    category_id = category.id
+                    category_id = str(category.id)
                 addon_prods = addon_products_by_category.get(category_id, [])
-                #current_app.logger.info(f"cat addon_products_by_category = {addon_products_by_category}, category_id={category_id}, addon_prods={addon_prods}")
+                current_app.logger.info(f"cat addon_products_by_category (lookup for {category_id}) -> {len(addon_prods)} products")
 
                 for addon_prod in addon_prods:
                     manual_addon = {
@@ -1166,23 +1174,32 @@ class ProductResource(Resource):
         # --- Custom Addon Logic (Fixed) ---
 
         category_name = product.original_category.name if product.original_category else None
-        #current_app.logger.info(f"any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES) = {any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES)}, category_name={category_name}")
 
-        if any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES):
+        # FIX (One-line and TypeError): Convert list of tuples/rows to list of strings
+        main_category_names = [name for name, in db.session.query(MainCategory.name).all()]
+
+        # The line being fixed from the prompt:
+        # current_app.logger.info(f"any(cat in category_name for cat in main_category_names) = {any(cat in category_name for cat in main_category_names)}, category_name={category_name}")
+
+        if any(cat in category_name for cat in main_category_names):
             try:
-                # Query for potential addon products
+                # FIX 7: Fix the or_ expression using list unpacking on db.session.query and use original_category.name for the like clause
                 addon_products = Product.query.options(
                     joinedload(Product.main_category),
                     # FIX 6: Eager load the original category for consistency
                     joinedload(Product.original_category)
                 ).filter(
-                    or_(Product.original_category.name.like(f"%{category_name}%Добавки%") for category_name in MANUAL_ADDON_CATEGORIES)
+                    or_(
+                        Product.original_category.name.like(f"%{name}%Добавки%")
+                        for name in main_category_names
+                    ),
+                    Product.is_hidden == False # Ensure we only fetch available addons
                 ).all()
                 #current_app.logger.info(f"addon_products = {addon_products}")
 
                 for addon_prod in addon_products:
-                    addon_category_name = addon_prod.category.name if addon_prod.category else None
-                    #current_app.logger.info(f"addon_category_name = {addon_category_name}, category_name = {category_name}")
+                    # addon_category_name = addon_prod.category.name if addon_prod.category else None # Removed old category ref
+                    # current_app.logger.info(f"addon_category_name = {addon_category_name}, category_name = {category_name}")
 
                     # Construct the addon dictionary from the matched product data
                     manual_addon = {
@@ -1224,6 +1241,7 @@ class ProductResource(Resource):
             'isCustomizable': product.is_customizable
         }
         return product_for_marshal
+
 
 ## Order Endpoints
 
