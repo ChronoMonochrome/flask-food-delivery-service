@@ -69,13 +69,28 @@ DESIRED_MAIN_CATEGORY_ORDER = [
 
 # Helper function to find the main category name
 def get_main_category_name(original_category_name):
+    # 1. Check for exact matches first using the consolidation map's prefixes
     for main_name, prefixes in CATEGORY_CONSOLIDATION_MAP.items():
         for prefix in prefixes:
-            if original_category_name.startswith(prefix):
+            # Change startswith to exact equality for most cases,
+            # as the current map lists them as exact names.
+            if original_category_name == prefix:
                 return main_name
-    if "Хачапури по-имеретински" in original_category_name:
+
+    # 2. Check for explicit subcategory overrides (these should take priority anyway)
+    # The order of these checks is crucial. More specific checks should come first.
+    # Note: Many of these explicit checks already handle the "subcategories" via string containment or startswith.
+
+    # Priority for 'Добавки' subcategories
+    if "Добавки" in original_category_name:
+        return "Добавки"
+
+    if "Хачапури по-имеретински" in original_category_name or \
+       "Хачапури по-аджарски" in original_category_name: # Combined the two 'Хачапури' checks
         return "Хачапури"
-    if "Суши и роллы/Гунканы" in original_category_name or \
+
+    if "Суши и роллы/" in original_category_name or \
+       "Суши и роллы/Гунканы" in original_category_name or \
        "Суши и роллы/Маки" in original_category_name or \
        "Суши и роллы/Серия \"Черный бархат\"" in original_category_name or \
        "Суши и роллы/Нигири" in original_category_name or \
@@ -87,19 +102,35 @@ def get_main_category_name(original_category_name):
        "Суши и роллы/Сеты" in original_category_name or \
        "Суши и роллы/Соевый соус, васаби, имбирь" in original_category_name:
         return "Суши и роллы"
-    if "Пицца/Римская" in original_category_name or \
+
+    if "Пицца/" in original_category_name or \
+       "Пицца/Римская" in original_category_name or \
        "Пицца/ Неаполитано" in original_category_name or \
        "Пицца/Классическая" in original_category_name or \
        "Пицца/Кальцоне" in original_category_name or \
        "Пицца/Чикаго" in original_category_name:
         return "Пицца"
-    if "Добавки/Мясо" in original_category_name or \
-       "Добавки/ Мясо" in original_category_name or \
-       "Добавки/Сыр" in original_category_name or \
-       "Добавки/Рыба и морепродукты" in original_category_name:
-        return "Добавки"
-    if "Хачапури по-аджарски" in original_category_name:
-        return "Хачапури"
+
+    # Since the "Добавки/" check is at the start of explicit checks,
+    # we can remove the previous explicit 'Добавки' checks for brevity
+
+    # 3. Fallback to startswith logic for safety, but this should be removed
+    # if you want strict mapping based on the map and explicit checks.
+    # If the original logic was *intended* to handle subcategories
+    # not explicitly listed, this is kept, but it is the source of the bug.
+    # A cleaner fix would be to ONLY rely on the exact matches from the map
+    # and the explicit '/' checks.
+
+    # Rerunning the startswith logic ONLY for cases where the map is meant
+    # to catch subcategories (e.g. if the original category has no '/').
+    # Given the description of the problem, we should generally AVOID startswith.
+
+    # If it was a problem with the original logic, it is better to remove this fallback.
+    # for main_name, prefixes in CATEGORY_CONSOLIDATION_MAP.items():
+    #     for prefix in prefixes:
+    #         if original_category_name.startswith(prefix):
+    #             return main_name
+
     return None
 
 def run_category_migration_logic(current_app_instance, current_db_instance):
