@@ -1081,7 +1081,7 @@ class ProductList(Resource):
             main_category_names = [name for name, in db.session.query(MainCategory.name).all()]
 
             # The line being fixed from the prompt:
-            current_app.logger.info(f"any(cat in category_name for cat in main_category_names) = {any(cat in category_name for cat in main_category_names)}, category_name={category_name}")
+            #current_app.logger.info(f"any(cat in category_name for cat in main_category_names) = {any(cat in category_name for cat in main_category_names)}, category_name={category_name}")
 
             if any(cat in category_name for cat in main_category_names):
                 # Get the pre-fetched list of addon products for this category
@@ -1092,7 +1092,7 @@ class ProductList(Resource):
                 if category:
                     category_id = str(category.id)
                 addon_prods = addon_products_by_category.get(category_id, [])
-                current_app.logger.info(f"cat addon_products_by_category (lookup for {category_id}) -> {len(addon_prods)} products")
+                #current_app.logger.info(f"cat addon_products_by_category (lookup for {category_id}) -> {len(addon_prods)} products")
 
                 for addon_prod in addon_prods:
                     manual_addon = {
