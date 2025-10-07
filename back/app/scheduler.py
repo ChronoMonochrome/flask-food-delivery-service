@@ -28,6 +28,7 @@ CATEGORY_CONSOLIDATION_MAP = {
     "Осетинские пироги": ["Осетинские пироги"],
     "Паста": ["Паста"],
     "Пицца": ["Пицца"],
+    "Рекомендованные": ["Рекомендованные"],
     "Рекомендованные (общие)": ["Рекомендованные (общие)"],
     "Рекомендованные (сиутативные)": ["Рекомендованные (сиутативные)"],
     "Рулетики": ["Рулетики"],
@@ -60,6 +61,7 @@ DESIRED_MAIN_CATEGORY_ORDER = [
     "Паста",
     "Соусы",
     "Горячие блюда",
+    "Рекомендованные",
     "Рекомендованные (общие)",
     "Рекомендованные (ситуативные)", # Ensure this matches the map and database name
     "Доставка"
@@ -92,6 +94,7 @@ def get_main_category_name(original_category_name):
        "Пицца/Чикаго" in original_category_name:
         return "Пицца"
     if "Добавки/Мясо" in original_category_name or \
+       "Добавки/ Мясо" in original_category_name or \
        "Добавки/Сыр" in original_category_name or \
        "Добавки/Рыба и морепродукты" in original_category_name:
         return "Добавки"

@@ -678,17 +678,34 @@ def _fetch_and_prepare_iiko_data():
 
 def _perform_initial_db_cleanup():
     """
-    Marks existing categories and products in the database as hidden
+    Deletes all existing categories and products from the database
     as a preliminary step for synchronization.
+
+    WARNING: This operation is destructive and permanently removes all
+    records from the Category and Product tables.
+
+    Args:
+        db (SQLAlchemy): The database object or session manager.
+        Category (Model): The SQLAlchemy Category model class.
+        Product (Model): The SQLAlchemy Product model class.
     """
     try:
-        db.session.query(Category).update({Category.is_hidden: True})
-        db.session.query(Product).update({Product.is_hidden: True})
+        # Perform permanent deletion for all records
+        # Note: Depending on your ORM setup, you might need to specify
+        # synchronize_session='fetch' or 'evaluate' for more complex relationships,
+        # but the default 'auto' is usually sufficient for simple blanket deletes.
+
+        # 1. Delete all Product records
+        db.session.query(Product).delete()
+
+        # 2. Delete all Category records
+        db.session.query(Category).delete()
+
         db.session.commit()
-        logger.info("Marked existing categories and products as hidden for initial cleanup.")
+        logger.info("Successfully deleted all existing categories and products for initial cleanup.")
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error during initial cleanup (setting is_hidden): {e}")
+        logger.error(f"FATAL ERROR during initial cleanup (permanent deletion): {e}")
 
 def _sync_categories(iiko_categories_raw):
     """

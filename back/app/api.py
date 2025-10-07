@@ -949,62 +949,101 @@ class CategoryList(Resource):
         filtered_categories = []
         for category in all_categories:
             # Check if the category name starts with any of the excluded prefixes
-            if not any(category.name.startswith(prefix) for prefix in (EXCLUDED_PREFIXES + ADD_TO_THE_END_PREFIXES)):
+            if not any(category.name.find(prefix) >= 0 for prefix in (EXCLUDED_PREFIXES + ADD_TO_THE_END_PREFIXES)):
                 filtered_categories.append(category)
 
         for category in all_categories:
-            if any(category.name.startswith(prefix) for prefix in ADD_TO_THE_END_PREFIXES):
+            if any(category.name.find(prefix) >= 0 for prefix in ADD_TO_THE_END_PREFIXES):
                 filtered_categories.append(category)
 
         marshaled_categories = api.marshal(filtered_categories, main_category_model)
         return jsonify(marshaled_categories)
 
-## Product Endpoints
+import re
+from sqlalchemy import or_
+from collections import defaultdict
+# Define the categories that require manual addon construction
+MANUAL_ADDON_CATEGORIES = {"Паста", "Пицца"}
+## /products Endpoint
+# ----------------------------------------------------------------------
 @api.route('/products')
 class ProductList(Resource):
+    # The @api.marshal_with is not used here because of the Wok reordering logic and manual marshal below
     @api.param('categoryId', 'Filter products by category ID')
     def get(self):
         """Get all products, optionally filtered by category"""
         category_id = api.parser().add_argument('categoryId', type=str, location='args').parse_args()['categoryId']
 
+        # 1. Eager load main_category and ORIGINAL category
         query = Product.query.filter_by(is_hidden=False).options(
+            # FIX 1: Change Product.category to Product.original_category
+            joinedload(Product.original_category),
+            joinedload(Product.main_category), # Eager load MainCategory
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
-        ).order_by(Product.categoryId) # Order by IIKO category
+        ).order_by(Product.categoryId)
 
         if category_id:
             query = query.filter_by(main_category_id=category_id)
 
         products = query.all()
-        
-        # --- NEW LOGIC FOR REORDERING WOK PRODUCTS ---
-        wok_category = MainCategory.query.filter_by(name=WOK_CATEGORY_NAME).first()
 
-        # Check if the requested category is the Wok category AND
-        # if the Wok category was actually found in the database
-        if wok_category and category_id == str(wok_category.id): # Ensure ID comparison is string to string
+        # --- OPTIMIZATION: PRE-FETCH ALL POTENTIAL ADDON PRODUCTS ONCE ---
+        like_clauses = [Category.name.like(f"%{category_name}%Добавки%") for category_name in MANUAL_ADDON_CATEGORIES]
+
+        target_category_ids = [
+            str(c.id) for c in Category.query.filter(or_(*like_clauses)).all()
+        ]
+
+        addon_products_by_category = {}
+        if target_category_ids:
+            # Fetch all non-hidden products from the target categories, ensuring original_category is loaded
+            all_potential_addons = Product.query.options(
+                # FIX 2: Change Product.category to Product.original_category
+                joinedload(Product.original_category)
+            ).filter(
+                Product.categoryId.in_(target_category_ids), # Use categoryId for original category lookup
+                Product.is_hidden == False
+            ).all()
+            current_app.logger.info(f"all_potential_addons = {all_potential_addons}")
+
+            # Group them by categoryId (the original IIKO category) for O(1) lookup inside the loop
+            addon_products_by_category = defaultdict(list)
+            for prod in all_potential_addons:
+                addon_products_by_category[str(prod.categoryId)].append(prod)
+
+        # --- WOK REORDERING LOGIC (Unchanged) ---
+        try:
+            wok_category = MainCategory.query.filter_by(name=WOK_CATEGORY_NAME).first()
+        except NameError:
+            wok_category = None
+            current_app.logger.error("WOK_CATEGORY_NAME is not defined, skipping Wok reordering.")
+
+        if wok_category and category_id == str(wok_category.id):
             wok_constructor_product = None
             other_products = []
 
-            # Separate the constructor product from others
             for product in products:
-                if str(product.id) == WOK_PRODUCT_CONSTRUCTOR_ID: # Ensure ID comparison is string to string
+                try:
+                    is_constructor = str(product.id) == WOK_PRODUCT_CONSTRUCTOR_ID
+                except NameError:
+                    is_constructor = False
+
+                if is_constructor:
                     wok_constructor_product = product
                 else:
                     other_products.append(product)
 
-            # Reconstruct the products list with the constructor first
             if wok_constructor_product:
                 products = [wok_constructor_product] + other_products
             else:
-                # If constructor product wasn't found, just use the original list (or other_products)
-                # This case might happen if the ID is wrong or product is hidden/deleted
-                current_app.logger.warning(f"Wok constructor product with ID {WOK_PRODUCT_CONSTRUCTOR_ID} not found in Wok category.")
-                products = other_products # Or just `products` if you want to keep original order if constructor is missing
+                current_app.logger.warning(f"Wok constructor product not found.")
+                products = other_products
+        # --- END WOK REORDERING LOGIC ---
 
-        # --- END NEW LOGIC ---
         marshaled_products = []
         for product in products:
+            # --- Standard Data Processing (Unchanged) ---
             nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
             for key in ["calories", "carbs", "fat", "proteins"]:
                 if key not in nutrition_data_for_marshal or nutrition_data_for_marshal[key] is None:
@@ -1025,41 +1064,83 @@ class ProductList(Resource):
                 for pr in product.recommendations if pr.recommendation
             ]
 
+            # Start with existing addons from the database relationship
             marshaled_available_addons = [
                 api.marshal(pa.addon, addon_model)
                 for pa in product.available_addons if pa.addon
             ]
 
+            # --- CUSTOM ADDON LOGIC (Fixed) ---
+            # FIX 3: Change 'product.category.name' to 'product.original_category.name'
+            current_category_name = product.original_category.name if product.original_category else None
+            # Use main_category for the top-level check
+            category_name = product.original_category.name if product.original_category else None
+            #current_app.logger.info(f"any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES) = {any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES)}, category_name={category_name}")
+
+            if any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES):
+                # Get the pre-fetched list of addon products for this category
+                category_id = None
+                category = Category.query.filter(Category.name.like(f"%{product.main_category.name}%Добавки%")).first()
+                if category:
+                    category_id = category.id
+                addon_prods = addon_products_by_category.get(category_id, [])
+                #current_app.logger.info(f"cat addon_products_by_category = {addon_products_by_category}, category_id={category_id}, addon_prods={addon_prods}")
+
+                for addon_prod in addon_prods:
+                    manual_addon = {
+                        'id': str(addon_prod.id),
+                        'group_name': 'Добавки',
+                        'name': addon_prod.name,
+                        'price': float(addon_prod.price) if isinstance(addon_prod.price, Decimal) else addon_prod.price,
+                        'image': addon_prod.image
+                    }
+
+                    marshaled_addon = api.marshal(manual_addon, addon_model)
+                    marshaled_available_addons.append(marshaled_addon)
+
+            # --- END CUSTOM ADDON LOGIC ---
+
+            # Assemble final product dictionary for marshalling
             product_for_marshal = {
                 'id': str(product.id),
                 'name': product.name,
                 'description': product.description,
                 'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
                 'image': product.image,
-                'categoryId': str(product.main_category_id), # This is now the MainCategory ID
+                'categoryId': str(product.main_category_id) if product.main_category_id else str(product.categoryId), # MainCategory ID
                 'iikoCategoryId': str(product.categoryId), # IIKO category id
                 'nutrition': nutrition_data_for_marshal,
                 'ingredients': cleaned_ingredients,
-                'availableAddons': marshaled_available_addons,
+                'availableAddons': marshaled_available_addons, # Contains both DB and manual addons
                 'recommendations': marshaled_recommendations,
-                'isCustomizable': product.is_customizable # Include new field
+                'isCustomizable': product.is_customizable
             }
+            # Final marshal using the defined model
             marshaled_products.append(api.marshal(product_for_marshal, product_model))
 
-        return jsonify(marshaled_products)
+        return marshaled_products
 
+## /products/<string:product_id> Endpoint
+# ----------------------------------------------------------------------
 @api.route('/products/<string:product_id>')
 class ProductResource(Resource):
     @api.marshal_with(product_model)
     def get(self, product_id):
         """Get a single product by ID"""
+        # Load the product and necessary relationships
         product = Product.query.options(
+            # FIX 5: Eager load the original category
+            joinedload(Product.original_category),
+            # Eager load the main category to check the name
+            joinedload(Product.main_category),
             joinedload(Product.available_addons).joinedload(ProductAddon.addon),
             joinedload(Product.recommendations).joinedload(ProductRecommendation.recommendation)
         ).get_or_404(product_id)
 
         if product.is_hidden:
             api.abort(404, "Product not found or is hidden.")
+
+        # --- Standard Data Processing for Marshalling (Unchanged) ---
 
         nutrition_data_for_marshal = product.nutrition if isinstance(product.nutrition, dict) else {}
         for key in ["calories", "carbs", "fat", "proteins"]:
@@ -1076,14 +1157,56 @@ class ProductResource(Resource):
             else:
                 current_app.logger.warning(f"Skipping malformed ingredient for product {product.id}: {ing!r}")
 
-        marshaled_recommendations = [
-            api.marshal(pr.recommendation, recommendation_model)
-            for pr in product.recommendations if pr.recommendation
-        ]
-
+        # Start with existing addons from the database relationship
         marshaled_available_addons = [
             api.marshal(pa.addon, addon_model)
             for pa in product.available_addons if pa.addon
+        ]
+
+        # --- Custom Addon Logic (Fixed) ---
+
+        category_name = product.original_category.name if product.original_category else None
+        #current_app.logger.info(f"any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES) = {any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES)}, category_name={category_name}")
+
+        if any(cat in category_name for cat in MANUAL_ADDON_CATEGORIES):
+            try:
+                # Query for potential addon products
+                addon_products = Product.query.options(
+                    joinedload(Product.main_category),
+                    # FIX 6: Eager load the original category for consistency
+                    joinedload(Product.original_category)
+                ).filter(
+                    or_(Product.original_category.name.like(f"%{category_name}%Добавки%") for category_name in MANUAL_ADDON_CATEGORIES)
+                ).all()
+                #current_app.logger.info(f"addon_products = {addon_products}")
+
+                for addon_prod in addon_products:
+                    addon_category_name = addon_prod.category.name if addon_prod.category else None
+                    #current_app.logger.info(f"addon_category_name = {addon_category_name}, category_name = {category_name}")
+
+                    # Construct the addon dictionary from the matched product data
+                    manual_addon = {
+                        'id': str(addon_prod.id),
+                        'group_name': 'Добавки',
+                        'name': addon_prod.name, # Name is extracted from the category path match
+                        # FIX: Robust Decimal to float conversion
+                        'price': float(addon_prod.price) if isinstance(addon_prod.price, Decimal) else addon_prod.price,
+                        'image': addon_prod.image
+                    }
+
+                    # Apply marshalling for consistency and append to the list
+                    marshaled_addon = api.marshal(manual_addon, addon_model)
+                    marshaled_available_addons.append(marshaled_addon)
+
+            except Exception as e:
+                # Log an error if the custom addon logic fails
+                current_app.logger.error(f"Error processing manual addons for product {product.id}: {e}")
+
+        # --- Continue Standard Marshalling (Unchanged) ---
+
+        marshaled_recommendations = [
+            api.marshal(pr.recommendation, recommendation_model)
+            for pr in product.recommendations if pr.recommendation
         ]
 
         product_for_marshal = {
@@ -1092,16 +1215,15 @@ class ProductResource(Resource):
             'description': product.description,
             'price': float(product.price) if isinstance(product.price, Decimal) else product.price,
             'image': product.image,
-            'categoryId': str(product.main_category_id),
+            'categoryId': str(product.main_category_id) if product.main_category_id else str(product.categoryId),
             'iikoCategoryId': str(product.categoryId),
             'nutrition': nutrition_data_for_marshal,
             'ingredients': cleaned_ingredients,
-            'availableAddons': marshaled_available_addons,
+            'availableAddons': marshaled_available_addons, # List now includes both DB and manual addons
             'recommendations': marshaled_recommendations,
-            'isCustomizable': product.is_customizable # Include new field
+            'isCustomizable': product.is_customizable
         }
         return product_for_marshal
-
 
 ## Order Endpoints
 
@@ -1687,16 +1809,16 @@ class AddToCartResource(Resource):
     @api.expect(add_to_cart_request)
     @api.marshal_with(cart_response_model, code=201)
     def post(self):
-        """Add an item to the cart or increment quantity if it exists."""
+        """Add an item to the cart or increment quantity if it exists, treating 'addons' as separate products."""
         user_id = get_telegram_user_id()
         current_app.logger.info(f"/cart/add user_id={user_id}")
         data = api.payload
-        
+
         product_id = data.get('productId')
         quantity_to_add = data.get('quantity', 1)
-        
+
         # Original addon/recommendation data from frontend
-        addons_data_from_frontend = data.get('addons', []) # [{'id': 'addon_id', 'quantity': 1}]
+        addons_data_from_frontend = data.get('addons', []) # [{'id': 'product_id', 'quantity': 1}]
         recommendation_ids_from_frontend = data.get('recommendations', [])
 
         custom_wok_data = data.get('customWok')
@@ -1707,134 +1829,171 @@ class AddToCartResource(Resource):
         current_app.logger.debug(f"Received add to cart request: {data}")
 
         cart = get_or_create_cart(user_id)
+        products_to_add = [] # List of (product_id, quantity, addons, recommendations, is_custom) tuples/dicts
 
-        product = None
-        # Handle the "wok-builder" special product ID
+        # --- WOK PROCESSING (remains separate/custom) ---
         if product_id == WOK_BUILDER_PRODUCT_ID:
             is_custom_item = True
-            # For a custom Wok, the product_id for the CartItem should be WOK_PRODUCT_CONSTRUCTOR_ID,
-            # as its details are in custom_wok_data.
-            product_id = WOK_PRODUCT_CONSTRUCTOR_ID 
+            main_product_id = WOK_PRODUCT_CONSTRUCTOR_ID
 
-            # --- Convert customWok components into the 'addons_data' format ---
+            # Wok component conversion (Unchanged)
             converted_wok_addons = []
-            
             if custom_wok_data:
-                # Add Wok Base as an addon
                 base_id = custom_wok_data.get('baseId')
-                if base_id:
-                    converted_wok_addons.append({'id': base_id, 'quantity': 1})
+                if base_id: converted_wok_addons.append({'id': base_id, 'quantity': 1})
+                for meat_id in custom_wok_data.get('meatIds', []): converted_wok_addons.append({'id': meat_id, 'quantity': 1})
+                for topping_id in custom_wok_data.get('toppingIds', []): converted_wok_addons.append({'id': topping_id, 'quantity': 1})
+                for sauce_id in custom_wok_data.get('sauceIds', []): converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
 
-                # Add Wok Meats as addons
-                for meat_id in custom_wok_data.get('meatIds', []):
-                    converted_wok_addons.append({'id': meat_id, 'quantity': 1})
-
-                # Add Wok Toppings as addons
-                for topping_id in custom_wok_data.get('toppingIds', []):
-                    converted_wok_addons.append({'id': topping_id, 'quantity': 1})
-
-                # Add Wok Sauces as addons
-                for sauce_id in custom_wok_data.get('sauceIds', []):
-                    converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
-            
-            # Combine frontend's addons with converted wok components
+            # For Wok, the 'addons' are still treated as linked components (CartAddons) of the main Wok item
             addons_to_process = addons_data_from_frontend + converted_wok_addons
             recommendation_ids_to_process = recommendation_ids_from_frontend
 
+            products_to_add.append({
+                'id': main_product_id,
+                'qty': quantity_to_add,
+                'is_custom': True,
+                'addons': addons_to_process,
+                'recs': recommendation_ids_to_process,
+                'custom_wok_data': custom_wok_data,
+                'custom_name': custom_name,
+                'custom_description': custom_description,
+                'custom_price': custom_price,
+                'image': None # Image will be set in item creation if needed
+            })
+
+        # --- REGULAR PRODUCT PROCESSING (Simplified) ---
         else:
-            # It's a regular product
-            product = Product.query.get(product_id)
-            if not product:
+            # 1. Add the main product
+            main_product = Product.query.get(product_id)
+            if not main_product:
                 api.abort(404, "Product not found.")
-            is_custom_item = False
-            addons_to_process = addons_data_from_frontend
-            recommendation_ids_to_process = recommendation_ids_from_frontend
 
-        existing_item = None
-        for item in cart.items:
-            # Check for existing regular product item with same addons/recs
-            if not is_custom_item and item.product_id == product_id:
-                current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
-                request_addons = sorted(addons_to_process, key=lambda x: x['id']) # Use processed addons
-                addons_match = (current_addons == request_addons)
+            products_to_add.append({
+                'id': product_id,
+                'qty': quantity_to_add,
+                'is_custom': False,
+                # For regular products, the addons/recs in the payload will be linked to the main item
+                'addons': addons_data_from_frontend,
+                'recs': recommendation_ids_from_frontend,
+                'image': main_product.image
+            })
 
-                current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
-                request_recs = sorted(recommendation_ids_to_process) # Use processed recommendations
-                recs_match = (current_recs == request_recs)
+            # 2. Add all "addons" from the request as separate products
+            # This handles the case where the frontend sends manual addon product IDs in the 'addons' list
+            for addon_data in addons_data_from_frontend:
+                addon_product_id = addon_data['id']
+                addon_quantity = addon_data.get('quantity', 1)
 
-                if addons_match and recs_match and item.custom_wok_data is None:
-                    existing_item = item
-                    break
-            # Check for existing custom Wok item with same custom_wok_data and other custom fields
-            elif is_custom_item and item.custom_wok_data is not None:
-                # Compare custom_wok_data directly
-                if item.custom_wok_data == custom_wok_data:
-                    # Also compare other custom fields for exact match for incrementing quantity
-                    if item.custom_name == custom_name and \
-                       item.custom_description == custom_description and \
-                       item.custom_price == (Decimal(str(custom_price)) if custom_price is not None else None):
+                addon_product = Product.query.get(addon_product_id)
+                if addon_product:
+                    # Add the manual addon product as a NEW CartItem, no addons/recs attached to it
+                    products_to_add.append({
+                        'id': addon_product_id,
+                        'qty': addon_quantity,
+                        'is_custom': False,
+                        'addons': [],
+                        'recs': [],
+                        'image': addon_product.image
+                    })
+                # Note: If the 'addon' is truly a CartAddon (e.g., a non-product add-on),
+                # this logic will fail to add it as a separate product. This logic assumes
+                # all IDs in the 'addons' array for non-Wok are intended to be Products.
+
+            # If the original request only contained products that are manual addons,
+            # and no true *linked* addons (from the DB), we're good.
+            # If the request contained BOTH linked DB addons and manual product addons,
+            # we must ensure only the DB addons are linked to the main product,
+            # and the product addons are new CartItems.
+
+            # Given the request is simplified to treat ALL 'addons' as new products,
+            # we need to ensure the main product's 'addons' list is clean for matching/creation.
+            # The list below will ensure NO 'CartAddon' is created for the main item.
+            products_to_add[0]['addons'] = [] # Clear linked addons for the main product
+
+        # --- ITEM MATCHING AND CREATION ---
+
+        # We process the list of all items to add (main product + manual addons)
+        for item_data in products_to_add:
+            item_product_id = item_data['id']
+            item_quantity = item_data['qty']
+            is_custom_item = item_data['is_custom']
+
+            # Initialize existing_item to None for each product we're processing
+            existing_item = None
+
+            # --- ITEM MATCHING LOGIC (Using simplified addon/rec data) ---
+            # We only match if the item is NOT a custom Wok (Wok should always be a new item unless components match)
+            if is_custom_item:
+                # Custom Wok Matching (Unchanged)
+                for item in cart.items:
+                    if item.custom_wok_data is not None:
+                        if item.custom_wok_data == item_data['custom_wok_data'] and \
+                           item.custom_name == item_data.get('custom_name') and \
+                           item.custom_description == item_data.get('custom_description') and \
+                           item.custom_price == (Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None):
+                            existing_item = item
+                            break
+
+            elif not item_data['addons'] and not item_data['recs']:
+                # For non-custom items with NO linked addons/recs (which covers the main item
+                # and all manually added addon products in this simplified logic)
+                for item in cart.items:
+                    if item.product_id == item_product_id and \
+                       item.custom_wok_data is None and \
+                       not item.selected_addons and \
+                       not item.selected_recommendations:
                         existing_item = item
                         break
 
-        if existing_item:
-            existing_item.quantity += quantity_to_add
-        else:
-            new_cart_item = CartItem(
-                cart_id=cart.id,
-                # product_id is None for custom Wok items, otherwise the actual product ID
-                product_id=product_id, 
-                quantity=quantity_to_add,
-                custom_wok_data=custom_wok_data if is_custom_item else None, # Store custom wok data only if it's a custom item
-                custom_name=custom_name if is_custom_item else None,
-                custom_description=custom_description if is_custom_item else None,
-                custom_price=Decimal(str(custom_price)) if is_custom_item and custom_price is not None else None,
-                custom_image=None if is_custom_item else (product.image if product else None)
-            )
-            db.session.add(new_cart_item)
-            db.session.flush() # Flush to get new_cart_item.id
+            # Note: Matching for regular products WITH linked addons/recs is removed
+            # because we decided to treat all 'addons' as separate products (which have no linked addons/recs).
 
-            # Process addons (now includes converted Wok components)
-            for addon_data in addons_to_process:
-                addon_obj = Addon.query.get(addon_data['id'])
-                # Also check Wok component tables if addon_obj is not found directly in Addon
-                # This depends on how you store IIKO IDs for Wok components.
-                # Assuming WokBase, WokMeat, WokTopping, WokSauce models also have a relationship
-                # to their respective Addon entry, or directly contain the addon's data.
-                # For simplicity, if these IDs are truly `addon_ids`, querying Addon table is correct.
-                
-                # If your Wok component IDs are *not* directly `addon.id`s
-                # then you'd need logic here like:
-                # wok_component = None
-                # if not addon_obj:
-                #     wok_component = WokBase.query.get(addon_data['id']) or \
-                #                     WokMeat.query.get(addon_data['id']) or \
-                #                     WokTopping.query.get(addon_data['id']) or \
-                #                     WokSauce.query.get(addon_data['id'])
-                # if wok_component:
-                #     # Create a dummy addon_obj or find a corresponding Addon
-                #     addon_obj = Addon.query.filter_by(name=wok_component.name).first() # Or by some other IIKO ID mapping
+            # --- ITEM CREATION/UPDATE LOGIC ---
+            if existing_item:
+                existing_item.quantity += item_quantity
+            else:
+                new_cart_item = CartItem(
+                    cart_id=cart.id,
+                    product_id=item_product_id,
+                    quantity=item_quantity,
 
-                if addon_obj:
-                    cart_addon = CartAddon(
-                        cart_item_id=new_cart_item.id,
-                        addon_id=addon_obj.id,
-                        quantity=addon_data.get('quantity', 1)
-                    )
-                    db.session.add(cart_addon)
-                else:
-                    current_app.logger.warning(f"Addon/Wok component with ID {addon_data['id']} not found.")
+                    # Custom fields are ONLY stored for Custom Wok
+                    custom_wok_data=item_data.get('custom_wok_data'),
+                    custom_name=item_data.get('custom_name'),
+                    custom_description=item_data.get('custom_description'),
+                    custom_price=Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None,
+                    custom_image=item_data.get('image')
+                )
+                db.session.add(new_cart_item)
+                db.session.flush() # Flush to get new_cart_item.id
 
-            # Process recommendations
-            for rec_id in recommendation_ids_to_process:
-                rec_obj = Recommendation.query.get(rec_id)
-                if rec_obj:
-                    cart_rec = CartRecommendation(
-                        cart_item_id=new_cart_item.id,
-                        recommendation_id=rec_obj.id
-                    )
-                    db.session.add(cart_rec)
-                else:
-                    current_app.logger.warning(f"Recommendation with ID {rec_id} not found.")
+                # Process linked addons/recommendations ONLY for the Wok item
+                if is_custom_item:
+                    # Process addons (Wok components)
+                    for addon_data in item_data['addons']:
+                        addon_obj = Addon.query.get(addon_data['id'])
+                        if addon_obj:
+                            cart_addon = CartAddon(
+                                cart_item_id=new_cart_item.id,
+                                addon_id=addon_obj.id,
+                                quantity=addon_data.get('quantity', 1)
+                            )
+                            db.session.add(cart_addon)
+                        else:
+                            current_app.logger.warning(f"Wok Component Addon with ID {addon_data['id']} not found.")
+
+                    # Process recommendations
+                    for rec_id in item_data['recs']:
+                        rec_obj = Recommendation.query.get(rec_id)
+                        if rec_obj:
+                            cart_rec = CartRecommendation(
+                                cart_item_id=new_cart_item.id,
+                                recommendation_id=rec_obj.id
+                            )
+                            db.session.add(cart_rec)
+                        else:
+                            current_app.logger.warning(f"Recommendation with ID {rec_id} not found.")
 
         db.session.commit()
         update_cart_total(cart)
