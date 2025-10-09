@@ -197,8 +197,6 @@ class CartItem(db.Model):
     # This structure mirrors the frontend's WokCustomization for simplicity of storage
     custom_wok_data = db.Column(JSON, nullable=True)
 
-    manual_addons_data = db.Column(db.JSON, default=[])
-
     # Relationships to Addons and Recommendations selected for *this specific cart item*
     # These are distinct from the Product's available_addons and recommendations
     selected_addons = db.relationship('CartAddon', backref='cart_item', lazy=True, cascade="all, delete-orphan")
