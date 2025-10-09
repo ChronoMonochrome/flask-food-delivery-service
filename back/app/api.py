@@ -1827,7 +1827,7 @@ class AddToCartResource(Resource):
     @api.expect(add_to_cart_request)
     @api.marshal_with(cart_response_model, code=201)
     def post(self):
-        """Add an item to the cart or increment quantity if it exists, treating 'addons' as separate products."""
+        """Add an item to the cart, separating 'addons' into linked CartAddons and new CartItems (Products)."""
         user_id = get_telegram_user_id()
         current_app.logger.info(f"/cart/add user_id={user_id}")
         data = api.payload
@@ -1835,8 +1835,7 @@ class AddToCartResource(Resource):
         product_id = data.get('productId')
         quantity_to_add = data.get('quantity', 1)
 
-        # Original addon/recommendation data from frontend
-        addons_data_from_frontend = data.get('addons', []) # [{'id': 'product_id', 'quantity': 1}]
+        addons_data_from_frontend = data.get('addons', []) # [{'id': 'addon_or_product_id', 'quantity': 1}]
         recommendation_ids_from_frontend = data.get('recommendations', [])
 
         custom_wok_data = data.get('customWok')
@@ -1847,9 +1846,12 @@ class AddToCartResource(Resource):
         current_app.logger.debug(f"Received add to cart request: {data}")
 
         cart = get_or_create_cart(user_id)
-        products_to_add = [] # List of (product_id, quantity, addons, recommendations, is_custom) tuples/dicts
 
-        # --- WOK PROCESSING (remains separate/custom) ---
+        # List of items to eventually create/update in the cart.
+        # This will hold the main product and any manual addon products.
+        products_to_add = []
+
+        # --- WOK PROCESSING ---
         if product_id == WOK_BUILDER_PRODUCT_ID:
             is_custom_item = True
             main_product_id = WOK_PRODUCT_CONSTRUCTOR_ID
@@ -1857,115 +1859,119 @@ class AddToCartResource(Resource):
             # Wok component conversion (Unchanged)
             converted_wok_addons = []
             if custom_wok_data:
+                # Logic to convert Wok components to addon format
                 base_id = custom_wok_data.get('baseId')
                 if base_id: converted_wok_addons.append({'id': base_id, 'quantity': 1})
                 for meat_id in custom_wok_data.get('meatIds', []): converted_wok_addons.append({'id': meat_id, 'quantity': 1})
                 for topping_id in custom_wok_data.get('toppingIds', []): converted_wok_addons.append({'id': topping_id, 'quantity': 1})
                 for sauce_id in custom_wok_data.get('sauceIds', []): converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
 
-            # For Wok, the 'addons' are still treated as linked components (CartAddons) of the main Wok item
+            # For Wok, all 'addons' are treated as linked components (CartAddons)
             addons_to_process = addons_data_from_frontend + converted_wok_addons
-            recommendation_ids_to_process = recommendation_ids_from_frontend
 
             products_to_add.append({
                 'id': main_product_id,
                 'qty': quantity_to_add,
                 'is_custom': True,
-                'addons': addons_to_process,
-                'recs': recommendation_ids_to_process,
+                'linked_addons': addons_to_process, # Linked for Wok
+                'recs': recommendation_ids_from_frontend,
                 'custom_wok_data': custom_wok_data,
                 'custom_name': custom_name,
                 'custom_description': custom_description,
                 'custom_price': custom_price,
-                'image': None # Image will be set in item creation if needed
+                'image': None
             })
 
-        # --- REGULAR PRODUCT PROCESSING (Simplified) ---
+        # --- REGULAR PRODUCT PROCESSING (Main Logic Fix) ---
         else:
-            # 1. Add the main product
             main_product = Product.query.get(product_id)
             if not main_product:
-                api.abort(404, "Product not found.")
+                api.abort(404, "Main Product not found.")
 
+            # Step 1: Separate the IDs in the 'addons' payload
+            linked_addons_to_create = []       # For CartAddon (real Addon model)
+            separate_products_from_addons = [] # For new CartItem (Product model)
+
+            for addon_data in addons_data_from_frontend:
+                item_id = addon_data['id']
+                item_quantity = addon_data.get('quantity', 1)
+
+                # Try to find it as a real Addon first (linked to the main product)
+                addon_obj = Addon.query.get(item_id)
+                if addon_obj:
+                    linked_addons_to_create.append(addon_data)
+                    current_app.logger.debug(f"ID {item_id} identified as linked Addon.")
+                    continue
+
+                # If not a real Addon, try to find it as a Product (separate item)
+                product_obj = Product.query.get(item_id)
+                if product_obj:
+                    separate_products_from_addons.append({
+                        'id': item_id,
+                        'qty': item_quantity,
+                        'is_custom': False,
+                        'linked_addons': [], # Manual addon products do not have linked addons
+                        'recs': [],          # Manual addon products do not have linked recs
+                        'image': product_obj.image
+                    })
+                    current_app.logger.debug(f"ID {item_id} identified as separate Product.")
+                else:
+                    current_app.logger.warning(f"ID {item_id} in 'addons' payload not found as either Addon or Product. Skipping.")
+
+
+            # Step 2: Assemble the products_to_add list
+
+            # A. The Main Product (with its *only* linked addons/recs)
             products_to_add.append({
                 'id': product_id,
                 'qty': quantity_to_add,
                 'is_custom': False,
-                # For regular products, the addons/recs in the payload will be linked to the main item
-                'addons': addons_data_from_frontend,
+                'linked_addons': linked_addons_to_create,
                 'recs': recommendation_ids_from_frontend,
                 'image': main_product.image
             })
 
-            # 2. Add all "addons" from the request as separate products
-            # This handles the case where the frontend sends manual addon product IDs in the 'addons' list
-            for addon_data in addons_data_from_frontend:
-                addon_product_id = addon_data['id']
-                addon_quantity = addon_data.get('quantity', 1)
+            # B. The separate Manual Addon Products
+            products_to_add.extend(separate_products_from_addons)
 
-                addon_product = Product.query.get(addon_product_id)
-                if addon_product:
-                    # Add the manual addon product as a NEW CartItem, no addons/recs attached to it
-                    products_to_add.append({
-                        'id': addon_product_id,
-                        'qty': addon_quantity,
-                        'is_custom': False,
-                        'addons': [],
-                        'recs': [],
-                        'image': addon_product.image
-                    })
-                # Note: If the 'addon' is truly a CartAddon (e.g., a non-product add-on),
-                # this logic will fail to add it as a separate product. This logic assumes
-                # all IDs in the 'addons' array for non-Wok are intended to be Products.
+        # --- ITEM MATCHING AND CREATION LOOP ---
 
-            # If the original request only contained products that are manual addons,
-            # and no true *linked* addons (from the DB), we're good.
-            # If the request contained BOTH linked DB addons and manual product addons,
-            # we must ensure only the DB addons are linked to the main product,
-            # and the product addons are new CartItems.
-
-            # Given the request is simplified to treat ALL 'addons' as new products,
-            # we need to ensure the main product's 'addons' list is clean for matching/creation.
-            # The list below will ensure NO 'CartAddon' is created for the main item.
-            products_to_add[0]['addons'] = [] # Clear linked addons for the main product
-
-        # --- ITEM MATCHING AND CREATION ---
-
-        # We process the list of all items to add (main product + manual addons)
         for item_data in products_to_add:
             item_product_id = item_data['id']
             item_quantity = item_data['qty']
             is_custom_item = item_data['is_custom']
 
-            # Initialize existing_item to None for each product we're processing
             existing_item = None
 
-            # --- ITEM MATCHING LOGIC (Using simplified addon/rec data) ---
-            # We only match if the item is NOT a custom Wok (Wok should always be a new item unless components match)
-            if is_custom_item:
-                # Custom Wok Matching (Unchanged)
-                for item in cart.items:
-                    if item.custom_wok_data is not None:
-                        if item.custom_wok_data == item_data['custom_wok_data'] and \
-                           item.custom_name == item_data.get('custom_name') and \
-                           item.custom_description == item_data.get('custom_description') and \
-                           item.custom_price == (Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None):
-                            existing_item = item
-                            break
+            # Standardizing linked data for comparison
+            request_addons = sorted([{'id': a['id'], 'quantity': a.get('quantity', 1)} for a in item_data.get('linked_addons', [])], key=lambda x: x['id'])
+            request_recs = sorted(item_data.get('recs', []))
 
-            elif not item_data['addons'] and not item_data['recs']:
-                # For non-custom items with NO linked addons/recs (which covers the main item
-                # and all manually added addon products in this simplified logic)
-                for item in cart.items:
-                    if item.product_id == item_product_id and \
-                       item.custom_wok_data is None and \
-                       not item.selected_addons and \
-                       not item.selected_recommendations:
+            # Matching Logic
+            for item in cart.items:
+                if is_custom_item and item.custom_wok_data is not None:
+                    # Match logic for Custom Wok (Unchanged)
+                    if item.custom_wok_data == item_data['custom_wok_data'] and \
+                       item.custom_name == item_data.get('custom_name') and \
+                       item.custom_description == item_data.get('custom_description') and \
+                       item.custom_price == (Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None):
                         existing_item = item
                         break
 
-            # Note: Matching for regular products WITH linked addons/recs is removed
-            # because we decided to treat all 'addons' as separate products (which have no linked addons/recs).
+                elif not is_custom_item and item.product_id == item_product_id and item.custom_wok_data is None:
+                    # Match logic for Regular Product (Now includes linked addons/recs)
+
+                    # Check linked addons
+                    current_addons = sorted([{'id': ca.addon_id, 'quantity': ca.quantity} for ca in item.selected_addons], key=lambda x: x['id'])
+                    addons_match = (current_addons == request_addons)
+
+                    # Check linked recommendations
+                    current_recs = sorted([cr.recommendation_id for cr in item.selected_recommendations])
+                    recs_match = (current_recs == request_recs)
+
+                    if addons_match and recs_match:
+                        existing_item = item
+                        break
 
             # --- ITEM CREATION/UPDATE LOGIC ---
             if existing_item:
@@ -1986,10 +1992,12 @@ class AddToCartResource(Resource):
                 db.session.add(new_cart_item)
                 db.session.flush() # Flush to get new_cart_item.id
 
-                # Process linked addons/recommendations ONLY for the Wok item
-                if is_custom_item:
-                    # Process addons (Wok components)
-                    for addon_data in item_data['addons']:
+                # Process linked addons/recommendations
+                # This applies to Wok (is_custom_item=True) AND the main regular product
+                # if it has real addons attached (is_custom_item=False, but item_data['linked_addons'] is not empty).
+                if item_data.get('linked_addons'):
+                    # Process linked addons (Wok components or regular product addons)
+                    for addon_data in item_data['linked_addons']:
                         addon_obj = Addon.query.get(addon_data['id'])
                         if addon_obj:
                             cart_addon = CartAddon(
@@ -1999,19 +2007,19 @@ class AddToCartResource(Resource):
                             )
                             db.session.add(cart_addon)
                         else:
-                            current_app.logger.warning(f"Wok Component Addon with ID {addon_data['id']} not found.")
+                            current_app.logger.warning(f"Linked Addon with ID {addon_data['id']} not found in Addon model during item creation. This should not happen.")
 
-                    # Process recommendations
-                    for rec_id in item_data['recs']:
-                        rec_obj = Recommendation.query.get(rec_id)
-                        if rec_obj:
-                            cart_rec = CartRecommendation(
-                                cart_item_id=new_cart_item.id,
-                                recommendation_id=rec_obj.id
-                            )
-                            db.session.add(cart_rec)
-                        else:
-                            current_app.logger.warning(f"Recommendation with ID {rec_id} not found.")
+                # Process recommendations (only linked to the main item, not manual addon products)
+                for rec_id in item_data.get('recs', []):
+                    rec_obj = Recommendation.query.get(rec_id)
+                    if rec_obj:
+                        cart_rec = CartRecommendation(
+                            cart_item_id=new_cart_item.id,
+                            recommendation_id=rec_obj.id
+                        )
+                        db.session.add(cart_rec)
+                    else:
+                        current_app.logger.warning(f"Recommendation with ID {rec_id} not found.")
 
         db.session.commit()
         update_cart_total(cart)
