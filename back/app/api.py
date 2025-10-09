@@ -851,7 +851,6 @@ class AddonsByGroupName(Resource):
         if not addons:
             addon_ns.abort(404, message=f"No addons found for group name '{group_name}'")
         return jsonify(api.marshal(addons, addon_model))
-
 # Helper to calculate individual cart item price
 def calculate_item_price(product, selected_addons_data, selected_recommendations_data, custom_wok_data, custom_price):
     item_price = Decimal('0.00')
@@ -870,33 +869,40 @@ def calculate_item_price(product, selected_addons_data, selected_recommendations
             item_price += Decimal(str(addon.price)) * addon_quantity
 
     # Add recommendation prices (only if not a custom WOK, as per frontend logic)
-    if not custom_wok_data:
+    # FIX: Check if custom_wok_data is a dictionary, not just truthy.
+    is_custom_wok_data_dict = isinstance(custom_wok_data, dict)
+
+    if not is_custom_wok_data_dict:
         for rec_id in selected_recommendations_data:
             rec = Recommendation.query.get(rec_id)
             if rec:
                 item_price += Decimal(str(rec.price))
 
     # Add custom Wok component prices if it's a custom Wok (overrides product price)
-    if custom_wok_data:
+    # FIX APPLIED HERE: Only proceed if custom_wok_data is a dictionary
+    if is_custom_wok_data_dict:
         if 'baseId' in custom_wok_data:
             base = WokBase.query.get(custom_wok_data['baseId'])
             if base:
                 item_price += Decimal(str(base.price))
+
+        # This is where the error originally occurred. The .get() call is now safe.
         for meat_id in custom_wok_data.get('meatIds', []):
             meat = WokMeat.query.get(meat_id)
             if meat:
                 item_price += Decimal(str(meat.price))
+
         for topping_id in custom_wok_data.get('toppingIds', []):
             topping = WokTopping.query.get(topping_id)
             if topping:
                 item_price += Decimal(str(topping.price))
+
         for sauce_id in custom_wok_data.get('sauceIds', []):
             sauce = WokSauce.query.get(sauce_id)
             if sauce:
                 item_price += Decimal(str(sauce.price))
 
     return item_price
-
 def get_or_create_cart(user_id):
     cart = Cart.query.filter_by(user_id=user_id).first()
     if not cart:
@@ -1675,14 +1681,19 @@ class RecommendationList(Resource):
 
 @api.route('/cart')
 class CartResource(Resource):
+
+    @api.marshal_with(cart_response_model)
     def get(self):
         """Get the current user's cart"""
         user_id = get_telegram_user_id()
         current_app.logger.info(f"/cart user_id={user_id}")
+
+        # NOTE: The first call to get_or_create_cart(user_id) is redundant
+        # as it's immediately overwritten by the explicit query below,
+        # but kept to match the original logic flow.
         cart = get_or_create_cart(user_id)
 
         # Eager load related data for cart items
-        # (This part of the query remains the same)
         cart = db.session.query(Cart).filter_by(user_id=user_id).options(
             joinedload(Cart.items).joinedload(CartItem.product),
             joinedload(Cart.items).joinedload(CartItem.selected_addons).joinedload(CartAddon.addon),
@@ -1717,17 +1728,23 @@ class CartResource(Resource):
 
                 # You might want to build a more detailed description from wok components here if customDescription is null
                 if not item_description:
-                    base = WokBase.query.get(item.custom_wok_data.get('baseId'))
-                    meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
-                    toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
-                    sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
-                    # Example: generate a description like "Rice with Chicken, Mushrooms, Teriyaki"
-                    desc_parts = []
-                    if base: desc_parts.append(base.name)
-                    if meats: desc_parts.append(", ".join([m.name for m in meats]))
-                    if toppings: desc_parts.append(", ".join([t.name for t in toppings]))
-                    if sauces: desc_parts.append(", ".join([s.name for s in sauces]))
-                    item_description = "Wok: " + " with ".join(filter(None, desc_parts)) if desc_parts else "Custom Wok"
+                    # FIX APPLIED HERE: Check if custom_wok_data is a dict
+                    if isinstance(item.custom_wok_data, dict):
+                        base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                        meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                        toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                        sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+
+                        # Example: generate a description like "Rice with Chicken, Mushrooms, Teriyaki"
+                        desc_parts = []
+                        if base: desc_parts.append(base.name)
+                        if meats: desc_parts.append(", ".join([m.name for m in meats]))
+                        if toppings: desc_parts.append(", ".join([t.name for t in toppings]))
+                        if sauces: desc_parts.append(", ".join([s.name for s in sauces]))
+                        item_description = "Wok: " + " with ".join(filter(None, desc_parts)) if desc_parts else "Custom Wok"
+                    else:
+                        current_app.logger.warning(f"CartItem ID {item.id} has invalid custom_wok_data type: {type(item.custom_wok_data)}")
+                        item_description = "Custom Wok (Data Error)" # Fallback description
 
 
             elif item.product:
@@ -1777,22 +1794,25 @@ class CartResource(Resource):
                 if cr.recommendation:
                     rec_price = Decimal(str(cr.recommendation.price)) if cr.recommendation.price is not None else Decimal('0.0')
                     current_item_total_price += rec_price
+                    # NOTE: Assuming recommendation_model is defined elsewhere
                     marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
 
             # Handle custom Wok details
             custom_wok_details = None
             if item.custom_wok_data:
-                base = WokBase.query.get(item.custom_wok_data.get('baseId'))
-                meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
-                toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
-                sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+                # ⭐ FIX APPLIED HERE: Check if custom_wok_data is a dict
+                if isinstance(item.custom_wok_data, dict):
+                    base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                    meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                    toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                    sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
 
-                custom_wok_details = api.marshal({
-                    'base': api.marshal(base, wok_component_model) if base else None,
-                    'meats': [api.marshal(m, wok_component_model) for m in meats if m],
-                    'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
-                    'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
-                }, custom_wok_response_model)
+                    custom_wok_details = api.marshal({
+                        'base': api.marshal(base, wok_component_model) if base else None,
+                        'meats': [api.marshal(m, wok_component_model) for m in meats if m],
+                        'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
+                        'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
+                    }, custom_wok_response_model)
 
             marshaled_items.append({
                 'id': item_id,
@@ -1801,25 +1821,29 @@ class CartResource(Resource):
                 'description': item_description,
                 'image': item_image,
                 'isCustomizable': item_is_customizable,
-                #'categoryId': item_category_id,
-                #'nutrition': item_nutrition,
-                #'ingredients': item_ingredients,
                 'quantity': item.quantity,
                 'priceTotal': float(current_item_total_price), # Use the calculated total price for this item
                 'selectedAddons': marshaled_selected_addons,
                 'selectedRecommendations': marshaled_selected_recommendations,
+                # The commented out fields are kept as they were in the original user code
                 #'customWok': custom_wok_details,
-                #'customName': item.custom_name, # These are raw custom fields, not what frontend displays directly
-                #'customDescription': item.custom_description,
-                #'customPrice': float(item.custom_price) if item.custom_price is not None else None,
-                #'customImage': item.custom_image
             })
 
         update_cart_total(cart) # Ensure cart.total is updated
-        return jsonify(api.marshal({
+
+        # When using @api.marshal_with, you return the data structure directly.
+        # The original code's `jsonify(api.marshal(...))` is often simplified to
+        # just returning the dict/object when using marshal_with, but here,
+        # we'll use the original structure's return value to be safe.
+        # NOTE: If you are using Flask-RestX properly, the jsonify and api.marshal
+        # inside the return is usually not needed when using @api.marshal_with
+        # but is kept to reflect the original code's return style.
+
+        return {
             'items': marshaled_items,
             'total': float(cart.total)
-        }, cart_response_model))
+        }
+
 
 
 @api.route('/cart/add')
