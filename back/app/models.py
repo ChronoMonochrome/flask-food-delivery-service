@@ -288,3 +288,38 @@ class OrderItem(db.Model):
     custom_name = db.Column(db.String(255), nullable=True)
 
     product = db.relationship('Product') # Link to the actual product
+
+
+def add_column_if_not_exists_mysql(db_instance):
+    """
+    Manually adds the 'manual_addons_data' JSON column to 'cart_item' table 
+    if it doesn't exist, by executing raw SQL and catching the MySQL duplicate column error (1060).
+    """
+    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy import text
+
+    table_name = 'cart_item'
+    column_name = 'manual_addons_data'
+    sql_type = 'JSON' # Correct SQL type for MySQL JSON column
+    
+    sql_command = f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sql_type} NULL"
+    
+    try:
+        # Execute the raw SQL command
+        db_instance.session.execute(text(sql_command))
+        db_instance.session.commit()
+        print(f"Successfully added column '{column_name}' of type {sql_type} to '{table_name}'.")
+        
+    except ProgrammingError as e:
+        # Check for the specific MySQL error code 1060 (Duplicate column name)
+        if '1060' in str(e):
+            db_instance.session.rollback() # Rollback the failed DDL transaction
+            print(f"Column '{column_name}' already exists in '{table_name}', skipping.")
+        else:
+            db_instance.session.rollback()
+            print(f"An unhandled ProgrammingError occurred: {e}")
+            raise # Re-raise other unexpected errors
+    except Exception as e:
+        db_instance.session.rollback()
+        print(f"An unexpected error occurred during column addition: {e}")
+        raise
