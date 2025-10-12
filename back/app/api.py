@@ -1897,6 +1897,7 @@ class AddToCartResource(Resource):
         # List of items to eventually create/update in the cart.
         # This will hold the main product and any manual addon products.
         products_to_add = []
+        separate_products_from_addons = [] # For new CartItem (Product model)
 
         # --- WOK PROCESSING ---
         if product_id == WOK_BUILDER_PRODUCT_ID:
@@ -1937,7 +1938,6 @@ class AddToCartResource(Resource):
 
             # Step 1: Separate the IDs in the 'addons' payload
             linked_addons_to_create = []       # For CartAddon (real Addon model)
-            separate_products_from_addons = [] # For new CartItem (Product model)
 
             for addon_data in addons_data_from_frontend:
                 item_id = addon_data['id']
