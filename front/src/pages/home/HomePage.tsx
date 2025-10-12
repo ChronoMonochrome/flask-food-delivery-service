@@ -47,7 +47,7 @@ export const HomePage: React.FC = () => {
 
 
   // Добавляем конструктор WOK для категории WOK
-  if (selectedCategory === 'f7ec3fe3-4cea-4ee1-9b9b-cb98463355c7') {
+  if (selectedCategory === 'd1b79bb2-c372-44da-b357-06ac229bd16f') {
     // id продукта, который надо удалить
     const removeId = '859b7336-83a8-4fa0-80c9-62681ffeb8e4';
 
