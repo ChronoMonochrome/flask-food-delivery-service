@@ -649,6 +649,10 @@ def _send_order_to_iiko_internal(order: Order, iiko_token: str, client_payment_m
             item_unit_price_for_iiko += Decimal(str(product_obj.price))
             product_name = product_obj.name
             product_id_for_iiko = product_obj.iiko_product_id
+        elif item.custom_wok_data:
+            item_unit_price_for_iiko += Decimal(str(item.custom_price)) if item.custom_price else Decimal('0.00')
+            product_name = item.custom_name if item.custom_name else "Custom Wok"
+            product_id_for_iiko = WOK_PRODUCT_CONSTRUCTOR_ID
         else:
             current_app.logger.warning(f"Order item {item.id} has no product or custom wok data. Skipping for IIKO payload.")
             continue
@@ -863,6 +867,41 @@ def calculate_item_price(product, selected_addons_data, selected_recommendations
         addon = Addon.query.get(addon_id)
         if addon:
             item_price += Decimal(str(addon.price)) * addon_quantity
+
+    # Add recommendation prices (only if not a custom WOK, as per frontend logic)
+    # FIX: Check if custom_wok_data is a dictionary, not just truthy.
+    is_custom_wok_data_dict = isinstance(custom_wok_data, dict)
+
+    if not is_custom_wok_data_dict:
+        for rec_id in selected_recommendations_data:
+            rec = Recommendation.query.get(rec_id)
+            if rec:
+                item_price += Decimal(str(rec.price))
+
+    # Add custom Wok component prices if it's a custom Wok (overrides product price)
+    # FIX APPLIED HERE: Only proceed if custom_wok_data is a dictionary
+    if is_custom_wok_data_dict:
+        if 'baseId' in custom_wok_data:
+            base = WokBase.query.get(custom_wok_data['baseId'])
+            if base:
+                item_price += Decimal(str(base.price))
+
+        # This is where the error originally occurred. The .get() call is now safe.
+        for meat_id in custom_wok_data.get('meatIds', []):
+            meat = WokMeat.query.get(meat_id)
+            if meat:
+                item_price += Decimal(str(meat.price))
+
+        for topping_id in custom_wok_data.get('toppingIds', []):
+            topping = WokTopping.query.get(topping_id)
+            if topping:
+                item_price += Decimal(str(topping.price))
+
+        for sauce_id in custom_wok_data.get('sauceIds', []):
+            sauce = WokSauce.query.get(sauce_id)
+            if sauce:
+                item_price += Decimal(str(sauce.price))
+
     return item_price
 def get_or_create_cart(user_id):
     cart = Cart.query.filter_by(user_id=user_id).first()
@@ -1235,7 +1274,7 @@ class OrderList(Resource):
                 product_obj = item.product
                 
                 # Handle custom wok items where product_obj might be None
-                if product_obj is None:
+                if product_obj is None and item.custom_wok_data:
                     marshaled_product_in_order_item = None # No product to marshal for custom wok
                 else:
                     # Marshal product details
@@ -1292,6 +1331,7 @@ class OrderList(Resource):
                     'quantity': item.quantity,
                     'selectedAddons': fetched_addons_with_quantity,
                     'selectedRecommendations': fetched_recommendations_with_quantity,
+                    'customWokData': item.custom_wok_data,
                     'customPrice': float(item.custom_price) if item.custom_price is not None else None,
                     'customName': item.custom_name,
                 })
@@ -1450,6 +1490,8 @@ class OrderList(Resource):
                     current_app.logger.warning(f"Product with ID {cart_item.product_id} not found for cart item {cart_item.id}. Skipping.")
                     continue
                 item_price += Decimal(str(product.price))
+            elif cart_item.custom_wok_data:
+                item_price += Decimal(str(cart_item.custom_price)) if cart_item.custom_price else Decimal('0.00')
             else:
                 current_app.logger.warning(f"Cart item {cart_item.id} has no product or custom wok data. Skipping.")
                 continue
@@ -1675,7 +1717,37 @@ class CartResource(Resource):
             item_ingredients = []
             item_base_price = Decimal('0.0') # Base price of the product or custom wok
 
-            if item.product:
+            # Determine fields based on whether it's a custom wok or a regular product
+            if item.custom_wok_data:
+                # For custom wok, use its custom fields or derive from components
+                item_name = item.custom_name
+                item_description = item.custom_description
+                item_image = item.custom_image
+                item_is_customizable = True # A custom wok is inherently customizable
+                item_base_price = Decimal(str(item.custom_price)) if item.custom_price is not None else Decimal('0.0')
+
+                # You might want to build a more detailed description from wok components here if customDescription is null
+                if not item_description:
+                    # FIX APPLIED HERE: Check if custom_wok_data is a dict
+                    if isinstance(item.custom_wok_data, dict):
+                        base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                        meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                        toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                        sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+
+                        # Example: generate a description like "Rice with Chicken, Mushrooms, Teriyaki"
+                        desc_parts = []
+                        if base: desc_parts.append(base.name)
+                        if meats: desc_parts.append(", ".join([m.name for m in meats]))
+                        if toppings: desc_parts.append(", ".join([t.name for t in toppings]))
+                        if sauces: desc_parts.append(", ".join([s.name for s in sauces]))
+                        item_description = "Wok: " + " with ".join(filter(None, desc_parts)) if desc_parts else "Custom Wok"
+                    else:
+                        current_app.logger.warning(f"CartItem ID {item.id} has invalid custom_wok_data type: {type(item.custom_wok_data)}")
+                        item_description = "Custom Wok (Data Error)" # Fallback description
+
+
+            elif item.product:
                 # For regular products, use product details
                 item_name = item.product.name
                 item_description = item.product.description
@@ -1717,25 +1789,6 @@ class CartResource(Resource):
                         'quantity': ca.quantity
                     })
 
-            try:
-                if item.custom_wok_data:
-                    manual_addons = item.custom_wok_data.get(item.product.id, [])
-
-                    for ma in manual_addons:
-                        addon_product = db.session.query(Product).filter(Product.id == ma["id"]).first()
-                        addon_quantity = ma["qty"]
-                        current_item_total_price += addon_product.price * addon_quantity
-                        marshaled_selected_addons.append({
-                            'id': str(ma["id"]),
-                            'group_name': addon_product.original_category.name,
-                            'name': addon_product.name,
-                            'price': addon_product.price,
-                            'image': ma["image"],
-                            'quantity': addon_quantity
-                        })
-            except:
-                raise
-
             marshaled_selected_recommendations = []
             for cr in item.selected_recommendations:
                 if cr.recommendation:
@@ -1743,6 +1796,23 @@ class CartResource(Resource):
                     current_item_total_price += rec_price
                     # NOTE: Assuming recommendation_model is defined elsewhere
                     marshaled_selected_recommendations.append(api.marshal(cr.recommendation, recommendation_model))
+
+            # Handle custom Wok details
+            custom_wok_details = None
+            if item.custom_wok_data:
+                # ⭐ FIX APPLIED HERE: Check if custom_wok_data is a dict
+                if isinstance(item.custom_wok_data, dict):
+                    base = WokBase.query.get(item.custom_wok_data.get('baseId'))
+                    meats = [WokMeat.query.get(mid) for mid in item.custom_wok_data.get('meatIds', [])]
+                    toppings = [WokTopping.query.get(tid) for tid in item.custom_wok_data.get('toppingIds', [])]
+                    sauces = [WokSauce.query.get(sid) for sid in item.custom_wok_data.get('sauceIds', [])]
+
+                    custom_wok_details = api.marshal({
+                        'base': api.marshal(base, wok_component_model) if base else None,
+                        'meats': [api.marshal(m, wok_component_model) for m in meats if m],
+                        'toppings': [api.marshal(t, wok_component_model) for t in toppings if t],
+                        'sauces': [api.marshal(s, wok_component_model) for s in sauces if s],
+                    }, custom_wok_response_model)
 
             marshaled_items.append({
                 'id': item_id,
@@ -1792,6 +1862,7 @@ class AddToCartResource(Resource):
         addons_data_from_frontend = data.get('addons', []) # [{'id': 'addon_or_product_id', 'quantity': 1}]
         recommendation_ids_from_frontend = data.get('recommendations', [])
 
+        custom_wok_data = data.get('customWok')
         custom_name = data.get('customName')
         custom_description = data.get('customDescription')
         custom_price = data.get('customPrice')
@@ -1809,13 +1880,26 @@ class AddToCartResource(Resource):
             is_custom_item = True
             main_product_id = WOK_PRODUCT_CONSTRUCTOR_ID
 
-            addons_to_process = addons_data_from_frontend
+            # Wok component conversion (Unchanged)
+            converted_wok_addons = []
+            if custom_wok_data:
+                # Logic to convert Wok components to addon format
+                base_id = custom_wok_data.get('baseId')
+                if base_id: converted_wok_addons.append({'id': base_id, 'quantity': 1})
+                for meat_id in custom_wok_data.get('meatIds', []): converted_wok_addons.append({'id': meat_id, 'quantity': 1})
+                for topping_id in custom_wok_data.get('toppingIds', []): converted_wok_addons.append({'id': topping_id, 'quantity': 1})
+                for sauce_id in custom_wok_data.get('sauceIds', []): converted_wok_addons.append({'id': sauce_id, 'quantity': 1})
+
+            # For Wok, all 'addons' are treated as linked components (CartAddons)
+            addons_to_process = addons_data_from_frontend + converted_wok_addons
+
             products_to_add.append({
                 'id': main_product_id,
                 'qty': quantity_to_add,
                 'is_custom': True,
                 'linked_addons': addons_to_process, # Linked for Wok
                 'recs': recommendation_ids_from_frontend,
+                'custom_wok_data': custom_wok_data,
                 'custom_name': custom_name,
                 'custom_description': custom_description,
                 'custom_price': custom_price,
@@ -1872,7 +1956,7 @@ class AddToCartResource(Resource):
             })
 
             # B. The separate Manual Addon Products
-            #products_to_add.extend(separate_products_from_addons)
+            products_to_add.extend(separate_products_from_addons)
 
         # --- ITEM MATCHING AND CREATION LOOP ---
 
@@ -1889,7 +1973,16 @@ class AddToCartResource(Resource):
 
             # Matching Logic
             for item in cart.items:
-                if not is_custom_item and item.product_id == item_product_id:
+                if is_custom_item and item.custom_wok_data is not None:
+                    # Match logic for Custom Wok (Unchanged)
+                    if item.custom_wok_data == item_data['custom_wok_data'] and \
+                       item.custom_name == item_data.get('custom_name') and \
+                       item.custom_description == item_data.get('custom_description') and \
+                       item.custom_price == (Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None):
+                        existing_item = item
+                        break
+
+                elif not is_custom_item and item.product_id == item_product_id and item.custom_wok_data is None:
                     # Match logic for Regular Product (Now includes linked addons/recs)
 
                     # Check linked addons
@@ -1914,11 +2007,11 @@ class AddToCartResource(Resource):
                     quantity=item_quantity,
 
                     # Custom fields are ONLY stored for Custom Wok
+                    custom_wok_data=item_data.get('custom_wok_data'),
                     custom_name=item_data.get('custom_name'),
                     custom_description=item_data.get('custom_description'),
                     custom_price=Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None,
-                    custom_image=item_data.get('image'),
-                    custom_wok_data={product_id: separate_products_from_addons}
+                    custom_image=item_data.get('image')
                 )
                 db.session.add(new_cart_item)
                 db.session.flush() # Flush to get new_cart_item.id
