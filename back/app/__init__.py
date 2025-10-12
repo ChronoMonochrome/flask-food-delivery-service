@@ -17,7 +17,7 @@ from dotenv import load_dotenv # Keep load_dotenv for clarity, though it's in fa
 from werkzeug.exceptions import HTTPException, NotFound
 
 from .factory import create_app
-from .models import db, add_column_if_not_exists_mysql # Import db from models
+from .models import db # Import db from models
 from .iiko_service import synchronize_iiko_data
 from .yookassa_service import YookassaService
 from .config import Config # Import the Config class
@@ -36,9 +36,6 @@ app.config.from_object(Config)
 
 # Initialize SQLAlchemy with the app
 db.init_app(app)
-
-with app.app_context():
-    add_column_if_not_exists_mysql(db)
 
 # Initialize Flask-Migrate AFTER db.init_app(app)
 migrate = Migrate(app, db)
