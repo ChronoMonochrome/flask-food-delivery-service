@@ -1789,6 +1789,25 @@ class CartResource(Resource):
                         'quantity': ca.quantity
                     })
 
+            try:
+                if item.manual_addons_data:
+                    manual_addons = item.manual_addons_data.get(item.product.id, [])
+
+                    for ma in manual_addons:
+                        addon_product = db.session.query(Product).filter(Product.id == ma["id"]).first()
+                        addon_quantity = ma["qty"]
+                        current_item_total_price += addon_product.price * addon_quantity
+                        marshaled_selected_addons.append({
+                            'id': str(ma["id"]),
+                            'group_name': addon_product.original_category.name,
+                            'name': addon_product.name,
+                            'price': addon_product.price,
+                            'image': ma["image"],
+                            'quantity': addon_quantity
+                        })
+            except:
+                raise
+
             marshaled_selected_recommendations = []
             for cr in item.selected_recommendations:
                 if cr.recommendation:
@@ -1839,9 +1858,13 @@ class CartResource(Resource):
         # inside the return is usually not needed when using @api.marshal_with
         # but is kept to reflect the original code's return style.
 
+        total = 0.0
+        for item in marshaled_items:
+            total += item["priceTotal"]
+
         return {
             'items': marshaled_items,
-            'total': float(cart.total)
+            'total': total
         }
 
 
@@ -1956,7 +1979,7 @@ class AddToCartResource(Resource):
             })
 
             # B. The separate Manual Addon Products
-            products_to_add.extend(separate_products_from_addons)
+            #products_to_add.extend(separate_products_from_addons)
 
         # --- ITEM MATCHING AND CREATION LOOP ---
 
@@ -2011,7 +2034,8 @@ class AddToCartResource(Resource):
                     custom_name=item_data.get('custom_name'),
                     custom_description=item_data.get('custom_description'),
                     custom_price=Decimal(str(item_data['custom_price'])) if item_data.get('custom_price') is not None else None,
-                    custom_image=item_data.get('image')
+                    custom_image=item_data.get('image'),
+                    manual_addons_data={product_id: separate_products_from_addons}
                 )
                 db.session.add(new_cart_item)
                 db.session.flush() # Flush to get new_cart_item.id
