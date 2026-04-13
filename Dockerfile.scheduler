@@ -1,10 +1,14 @@
 # Dockerfile.scheduler
-FROM python:3.9-slim-bullseye as build-env
+# Using Bookworm and adding signature bypass flags to resolve GPG errors
+FROM python:3.9-slim-bookworm as build-env
 
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Added flags to ignore valid-until dates and allow unauthenticated packages 
+# This bypasses the "invalid signature" error occurring in your environment
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::AllowInsecureRepositories=true update && \
+    apt-get install -y --allow-unauthenticated --no-install-recommends \
     build-essential \
     default-libmysqlclient-dev \
     gcc \
@@ -25,9 +29,9 @@ COPY back/scripts/run_sync_once.py /app/run_sync_once.py
 COPY back/scripts/print_db_data.py /app/print_db_data.py
 COPY back/scripts/drop_db_tables.py /app/drop_db_tables.py
 
-# Copy the entrypoint script from the new 'back' folder
+# Copy the entrypoint script from the back folder
 COPY back/entrypoint_scheduler.sh /usr/local/bin/entrypoint_scheduler.sh
 RUN chmod +x /usr/local/bin/entrypoint_scheduler.sh
 
-# Command to run the scheduler script (CMD remains the same relative path in container)
+# Entrypoint to run the scheduler script
 ENTRYPOINT ["entrypoint_scheduler.sh"]

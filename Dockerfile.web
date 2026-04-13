@@ -5,30 +5,27 @@ FROM node:20-alpine as build-env
 # Install git
 RUN apk add --no-cache git
 
-# Create a temporary directory for the entire project source and set it as working directory.
-# This directory will hold a copy of your local Git repository.
+# Create a temporary directory for the project source
 WORKDIR /usr/src/app/repo_source
 
-# Copy the entire build context (your local project directory, including its .git folder)
-# into this stage.
+# Copy the frontend source into this stage
 COPY ./front/ .
 
-# Install frontend dependencies and build the project.
-# This assumes package.json is at the root of the checked-out branch
-# and 'dist' is the output folder.
+# Install frontend dependencies and build the project
+# Using --force as in your original file to handle dependency conflicts
 RUN npm install --force
 RUN npm run build:dev
 
 # Stage 2: Build Flask Application
-# Use a Python runtime as the base for the final application image
-FROM python:3.9-slim-bullseye
+# Switched from Bullseye to Bookworm to fix the GPG signature/repository errors
+FROM python:3.9-slim-bookworm
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies required for building some Python packages (e.g., gevent)
-# and for MySQL client libraries
-RUN apt-get update && apt-get install -y \
+# Install system dependencies
+# Added --no-install-recommends to reduce image bloat
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     default-libmysqlclient-dev \
     gcc \
@@ -39,26 +36,23 @@ RUN apt-get update && apt-get install -y \
 COPY back/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the built frontend assets from the frontend_builder stage.
-# The 'dist' folder is now expected to be located inside /usr/src/app/repo_source/dist.
+# Copy the built frontend assets from the build-env stage
+# Matches your pathing: /usr/src/app/repo_source/dist -> /app/app/static
 COPY --from=build-env /usr/src/app/repo_source/dist /app/app/static
 
 # Set permissions for the static folder recursively
 RUN chmod -R 775 /app/app/static
 
-# Copy the rest of the Flask application code (app/ directory)
+# Copy the Flask application code
 COPY back/app /app/app
 
-# ADD THIS LINE TO COPY THE MIGRATIONS FOLDER
-# This copies 'back/migrations' from your host into '/app/migrations' in the container.
+# Copy the migrations folder
 COPY back/migrations /app/migrations
 
-# Expose port 8011, where Gunicorn will listen
+# Expose port 8011 for Gunicorn
 EXPOSE 8011
 
-# Copy the entrypoint script from the new 'back' folder
-# Change the destination to something like /usr/local/bin/ or directly /entrypoint_web.sh
-# to ensure it's in the PATH, or directly reference it in ENTRYPOINT.
+# Copy the entrypoint script
 COPY back/entrypoint_web.sh /usr/local/bin/entrypoint_web.sh
 RUN chmod +x /usr/local/bin/entrypoint_web.sh
 
