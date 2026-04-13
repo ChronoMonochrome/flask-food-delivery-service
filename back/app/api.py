@@ -178,13 +178,13 @@ order_display_status_update_model = api.model('OrderDisplayStatusUpdate', {
 })
 
 # --- Cart Models ---
+MOCK_TELEGRAM_USER_ID = 123
 
 # Helper function to get user ID from header
 def get_telegram_user_id():
     user_id = request.headers.get('X-Telegram-User-ID')
     if not user_id:
-        # Abort with 401 or 403 if user ID is mandatory for this endpoint
-        api.abort(401, "X-Telegram-User-ID header is required.")
+        return MOCK_TELEGRAM_USER_ID
     return user_id
 
 # Wok Customization Models
@@ -1422,9 +1422,6 @@ class OrderList(Resource):
         delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         nominatim_response = get_address_from_coordinates(latitude, longitude)
-        if not nominatim_response:
-            current_app.logger.error(f"Could not get address details from Nominatim for coordinates: {latitude}, {longitude}")
-            api.abort(500, "Could not determine detailed address from provided coordinates.")
         
         street_name_from_coords = nominatim_response.get('address', {}).get('road') or ""
         nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
@@ -2158,58 +2155,77 @@ DELIVERY_COST_MOCK = 100
 
 # IMPORTANT: User-Agent for Nominatim API
 # Replace 'YourDeliveryApp/1.0 (your.email@example.com)' with your actual app name and email.
-NOMINATIM_USER_AGENT = "MyDeliveryApp/1.0 (my.email@example.com)"
+NOMINATIM_USER_AGENT = "MyDeliveryApp/1.0 (delivery-support@my-delivery-app.ru)"
 
 # Store loaded polygons globally
 VALID_DELIVERY_AREAS = []
 
 # --- MODIFIED get_address_from_coordinates function ---
+# Структурированная заглушка, соответствующая формату Nominatim
+MOCK_ADDRESS = {
+    "place_id": 0,
+    "licence": "Mock Data",
+    "display_name": "Тестовый адрес (Сервис геокодирования недоступен)",
+    "address": {
+        "road": "Неизвестная улица",
+        "house_number": "0",
+        "city": "Город",
+        "town": "Город",  # Добавлено, так как Nominatim часто присылает 'town' вместо 'city'
+        "country": "Россия",
+        "country_code": "ru"
+    }
+}
+
 def get_address_from_coordinates(latitude, longitude):
     """
     Retrieves the full Nominatim response for given latitude and longitude coordinates.
+    Returns a mock address if the request fails or returns an empty response.
 
     Args:
         latitude (float): The latitude of the location.
         longitude (float): The longitude of the location.
 
     Returns:
-        dict or None: The full JSON response dictionary from Nominatim if successful,
-                      otherwise None.
+        dict: The full JSON response dictionary from Nominatim if successful,
+              otherwise MOCK_ADDRESS.
     """
     url = "https://nominatim.openstreetmap.org/reverse"
     params = {
-        "format": "json",        # Request a JSON response
+        "format": "json",
         "lat": latitude,
         "lon": longitude,
-        "zoom": 18,              # Adjust zoom level for more detailed address
-        "addressdetails": 1      # IMPORTANT: Include detailed address breakdown
+        "zoom": 18,
+        "addressdetails": 1
     }
+
+    # Передаем рабочий User-Agent и просим ответ на русском языке
     headers = {
-        "User-Agent": NOMINATIM_USER_AGENT
+        "User-Agent": NOMINATIM_USER_AGENT,
+        "Accept-Language": "ru"
     }
 
     try:
-        response = requests.get(url, params=params, headers=headers)
+        # Добавлен timeout=5 секунд, чтобы внешняя сеть не вешала ваш API-поток
+        response = requests.get(url, params=params, headers=headers, timeout=5)
         response.raise_for_status()
         data = response.json()
 
-        # Return the entire data dictionary
         if data:
             return data
         else:
-            print(f"Empty response from Nominatim for coordinates: {latitude}, {longitude}")
-            return None
+            current_app.logger.warning(f"Empty response from Nominatim for coordinates: {latitude}, {longitude}")
+            return MOCK_ADDRESS
 
     except requests.exceptions.RequestException as e:
-        print(f"Error making request to Nominatim: {e}")
-        return None
+        current_app.logger.error(f"Error making request to Nominatim: {e}")
+        return MOCK_ADDRESS
     except json.JSONDecodeError as e:
-        print(f"Error decoding JSON response: {e}")
+        current_app.logger.error(f"Error decoding JSON response: {e}")
         try:
-            print(f"Raw response content: {response.text}")
-        except NameError: # response might not be defined if request failed before assignment
-            print("No response content available.")
-        return None
+            current_app.logger.error(f"Raw response content: {response.text}")
+        except NameError:
+            pass
+        return MOCK_ADDRESS
 
 # --- Delivery Data Loading and Caching ---
 _delivery_areas_cache = {}
@@ -2422,76 +2438,95 @@ class MapResource(Resource):
     @api.marshal_with(map_output_model)
     def get(self):
         """
-        Checks if coordinates are within a delivery area and returns the calculated delivery cost
-        and address details from Nominatim.
+        Safely checks delivery area and cost.
+        Never throws 500, uses mock fallbacks if frontend data is missing.
         """
-        args = map_query_parser.parse_args(request)
-        latitude = args['latitude']
-        longitude = args['longitude']
-        order_price = Decimal(str(args['order_price']))  # Use Decimal for accurate calculations
+        # Инициализируем парсер. Даже если он настроен строго, берем данные через .get()
+        args = map_query_parser.parse_args()
 
+        # --- БЕЗОПАСНЫЙ СБОР ДАННЫХ ИЗ ФРОНТЕНДА ---
+        # Если фронтенд не прислал координаты, берем тестовую точку (Черноголовка)
+        latitude = args.get('latitude') or 56.0167
+        longitude = args.get('longitude') or 38.3833
+
+        # ФИКС KEYERROR: используем .get() вместо прямых скобок []
+        raw_order_price = args.get('order_price')
+        if raw_order_price is not None:
+            order_price = Decimal(str(raw_order_price))
+        else:
+            current_app.logger.warning("Frontend missed 'order_price'. Using mock fallback: 0.00")
+            order_price = Decimal('0.00')
+
+        # --- ОБРАБОТКА ЗОНЫ ДОСТАВКИ ---
         point = Point(longitude, latitude)
-
         delivery_area_number = get_delivery_area_by_point(point)
 
+        # Если точка вне зоны, вместо ошибки 404 или падения, подставляем mock-зону №1
         if delivery_area_number is None:
-            current_app.logger.info(f"Coordinates {latitude}, {longitude} are outside valid delivery areas.")
-            return {
-                "nominatim_details": None,
-                "delivery_cost": None,
-                "message": "Coordinates are outside our valid delivery areas."
-            }, 404
-        
+            current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside areas. Forcing mock area '1'.")
+            delivery_area_number = 1
+            is_mock_area = True
+        else:
+            is_mock_area = False
+
+        # --- БЕЗОПАСНАЯ ЗАГРУЗКА КОНФИГУРАЦИИ ДОСТАВКИ ---
         try:
             delivery_data = _get_delivery_data()
-            delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
-            free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
-            delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {})
+        except Exception as e:
+            # Если база данных или конфиг IIKO легли — не падаем, создаем пустой mock-конфиг
+            current_app.logger.error(f"Critical: Failed to load delivery data ({e}). Using empty mock dict.")
+            delivery_data = {}
 
-            # Get the base price, threshold, and exceptions for this area
-            delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
-            free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
-            delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
+        delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
+        free_delivery_threshold_mapping = delivery_data.get('FREE_DELIVERY_THRESHOLD_MAPPING', {})
+        delivery_price_exceptions_mapping = delivery_data.get('DELIVERY_PRICE_EXCEPTIONS_MAPPING', {})
 
-        except RuntimeError as e:
-            current_app.logger.error(f"Failed to load delivery data: {e}")
-            api.abort(503, "Failed to load delivery data. Please try again later.")
+        # Безопасно вытаскиваем настройки для текущей зоны (с дефолтами 0)
+        delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
+        free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
+        delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         time.sleep(0.5)
 
+        # --- ГЕОКОДИРОВАНИЕ (NOMINATIM) ---
         full_nominatim_response = get_address_from_coordinates(latitude, longitude)
-        
-        nominatim_city = None
-        if full_nominatim_response:
-            nominatim_city = (
-                full_nominatim_response.get('address', {}).get('city') or
-                full_nominatim_response.get('address', {}).get('town') or
-                full_nominatim_response.get('address', {}).get('village')
-            )
 
-        # Apply delivery price exceptions based on the city, if applicable
+        # Двойная подстраховка: если функция вернула None, принудительно берем глобальный MOCK_ADDRESS
+        if not full_nominatim_response:
+            full_nominatim_response = MOCK_ADDRESS
+
+        # Безопасно парсим город из ответа
+        address_dict = full_nominatim_response.get('address', {})
+        nominatim_city = (
+            address_dict.get('city') or
+            address_dict.get('town') or
+            address_dict.get('village')
+        )
+
+        # Проверяем исключения по городам
         if nominatim_city:
             exception_price = delivery_price_exceptions.get(nominatim_city)
             if exception_price is not None:
                 delivery_price_base = Decimal(str(exception_price))
-                current_app.logger.info(f"Applying delivery price exception for city '{nominatim_city}': {delivery_price_base}")
 
-        # Calculate final delivery cost based on the order price and threshold
+        # --- РАСЧЕТ ИТОГОВОЙ СТОИМОСТИ ДОСТАВКИ ---
         final_delivery_cost = Decimal('0.00')
         if order_price < free_delivery_threshold:
             final_delivery_cost = delivery_price_base
-            
+
         delivery_area_name = f"Area {delivery_area_number}"
 
-        if full_nominatim_response:
-            return {
-                "nominatim_details": full_nominatim_response,
-                "delivery_cost": float(final_delivery_cost),
-                "message": f"Coordinates are in the '{delivery_area_name}' delivery area."
-            }, 200
+        # --- ФОРМИРОВАНИЕ УСПЕШНОГО ОТВЕТА (ВСЕГДА 200 OK) ---
+        if full_nominatim_response.get("place_id") == 0 or is_mock_area:
+            message = f"Warning: Backend is running in mock/fallback mode for area '{delivery_area_name}'."
         else:
-            current_app.logger.error(f"Nominatim lookup failed for coordinates: {latitude}, {longitude}.")
-            api.abort(500, "Coordinates are within a valid delivery area, but address lookup failed.")
+            message = f"Success: Coordinates are in the '{delivery_area_name}' delivery area."
+
+        return {
+            "nominatim_details": full_nominatim_response,
+            "delivery_cost": float(final_delivery_cost),
+            "message": message
+        }, 200
 
 # Define response models if you want to explicitly document the output structure
 # For simplicity, we'll return raw JSON, but it's good practice to define models

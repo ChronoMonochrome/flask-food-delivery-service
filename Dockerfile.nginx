@@ -13,7 +13,7 @@ COPY back/scripts/nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p /etc/nginx/certs
 
 # Expose ports 8080 and 8443 for HTTP and HTTPS traffic
-EXPOSE 8080 8443
+EXPOSE 8080 18443
 
 # Command to start Nginx in the foreground (daemon off) so Docker keeps the container running
 CMD ["nginx", "-g", "daemon off;"]
