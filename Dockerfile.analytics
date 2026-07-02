@@ -1,0 +1,29 @@
+FROM python:3.9-slim-bookworm
+
+# Устанавливаем рабочую директорию сразу в папку с исходным кодом приложения
+WORKDIR /app/app
+
+# Устанавливаем минимально необходимые системные зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем зависимости и устанавливаем их
+COPY back/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Явно гарантируем наличие gunicorn в контейнере
+RUN pip install --no-cache-dir gunicorn
+
+# Копируем код бэкенда (включая модуль analytics_service.py)
+COPY back/app /app/app
+
+# Открываем порт 5002 для Gunicorn
+EXPOSE 5002
+
+# Настраиваем и копируем скрипт запуска
+COPY back/entrypoint_analytics.sh /usr/local/bin/entrypoint_analytics.sh
+RUN chmod +x /usr/local/bin/entrypoint_analytics.sh
+
+ENTRYPOINT ["entrypoint_analytics.sh"]

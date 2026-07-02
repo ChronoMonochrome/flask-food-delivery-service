@@ -1613,6 +1613,25 @@ class OrderList(Resource):
             joinedload(Order.delivery_info)
         ).get(new_order.id)
 
+        # ------------ ИНТЕГРАЦИЯ С МИКРОСЕРВИСОМ АНАЛИТИКИ ------------
+        try:
+            # Превращаем созданный алхимией объект заказа в готовый маршалированный JSON
+            # используем уже готовый order_model, который объявлен у вас на уровне RESTX
+            analytics_payload = api.marshal(created_order, order_model)
+
+            # Если ваш docker-compose назовет контейнер аналитики 'analytics_service'
+            analytics_url = "http://analytics_service:5002/api/analytics/orders"
+
+            # Ставим небольшой таймаут в 1.5 секунды, чтобы монолит не подвисал
+            requests.post(analytics_url, json=analytics_payload, timeout=1.5)
+            current_app.logger.info(f"Successfully pushed order {created_order.id} to analytics microservice.")
+
+        except requests.exceptions.RequestException as e:
+            current_app.logger.error(f"Analytics microservice is unavailable, order not pushed. Error: {e}")
+        except Exception as e:
+            current_app.logger.error(f"Unexpected error while sending data to analytics: {e}")
+        # --------------------------------------------------------------
+
         return created_order, 201
 
     @api.expect(order_display_status_update_model)

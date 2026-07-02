@@ -5,50 +5,42 @@ services:
   db:
     env_file:
       - ./.env
-    image: mysql:8.0 # Using MySQL 8.0 image
+    image: mysql:8.0
     container_name: mysql_db
     volumes:
-      # Persistent volume for database data, so data is not lost on container restart
       - db_data:/var/lib/mysql
     ports:
-      # Expose port 3307 for direct access from host (optional, mainly for debugging)
       - "3307:3306"
     networks:
-      # Connect to the custom application network
       - app_network
-    environment: #
-      TZ: Europe/Moscow # UTC+03:00 for most of the year (no DST consideration for fixed offset)
-      # Or you could specify the offset directly if the OS supports it, like 'UTC+3'
-      # But 'Europe/Moscow' is a common choice for UTC+3.
-    healthcheck: # Added healthcheck for the database service
+    environment:
+      TZ: Europe/Moscow
+    healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pyour_root_password"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 80s # Give MySQL time to start before checking
+      start_period: 80s
 
   # Flask Application Service (served by Gunicorn)
   bot_mandarin_web:
     env_file:
       - ./.env
     build:
-      context: . # Build context is the current directory
-      dockerfile: Dockerfile.web # Use the Dockerfile.web to build this service's image
+      context: .
+      dockerfile: Dockerfile.web
     container_name: flask_app
-    restart: always # Always restart the container if it stops
+    restart: always
     ports:
-      # Expose port 8011 for internal communication with Nginx (optional for external access)
       - "8011:8011"
     depends_on:
-      # Ensure the database service is up and healthy before starting the web service
       db:
-        condition: service_healthy # Changed condition to wait for healthcheck
+        condition: service_healthy
     networks:
-      # Connect to the custom application network
       - app_network
     volumes:
-      - ./migrations:/back/app/migrations # Mount the migrations folder
-    environment: #
+      - ./migrations:/app/migrations  # Скорректирован путь контейнера под ваш WORKDIR /app
+    environment:
       TZ: Europe/Moscow
 
   # New Scheduler Service for periodic iiko data synchronization
@@ -59,21 +51,40 @@ services:
       context: .
       dockerfile: Dockerfile.scheduler
     container_name: iiko_sync_scheduler
-    restart: always # Always restart the container if it stops
+    restart: always
     depends_on:
       db:
-        condition: service_healthy # Ensure DB is ready
+        condition: service_healthy
     networks:
       - app_network
     environment:
       TZ: Europe/Moscow
 
+  # ====================================================================
+  # МИКРОСЕРВИС АНАЛИТИКИ (Добавлен новый сервис под управлением Gunicorn)
+  # ====================================================================
+  analytics_service:
+    env_file:
+      - ./.env
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    container_name: analytics_container
+    restart: always
+    ports:
+      - "5002:5002"  # Внешний порт для доступа к красивой админ-панели Bootstrap
+    networks:
+      - app_network  # Подключаем к общей сети для связи с монолитом
+    environment:
+      TZ: Europe/Moscow
+    volumes:
+      # Направляем volume на сохранение вашей SQLite базы данных analytics.db
+      - analytics_db_data:/app/app
 
 volumes:
-  # Define named volume for database persistence
   db_data:
+  analytics_db_data:  # Добавлен volume для персистентности данных аналитики
 
 networks:
-  # Define a custom bridge network for inter-service communication
   app_network:
     driver: bridge
