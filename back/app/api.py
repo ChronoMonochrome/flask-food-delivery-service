@@ -1421,10 +1421,6 @@ class OrderList(Resource):
         point = Point(longitude, latitude)
         delivery_area_number = get_delivery_area_by_point(point)
 
-        if delivery_area_number is None:
-            current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside a valid delivery area.")
-            api.abort(404, "The provided coordinates are outside our valid delivery areas.")
-
         try:
             delivery_data = _get_delivery_data()
             delivery_price_mapping = delivery_data.get('DELIVERY_PRICE_MAPPING', {})
@@ -1434,12 +1430,21 @@ class OrderList(Resource):
             current_app.logger.error(f"Failed to load delivery data: {e}")
             api.abort(503, "Failed to load delivery data. Please try again later.")
 
-        delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
-        free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
-        delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
+        # --- ИСПРАВЛЕНИЕ: Убираем 404 и выставляем MOCK параметры для внешних зон ---
+        if delivery_area_number is None:
+            current_app.logger.warning(f"Coordinates {latitude}, {longitude} are outside a valid delivery area. Applying MOCK fallback parameters.")
+
+            delivery_price_base = Decimal('300.00')          # Mock сумма доставки (поменяй на любую удобную)
+            free_delivery_threshold = Decimal('2000.00')      # Mock порог бесплатной доставки
+            delivery_price_exceptions = {}
+            delivery_area_number = 10                # Заменяем None строкой для предотвращения ошибок в IIKO
+        else:
+            delivery_price_base = Decimal(str(delivery_price_mapping.get(delivery_area_number, 0)))
+            free_delivery_threshold = Decimal(str(free_delivery_threshold_mapping.get(delivery_area_number, 0)))
+            delivery_price_exceptions = delivery_price_exceptions_mapping.get(delivery_area_number, {})
 
         nominatim_response = get_address_from_coordinates(latitude, longitude)
-        
+
         street_name_from_coords = nominatim_response.get('address', {}).get('road') or ""
         nominatim_house_number = nominatim_response.get('address', {}).get('house_number')
         nominatim_postcode = nominatim_response.get('address', {}).get('postcode')
@@ -1466,7 +1471,7 @@ class OrderList(Resource):
             current_app.logger.error(f'Cart user_id={user_id} is empty or could not load cart items.')
             api.abort(400, "Cart is empty or could not load cart items.")
 
-        # Create the new Order and its relationships. This is the key change.
+        # Create the new Order and its relationships.
         delivery_info_obj = DeliveryInfo(
             address=data['address'],
             apartment=data.get('apartment'),
@@ -1493,7 +1498,7 @@ class OrderList(Resource):
             items=[] # Start with an empty list for the relationship
         )
         db.session.add(new_order)
-        
+
         for cart_item in cart_with_items.items:
             item_price = Decimal('0.00')
             product = None
@@ -1527,7 +1532,7 @@ class OrderList(Resource):
                     rec_list_for_order.append({"id": recommendation.id, "quantity": rec_quantity})
 
             calculated_total += item_price * Decimal(str(cart_item.quantity))
-            
+
             # Create OrderItem and append to the relationship
             new_order.items.append(OrderItem(
                 product=product,
@@ -1544,13 +1549,13 @@ class OrderList(Resource):
             delivery_cost = delivery_price_base
         new_order.total = calculated_total + delivery_cost
         new_order.delivery_info.delivery_price = delivery_cost
-        
+
         is_delivery_free = (delivery_cost == 0)
         current_app.logger.info(f"Order calculated total (without delivery): {calculated_total}, delivery cost: {delivery_cost}, final total: {new_order.total}")
 
         # Now, you can safely flush the session to get the new_order.id
         db.session.flush()
-            
+
         iiko_token = iiko_service.get_iiko_token()
         if not iiko_token:
             current_app.logger.error("Failed to get IIKO access token for order creation.")
@@ -1596,7 +1601,7 @@ class OrderList(Resource):
                 current_app.logger.error(f"Failed to get confirmation_url from YuKassa for order {new_order.id}. Response: {yookassa_response}")
                 db.session.rollback()
                 api.abort(500, "Failed to initiate card payment.")
-                
+
         else:
             order_to_send = db.session.query(Order).filter_by(id=new_order.id).options(
                 joinedload(Order.delivery_info),
@@ -1607,7 +1612,7 @@ class OrderList(Resource):
                 current_app.logger.error(f"Failed to load new_order {new_order.id} for IIKO sending after initial creation.")
                 db.session.rollback()
                 api.abort(500, "Internal error: Could not load order for external system integration.")
-                
+
             _send_order_to_iiko_internal(
                 order_to_send,
                 iiko_token,
@@ -1622,7 +1627,6 @@ class OrderList(Resource):
             new_order.status = 'sent_to_iiko'
 
         db.session.delete(cart_with_items)
-
         db.session.commit()
 
         created_order = db.session.query(Order).options(
@@ -1632,17 +1636,10 @@ class OrderList(Resource):
 
         # ------------ ИНТЕГРАЦИЯ С МИКРОСЕРВИСОМ АНАЛИТИКИ ------------
         try:
-            # Превращаем созданный алхимией объект заказа в готовый маршалированный JSON
-            # используем уже готовый order_model, который объявлен у вас на уровне RESTX
             analytics_payload = api.marshal(created_order, order_model)
-
-            # Если ваш docker-compose назовет контейнер аналитики 'analytics_service'
             analytics_url = "http://analytics_service:5002/api/analytics/orders"
-
-            # Ставим небольшой таймаут в 1.5 секунды, чтобы монолит не подвисал
             requests.post(analytics_url, json=analytics_payload, timeout=1.5)
             current_app.logger.info(f"Successfully pushed order {created_order.id} to analytics microservice.")
-
         except requests.exceptions.RequestException as e:
             current_app.logger.error(f"Analytics microservice is unavailable, order not pushed. Error: {e}")
         except Exception as e:
