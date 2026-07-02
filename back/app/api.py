@@ -137,14 +137,17 @@ delivery_info_model_new = api.model('DeliveryInfoNew', {
     'apartment': fields.String(description='Apartment number', allow_null=True),
     'floor': fields.String(description='Floor number', allow_null=True),
     'phone': fields.String(required=True, description='Contact phone number'),
-    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)'),
+
+    # ФИКС: связываем с полем payment_method в СУБД
+    'paymentMethod': fields.String(required=True, description='Payment method (e.g., cash, card)', attribute='payment_method'),
+
     'comment': fields.String(description='Additional comments for delivery', allow_null=True),
     'latitude': fields.Float(required=True, description='Latitude for delivery'),
     'longitude': fields.Float(required=True, description='Longitude for delivery'),
-    'postcode': fields.String(description='Postal code', allow_null=True), # Existing new field
-    'city_name': fields.String(description='City name from geocoding', allow_null=True), # NEW FIELD
-    'street_name': fields.String(description='Street name from geocoding', allow_null=True), # NEW FIELD
-    'house_number': fields.String(description='House number from geocoding', allow_null=True) # NEW FIELD
+    'postcode': fields.String(description='Postal code', allow_null=True),
+    'city_name': fields.String(description='City name from geocoding', allow_null=True),
+    'street_name': fields.String(description='Street name from geocoding', allow_null=True),
+    'house_number': fields.String(description='House number from geocoding', allow_null=True)
 })
 
 order_item_model = api.model('OrderItem', {
@@ -156,19 +159,33 @@ order_item_model = api.model('OrderItem', {
     'customPrice': fields.Float(attribute='custom_price', description='Custom price for wok if applicable', allow_null=True),
     'customName': fields.String(attribute='custom_name', description='Custom name for wok if applicable', allow_null=True),
 })
-
 order_model = api.model('Order', {
     'id': fields.String(required=True, description='Order ID'),
-    'userId': fields.String(required=True, description='Telegram User ID'),
+
+    # ФИКС: связываем с user_id
+    'userId': fields.String(required=True, description='Telegram User ID', attribute='user_id'),
+
     'items': fields.List(fields.Nested(order_item_model), description='List of items in the order'),
     'total': fields.Float(required=True, description='Total price of the order'),
-    'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information'),
+
+    # ФИКС: связываем с delivery_info связью таблицы Order
+    'deliveryInfo': fields.Nested(delivery_info_model_new, required=True, description='Delivery information', attribute='delivery_info'),
+
     'status': fields.String(required=True, description='Current status of the order'),
-    'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation'),
-    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True),
+
+    # ФИКС: связываем с created_at
+    'createdAt': fields.DateTime(dt_format='iso8601', description='Timestamp of order creation', attribute='created_at'),
+
+    # ФИКС: связываем с estimated_delivery
+    'estimatedDelivery': fields.DateTime(dt_format='iso8601', description='Estimated delivery time', allow_null=True, attribute='estimated_delivery'),
+
     'paymentUrl': fields.String(description='URL for online payment confirmation', attribute='confirmation_url', allow_null=True),
-    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True),
-    'displayStatus': fields.Boolean(required=True, description='Boolean flag to control if the order is displayed to the user')
+
+    # ФИКС: связываем с yookassa_payment_id
+    'yookassaPaymentId': fields.String(description='Yookassa payment ID for online payments', allow_null=True, attribute='yookassa_payment_id'),
+
+    # ФИКС: связываем с display_status
+    'displayStatus': fields.Boolean(required=True, description='Boolean flag to control if the order is displayed to the user', attribute='display_status')
 })
 
 # Model for updating order display status
@@ -1272,7 +1289,7 @@ class OrderList(Resource):
             items_data = []
             for item in order.items:
                 product_obj = item.product
-                
+
                 # Handle custom wok items where product_obj might be None
                 if product_obj is None and item.custom_wok_data:
                     marshaled_product_in_order_item = None # No product to marshal for custom wok
@@ -1284,10 +1301,10 @@ class OrderList(Resource):
                         'description': product_obj.description,
                         'price': float(product_obj.price) if isinstance(product_obj.price, Decimal) else product_obj.price,
                         'image': product_obj.image,
-                        'categoryId': str(product_obj.main_category_id),  
-                        'iikoCategoryId': str(product_obj.categoryId),  
-                        'nutrition': product_obj.nutrition,  
-                        'ingredients': product_obj.ingredients,  
+                        'categoryId': str(product_obj.main_category_id),
+                        'iikoCategoryId': str(product_obj.categoryId),
+                        'nutrition': product_obj.nutrition,
+                        'ingredients': product_obj.ingredients,
                         'availableAddons': [api.marshal(pa.addon, addon_model) for pa in product_obj.available_addons if pa.addon],
                         'recommendations': [api.marshal(pr.recommendation, recommendation_model) for pr in product_obj.recommendations if pr.recommendation],
                         'isCustomizable': product_obj.is_customizable
@@ -1301,7 +1318,7 @@ class OrderList(Resource):
                     if addon_ids:
                         addons_from_db = Addon.query.filter(Addon.id.in_(tuple(addon_ids))).all()
                         addon_map = {addon.id: addon for addon in addons_from_db} # Map for quick lookup
-                        
+
                         for addon_data in item.selected_addons_data:
                             addon_obj = addon_map.get(addon_data['id'])
                             if addon_obj:
@@ -1361,7 +1378,7 @@ class OrderList(Resource):
                 'userId': order.user_id, # Changed 'telegramUserId' to 'userId' for consistency with model
                 'items': items_data,
                 'total': float(order.total) if isinstance(order.total, Decimal) else order.total,
-                'deliveryInfo': delivery_info_for_response,  
+                'deliveryInfo': delivery_info_for_response,
                 'status': order.status,
                 'createdAt': order.created_at.isoformat(),
                 'estimatedDelivery': order.estimated_delivery.isoformat() if order.estimated_delivery else None,
@@ -1369,7 +1386,7 @@ class OrderList(Resource):
                 'yookassaPaymentId': order.yookassa_payment_id, # Mapped to yookassaPaymentId
                 'displayStatus': order.display_status
             })
-        
+
         # --- NEW LOGIC: Set display_status = False for all orders of this user ---
         try:
             # Update all orders for the current user to set display_status to False

@@ -79,7 +79,7 @@ services:
       TZ: Europe/Moscow
     volumes:
       # Направляем volume на сохранение вашей SQLite базы данных analytics.db
-      - analytics_db_data:/app/app
+      - analytics_db_data:/app/data
 
 volumes:
   db_data:

@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 
@@ -12,9 +12,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(mes
 app = Flask(__name__)
 
 # Изолированная база данных для аналитики
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'analytics.db')
+# Изменяем путь, чтобы хранить файлы в отдельной папке /app/data
+DATA_DIR = '/app/data'
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(DATA_DIR, 'analytics.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 db = SQLAlchemy(app)
 
@@ -316,6 +321,12 @@ BOOTSTRAP_TEMPLATE = """
 </body>
 </html>
 """
+
+# --- ФИКС: РЕДИРЕКТ С ГЛАВНОЙ СТРАНИЦЫ НА DASHBOARD ---
+@app.route('/')
+def root_redirect():
+    """Перенаправляет пользователя с корня сайта на панель аналитики"""
+    return redirect(url_for('dashboard'))
 
 @app.route('/dashboard')
 def dashboard():
