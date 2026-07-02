@@ -1,6 +1,7 @@
 <video src="https://github.com/user-attachments/assets/7bc139ad-2196-4cb6-996b-1912966821dd" controls="controls" style="max-width: 730px;">
 </video>
 
+[Ссылка](https://mybuildserver.ignorelist.com)
 
 # Документация проекта
 
