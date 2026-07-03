@@ -163,7 +163,7 @@ def create_delivery():
         app.logger.error("Mock IIKO Delivery: 'order' field must be an object.")
         return jsonify({"error": "'order' field must be an object"}), 400
 
-    required_order_fields = ['id', 'phone', 'items', 'deliveryPoint', 'payments']
+    required_order_fields = ['phone', 'items', 'deliveryPoint', 'payments']
     for field in required_order_fields:
         if field not in order_payload:
             app.logger.error(f"Mock IIKO Delivery: Missing required 'order' field: {field}")
@@ -179,10 +179,6 @@ def create_delivery():
     order_service_type = order_payload.get('orderServiceType')
     customer = order_payload.get('customer')
 
-    # Removed UUID validation for order.id as requested
-    if not isinstance(order_id, str) or not order_id:
-        app.logger.error(f"Mock IIKO Delivery: Invalid order.id format: {order_id}. Expected non-empty string.")
-        return jsonify({"error": "Invalid order.id format (expected non-empty string)"}), 400
     if external_number is not None and (not isinstance(external_number, str) or not external_number):
             app.logger.error(f"Mock IIKO Delivery: Invalid order.externalNumber: {external_number}")
             return jsonify({"error": "Invalid order.externalNumber (expected non-empty string or null)"}), 400

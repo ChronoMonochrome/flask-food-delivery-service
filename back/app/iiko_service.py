@@ -494,7 +494,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: D
     if not token:
         raise RuntimeError("Failed to get IIKO token for order creation.")
 
-    url = f"{IIKO_API_URL}/api/1/deliveries/create"
+    url = f"{IIKO_API_MOCK_URL}/api/1/deliveries/create"
     headers = {"Authorization": f"Bearer {token}"}
 
     payload = {
@@ -529,7 +529,7 @@ def create_delivery_order(organization_id: str, terminal_group_id: str, order: d
     :return: Ответ API iiko.
     """
     logger.info(f"Attempting to create delivery order in IIKO for organization: {organization_id}, terminal group: {terminal_group_id}")
-    url = f"{IIKO_API_URL}/api/1/deliveries/create" # This is the endpoint for delivery orders
+    url = f"{IIKO_API_MOCK_URL}/api/1/deliveries/create" # This is the endpoint for delivery orders
     token = get_iiko_token() # Get token for each request, or cache it appropriately
     if not token:
         logger.error("Failed to get IIKO access token, cannot create delivery order.")
