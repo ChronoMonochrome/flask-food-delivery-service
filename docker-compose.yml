@@ -39,7 +39,7 @@ services:
     networks:
       - app_network
     volumes:
-      - ./migrations:/app/migrations  # Скорректирован путь контейнера под ваш WORKDIR /app
+      - ./migrations:/app/migrations
     environment:
       TZ: Europe/Moscow
 
@@ -60,9 +60,22 @@ services:
     environment:
       TZ: Europe/Moscow
 
-  # ====================================================================
-  # МИКРОСЕРВИС АНАЛИТИКИ (Добавлен новый сервис под управлением Gunicorn)
-  # ====================================================================
+  # NEW: Mock IIKO API Service
+  mock_iiko:
+    build:
+      context: back/mock_iiko_api
+      dockerfile: Dockerfile # Point to the Dockerfile for mock service
+    container_name: mock_iiko_service
+    ports:
+      - "8888:5000" # Map host port 8888 to container port 5000
+    networks:
+      - app_network
+    env_file:
+      - ./.env # Load .env variables for the mock service too (e.g., IIKO_API_TOKEN)
+    environment:
+      TZ: Europe/Moscow
+
+  # Analytics service
   analytics_service:
     env_file:
       - ./.env
@@ -72,13 +85,12 @@ services:
     container_name: analytics_container
     restart: always
     ports:
-      - "5002:5002"  # Внешний порт для доступа к красивой админ-панели Bootstrap
+      - "5002:5002"
     networks:
-      - app_network  # Подключаем к общей сети для связи с монолитом
+      - app_network
     environment:
       TZ: Europe/Moscow
     volumes:
-      # Направляем volume на сохранение вашей SQLite базы данных analytics.db
       - analytics_db_data:/app/data
 
 volumes:
