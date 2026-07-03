@@ -156,12 +156,10 @@ docker compose logs -f
 
 ```bash
 docker compose down
-
 ```
 
 Для полной очистки окружения, включая удаление локальных Docker-томов (данные базы данных при этом будут стерты):
 
 ```bash
 docker compose down -v
-
 ```
